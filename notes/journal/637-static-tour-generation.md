@@ -137,3 +137,15 @@ No coverage measurement, compiler policy implementation or backlog batch
 was started. `notes/status.md` points at both tour editions and records this
 gate. Private logs, fixtures, control outcomes and input identities are
 retained under the session's `tour-static-20261115` evidence directory.
+
+## README entry point, 2026-11-15
+
+After DG's requested fast-forward of `main` to `55270359`, he asked to
+highlight the tour in the main README. A prominent "Take the tour" section
+now precedes the small example, linking directly to the recorded GitHub
+edition and giving `mk -p 1 tour` for the interactive presenterm version.
+The existing introduction, example, build instructions and licensing text
+are unchanged, as are the tour source and generated edition.
+
+This documentation-only follow-up reuses the implementation gate above;
+no new spec sweep or coverage measurement was needed.

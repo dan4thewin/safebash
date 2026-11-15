@@ -14,6 +14,14 @@ The compiler is written in Rust and uses Cranelift for native code
 generation. Executables link a runtime with no libc dependency;
 external commands remain separate dependencies on the target system.
 
+## Take the tour
+
+**[A Tour of safebash](docs/tour/README.md)** introduces the language through
+complete programs and recorded output, including deliberate failures.
+
+With presenterm and `mk` installed, `mk -p 1 tour` opens the interactive
+version, where each snippet can be compiled and run.
+
 ## A small example
 
 Use `.sb` for safebash source files. Save this example as `total.sb`:

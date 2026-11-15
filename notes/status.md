@@ -40,6 +40,8 @@ and the distinction between literal word backslashes and necessary quoting.
 ## Just completed
 
 - **Single-source interactive and static tour delivered.**
+  The root README highlights the GitHub edition and interactive launch command
+  before its small example.
   The native checker now renders a GitHub edition with literal combined
   output, hidden setup omitted, and disclosed stable sample values.
   Publication replaces the old edition only after every expected outcome
