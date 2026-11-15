@@ -8,6 +8,8 @@ status: accepted
    Existing compliant storage may be shared.
 3. This invariant applies to strings, not binary allocations. It does not
    make an interior NUL safe at an external argv boundary (DD99).
+   `0?` examines counted contents only; filename predicates reject any
+   NUL-bearing pathname operand before lookup (DD135).
 
 ---
 
@@ -38,10 +40,13 @@ corruption of every external command argument built from a non-literal string.
 ## The decision — approach B (whole-runtime invariant)
 
 Two fixes were possible: (A) NUL-terminate each argument at the exec boundary
-(`build_argv_*`), or (B) make **every** runtime string builder NUL-terminate, so
-a sash string is a valid C string everywhere by construction. DG chose **B** —
-argv (and any future C-string boundary) can then pass pointers directly, and
-there is one uniform rule instead of a boundary to remember.
+(`build_argv_*`), or (B) make **every** runtime string builder NUL-terminate,
+~~so a sash string is a valid C string everywhere by construction.~~
+DG chose **B**: one uniform termination invariant. At a C-string boundary,
+passing the pointer represents the whole value only when its counted
+contents have no interior NUL. DD99 retains the runtime argv guard;
+DD135 adds NUL-rejecting filename predicates and a counted-content `0?`
+test, with implementation pending. Neither counts the storage terminator.
 
 ## The rule
 

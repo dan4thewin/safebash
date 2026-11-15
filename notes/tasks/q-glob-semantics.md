@@ -142,8 +142,11 @@ not internal qualified names or a compiler temporary prefix.
 
 Ordinary const validation remains independently accepted and owned by
 `q-attest-retag-of-const`; ordinary const loop/declaration restrictions
-do not acquire scratch exceptions. There is no adopted `readonly`
-operation or general `const array` / `const map` syntax.
+do not acquire scratch exceptions. There is no adopted public `readonly`
+operation or general `const array` / `const map` syntax. DD135's implicit
+readonly ERR imports are separately accepted and owned by
+[err-readonly-inputs-and-nul-proofs](err-readonly-inputs-and-nul-proofs.md);
+they neither adopt general freezing nor belong to this provisional trial.
 
 Use ordinary mutable builders followed by independent immutable
 snapshots where staged construction is needed. Measure copying/memory

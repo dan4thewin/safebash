@@ -14,7 +14,10 @@ status: accepted
 6. Direct slurp capture-conditions succeed on complete reads, including
    empty ones. Handled failure binds this attempt's bytes, never old data;
    unhandled slurps remain checked before assignment.
-7. Apply DD128's once-only, allocation-free fatal dispatch and process
+7. DD135's direct `mkdtemp` creation has operational status: handled
+   recoverable failure binds empty text and failure; ordinary unhandled
+   failure aborts before assignment. Fatal causes remain fatal.
+8. Apply DD128's once-only, allocation-free fatal dispatch and process
    ownership. Partial pipelines close pipes and wait for started stages
    without forced termination.
 
@@ -42,6 +45,12 @@ not whether it occurred during setup or command execution. A single
 operation can encounter both classes. Being catchable today does not
 prove that a failure is recoverable; lacking a handling form today does
 not make an ordinary failure fatal.
+
+DD135's ERR-local NUL proof can establish that a particular argv guard
+cannot fail; it does not reclassify a possible failure or add recovery
+to that guard. Other uncatchable operational failures remain work under
+this decision. Readonly inputs and a generated NUL-free pathname do not
+solve the broader failure-model backlog.
 
 This is distinct from DD70's operational-result versus must-consume-value
 channels. It changes neither function return kinds nor the rule that an
@@ -108,6 +117,17 @@ DD86's 2026-11-07 arguments-first ruling places argument evaluation before
 this redirect phase, including in stages. Its completed effects are not
 undone by a later redirect failure either.
 Do not invent a successful empty value to conceal a failed file operation.
+
+DD135's zero-argument `$(mkdtemp)` supplies a direct pathname and real
+creation status. A legal capture-condition handles recoverable failure,
+or an inner `-` discards its status; that outcome supplies empty text
+**and failure**, never a prior pathname. Ordinary unhandled failure aborts
+before assignment. The path is generated under fixed `/tmp`, clean and
+NUL-free without stdout capture. Apply the cause/state classification to
+creation and collision retries; fatal faults remain fatal. Implementation
+is separately owned by
+[mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md), not a reason
+to defer all constructor work behind every existing file-I/O repair.
 
 **Direct file reads have an accepted handling surface** (DG, 2026-11-10;
 DD88, journal 610): `if text=$(<file) { ... }` binds the read's text and

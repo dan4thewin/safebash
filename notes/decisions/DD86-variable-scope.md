@@ -1,8 +1,9 @@
 title: "DD#86 — Variable scope: no `local`, no shadowing, use-before-and-after"
 status: accepted
 
-1. Scope is positional. Top-level bindings are globals, freely readable
-   and writable by functions. Named functions see globals, not caller
+1. Scope is positional. Top-level bindings are globals, readable and
+   writable by functions subject to constness and DD135's readonly ERR
+   imports. Named functions see globals, not caller
    locals; captures inherit live enclosing bindings and own new local
    names. Control flow introduces no scope.
 2. No binding shadows an enclosing name. A name has one declaration per
@@ -29,7 +30,8 @@ status: accepted
    reserve distinct names rather than assume a private prefix (DD#125).
 8. Anonymous executable captures receive ordinary function-body validation
    and fresh condition, loop/tail, status-read and child/wait-latch
-   contexts. Same-process writes to inherited bindings persist.
+   contexts. Legal same-process writes to inherited bindings persist;
+   a capture executing in ERR cannot write its readonly imports (DD135).
    Anonymous bodies may return void, not explicit status; stdout-capture
    bodies exclude process-replacing `exec`, including through callees.
    Ordinary externals and fd-only `exec` retain their contracts.
@@ -196,6 +198,24 @@ retained retag rejection, not its real-write checks. No new declaration
 syntax, diagnostic code or lowering architecture is selected. Journal 602
 records the ruling and the implementation boundary.
 
+## Readonly ERR imports (DG, 2026-11-14)
+
+[DD135](DD135-err-readonly-inputs-nul-and-mkdtemp.md) applies implicit
+readonly access to bindings crossing into ERR. It does not change their
+global declarations to const or add a handler-local source scope. The
+restriction follows logical identity through same-process helpers,
+captures and collection aliases, covering content writes as well as
+whole-binding assignment.
+
+ERR-owned working state and fresh private locals remain available. A write
+before a first read is not a fresh binding; nor does a declaration inside
+ERR establish exclusive ownership if ordinary execution uses it through
+a helper. Main/EXIT retain ordinary mutability. Readonly supplies stability,
+not NUL-freedom, taint clearance or permission to attest inherited input.
+No public `readonly` operation or general collection-const syntax is adopted.
+Implementation is pending in
+[err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md).
+
 ## Use-before-**and**-after: reject unused variables
 
 DD#62 already rejects a **read** with no reaching assignment (SB5031, "assigned
@@ -230,7 +250,8 @@ lands on *another* declared global — fundamentally undetectable, and rare.
   variable is an ordinary variable (may persist after the loop; use a `_i`
   convention if a same-named global is a concern).
 - **Read-only globals from functions** (an earlier "Model A") — rejected;
-  globals are freely writable.
+  globals remain ordinarily writable. DD135's later ERR-entry restriction
+  is not a general function/global-write ban.
 
 ## Consequences / migration
 

@@ -88,6 +88,13 @@ and operand captures; attached redirects follow DD130's classification.
 If no existing form catches a recoverable failure, that operation is
 unavailable in ERR until its handling support is implemented.
 
+Existing byte facts or DD135's ERR-local predicate proof may instead
+establish that the exact argv value cannot fail the NUL guard. This is
+proof of NUL-freedom, not catching that guard with the command's status;
+keep the runtime check and all other failure obligations. DD135 also
+requires readonly inherited ERR bindings independently of taint.
+Those predicate/readonly additions are accepted but not implemented.
+
 Arithmetic faults, heap exhaustion and fork failure are fatal faults.
 A first fault in main or EXIT attempts ERR once without allocating for dispatch;
 a fault in ERR terminates. Neither handler resumes interrupted code or
@@ -108,6 +115,7 @@ Anything that can fail due to external state or data:
   the shipped model; DD132's trial replaces that interface as above)
 - Command substitution (`x=$(cmd)` — check before assignment)
 - Direct file reads (`x=$(<file)` — check before assignment)
+- DD135's direct `x=$(mkdtemp)` creation — check before assignment
 
 DD88's accepted 2026-11-10 extension lets a direct file read supply its
 real operational result to a capture-condition. A completed empty read
@@ -116,6 +124,13 @@ bound to the target, not its previous value. Ordinary unhandled reads,
 fatal faults, operand checks and taint rules remain unchanged.
 Implementation is pending in `recoverable-file-failures`; this is not
 a result on assignment itself or a new suppression spelling.
+
+DD135's `mkdtemp` similarly has a real operational creation status beside
+its direct generated value. An untyped capture-condition handles it; an
+inner `-` may explicitly discard it. Handled recoverable creation failure
+binds empty text and failure, never stale path data. The successful path is
+clean and NUL-free, without a kernel stdout capture. Implementation is
+pending in [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 
 ### Builtin output is one write request (DG, 2026-11-09)
 
@@ -307,6 +322,12 @@ default handles absence and makes either lookup value-only, so
 All four forms remain tainted. The November 12/13 revisions are pending in
 `require-getenv-status-handling`.
 An external command's status is likewise distinct from captured stdout.
+
+DD135's `mkdtemp` also has a separate status, for creation rather than lookup
+presence: it is implicitly checked unless legally handled or discarded.
+`$(- mkdtemp)` consumes the value and discards that real status, retaining
+empty text on handled creation failure. The constructor is unimplemented;
+it does not make a prefix meaningful on a statusless intrinsic.
 
 Under DD132's provisional model, `sub`/`gsub` also have a real second
 result: a boolean beside the text. A text capture may explicitly discard

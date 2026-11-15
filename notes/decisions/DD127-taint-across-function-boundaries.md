@@ -16,7 +16,11 @@ status: accepted
 6. Check each function through one independent summary, mapping actual global
    and collection identities at calls. Report inherited-use obligations there.
 7. Isolate child-process effects; parent readers retain their own effects.
-   EXIT and ERR are independent roots with DD128's incoming-data contracts.
+   EXIT and ERR are independent roots with DD128's incoming-data contracts;
+   DD135's readonly ERR imports do not gain taint clearance.
+8. DD135's generated `mkdtemp` pathname is a direct clean value, not a
+   kernel-backed capture. Its creation status and NUL-freedom are independent
+   of taint.
 
 ---
 
@@ -140,6 +144,13 @@ ordinary files, pipes and memfd captures, including pipes whose producer is
 only `echo`. Environment and program-argument inputs remain tainted too.
 An unchecked tainted value still cannot be read by `echo` or any other copy;
 the ordinary use-site rules require attest or explicit `:!` first.
+
+DD135's `$(mkdtemp)` returns generated pathname bytes directly. Creating a
+directory is not reading its name from a kernel-backed stdout capture;
+the value is clean and NUL-free, with a separate operational creation status.
+This constructor is unimplemented. Subsequent fd reads still introduce
+taint, and assigning its clean result does not resolve an already-tainted
+live binding.
 
 DG proposed this boundary on 2026-11-02 and chose to implement it using the
 **existing buffer paths first**, without extending buffer eligibility in

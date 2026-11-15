@@ -17,7 +17,8 @@ status: accepted
    writes, not main's hypothetical final state.
 5. EXIT's incoming uses must be valid at every reaching orderly entry.
    ERR requires trusted reads of potentially tainted incoming values;
-   fresh input acquired inside either handler may be attested there.
+   inherited bindings are readonly under DD135. Fresh input acquired into
+   writable handler-owned state may be attested there.
 6. Every recoverable failure reachable during ERR needs explicit handling
    at its own operation, including inside same-process callees and operands.
 7. First-fatal dispatch attempts ERR once without allocation. A fatal fault
@@ -485,10 +486,36 @@ Neither literals nor the saved failure status require escape punctuation
 merely because they appear in ERR.
 
 This entry rule is not permission to repair inherited taint with a late
-attest or literal assignment. Genuinely fresh input acquired inside ERR
+attest or literal assignment. DD135 additionally makes inherited bindings
+readonly during ERR, including through same-process helpers, captures and
+collection aliases. New working state used solely by ERR is not imported
+merely because it has global backing storage. Existing source scope and
+fresh function/capture locals remain; no public `readonly` operation is added.
+
+Genuinely fresh input acquired into writable ERR-owned working state
 may use ordinary adjacent, caught attestation and then ordinary reads.
 Its failure branch must comply with section 7, and any replacement that
 resolves the subject must be written directly in that branch.
+
+### Stable byte proofs, not taint clearance (DD135)
+
+NUL-freedom is independent of cleanliness. ERR may use existing byte facts
+or prove that the exact argument value is NUL-free on every reaching path:
+false `0?`, true `i?`/`p?`/`g?`, or a true NUL-rejecting filename test.
+Readonly imports make their values stable; immutability alone is not the
+proof. `:!` is still required for potentially tainted reads, including the
+predicate's own read. An ordinary predicate does not clear inherited taint.
+
+Keep runtime argv guards and the other SB5101 obligations. DD135 confines
+the new demand-driven path query to ERR uses; it does not make an earlier
+main-path test dominate an independent handler entry. Its `mkdtemp`
+constructor separately supplies a clean, NUL-free generated pathname,
+with a real checked/handled creation result.
+
+These additions are accepted but unimplemented:
+[err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md),
+its [predicate prerequisite](../tasks/nul-predicate-and-filename-tests.md),
+and [mkdtemp](../tasks/mkdtemp-value-intrinsic.md).
 
 ## 7. ERR must handle recoverable operational failures explicitly
 
@@ -660,6 +687,12 @@ their uncatchable read or backup/restore failures remain operational
 failures even where an enclosing status is caught. Compiler-bounded argv
 iteration, known nonempty dispositions, even-length map conversion and
 valid static regexes need no fictitious extra failure handling.
+
+That is the implemented value-fact baseline, not DD135's pending
+predicate-derived proof or readonly-import enforcement. Handler inputs are
+currently seeded for all globals; that metadata is not an ERR import census.
+The filename runtime must first stop truncating NUL-bearing operands before
+a successful filename predicate can safely justify a NUL-free argument.
 
 Artifact schema 2 has optional `:exit-block` and `:err-block` fields and no
 `:end-block`; empty handlers remain distinguishable from absent handlers.

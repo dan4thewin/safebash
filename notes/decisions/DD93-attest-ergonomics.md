@@ -7,8 +7,9 @@ status: accepted
    occur in a tested operand, on the left for binary tests. Unary
    shorthand applies its operator to the subject or to every binder.
 2. `i?` tests complete i64 representability; `p?` and `g?` require
-   nonempty ASCII printable and graph bytes respectively. They are
-   ordinary unary tests, subject to normal result-consumption rules.
+   nonempty ASCII printable and graph bytes respectively. `0?` tests for
+   NUL in counted contents, false on empty (DD135). They are ordinary
+   unary tests, subject to normal result-consumption rules.
 3. Predicates may read their attested subject but every other input must
    be clean. `[[ ... ]]` predicates contain no captures, intrinsic calls,
    sed-substitution sugar or arithmetic expansions, including in indices
@@ -98,10 +99,10 @@ safer than the full form, and still greppable (`attest` remains). Sugar only:
 it lowers to the existing `TestExpr::Unary`, so all validation/taint flows
 unchanged.
 
-### Part C — content-shape tests `i?` / `p?` / `g?`
+### Part C — content-shape tests `i?` / `p?` / `g?` / `0?`
 
-Three implemented sash-native unary tests validate the **shape of a value's
-bytes**, spelled with a `?` suffix to distinguish them from bash's `-X`
+The sash-native unary tests inspect the **shape of a value's bytes**,
+spelled with a `?` suffix to distinguish them from bash's `-X`
 file/emptiness tests (whose one-letter space is saturated). They are
 **general test operators**, usable anywhere a unary test is legal, not
 only inside `attest`. Ordinary result-consumption and useful-statement
@@ -112,6 +113,7 @@ rules still apply.
 | `i?` | a strict, i64-representable integer (**renamed from `-i`**) |
 | `p?` | non-empty and every byte is ASCII **printable** (0x20–0x7E) |
 | `g?` | non-empty and every byte is ASCII **graph** (0x21–0x7E, i.e. printable non-space) |
+| `0?` | contains a NUL byte within its counted contents; **false on empty** (DD135, implementation pending) |
 
 - **`-i` → `i?` (hard rename).** `-i` was sash-native (bash has no `-i`, DD#77);
   folding it into the `?`-suffix family pulls it out of bash's `-X` namespace.
@@ -126,6 +128,21 @@ rules still apply.
   POSIX classes later (`a?` alnum, `d?` digit, `l?` alpha, `s?` space, …); the
   operator token + runtime dispatch are built so adding one is a one-liner. Not
   implemented now.
+
+#### Counted NUL and filename implications (DG, 2026-11-14; DD135)
+
+`0?` does not count DD87's trailing storage terminator. A counted NUL at
+any position makes it true; `[[ ! 0? $s ]]` is the NUL-free test. The unary
+shorthand keeps its normal meaning: `attest s 0?` asserts NUL **presence**,
+not absence. Full predicates and collection shorthands retain every existing
+shape, ownership, input-read and result-consumption rule.
+
+DD135 also requires every filename predicate to return false before lookup
+on a NUL-bearing operand, including either operand of `-nt`/`-ot`/`-ef`.
+True filename tests and true `i?`/`p?`/`g?`, or false `0?`, can justify
+NUL-freedom at a specific ERR use. An ordinary predicate never implicitly
+attests its input; inherited taint still requires trusted reads. These
+runtime and ERR-proof additions are pending in DD135's implementation tasks.
 
 #### Provisional addition: `r?` (DG, 2026-11-09)
 

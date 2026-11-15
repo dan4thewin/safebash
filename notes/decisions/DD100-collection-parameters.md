@@ -11,7 +11,8 @@ status: accepted
    check uses that signature.
 3. A slot denotes the caller's actual collection, so legal mutations
    affect that collection. Language constructs keep bare collection-name
-   operands rather than call-site sigils or splats.
+   operands rather than call-site sigils or splats. DD135's readonly ERR
+   imports remain readonly through slots.
 4. Collection arguments have distinct identities and cannot overlap
    globals accessed by the callee or any transitive callee. Reads, writes,
    attests, metadata and identity forwarding all count, even in
@@ -193,6 +194,12 @@ Part D's bare-name rule is current.
 **modify** a mutable actual. This is deliberate: it removes any need for
 out-parameters or multiple return values — a function can fill several
 collections in place.
+
+DD135's accepted ERR boundary makes inherited actuals readonly during
+same-process handler execution, including through helper/slot forwarding.
+This covers contents, fills, append and unset, not just rebinding a name.
+It is not general `const array`/`const map` syntax; implementation is pending
+in [err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md).
 
 DD131's provisional immutable-scratch trial preserves this identity
 and the actual collection's immutability. A read-only helper may accept

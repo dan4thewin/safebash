@@ -48,6 +48,13 @@ literal-default value-only forms for both lookups. The expanded
 no status to discard. Classify by legal form, not builtin name alone.
 All four forms remain tainted; existing status-availability rules still apply.
 
+DD135's pending `mkdtemp` constructor also has a real second result:
+operational creation status. Preserve its ordinary implicit check, legal
+capture-condition and `$(- mkdtemp)` status discard, with empty text on
+handled recoverable failure. Its [implementation owner](mkdtemp-value-intrinsic.md)
+must use the same result-driven classification; do not treat every clean
+value intrinsic as statusless.
+
 DD132 provisionally gives `sub`/`gsub` a real boolean beside their text,
 so the integrated `q-glob-semantics` branch trial must classify them
 accordingly: a text capture may discard that boolean or consume it in

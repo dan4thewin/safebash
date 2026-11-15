@@ -15,6 +15,8 @@ status: implemented
    Successful validation does not write the subject; constness is independent.
 6. Collections and terminal handlers obey the same quarantine, with their
    specific ownership and incoming-state rules.
+7. DD135's generated `mkdtemp` result is clean. Readonly and NUL-freedom
+   are separate properties; ordinary predicates do not declassify input.
 
 ---
 
@@ -58,7 +60,9 @@ survives an ordinary overwrite, unset, clean loop binding or buffer copy.
 Only a legal adjacent attest or a clean whole-subject replacement written
 directly on its failed branch resolves it. EXIT checks its actual incoming
 states; ERR conservatively treats potentially tainted incoming globals as
-unresolved, even if main normally attests them.
+unresolved, even if main normally attests them. DD135 makes inherited ERR
+bindings readonly without validating them; fresh handler acquisition needs
+writable ERR-owned state. Its NUL predicate/proofs do not change quarantine.
 
 **Provisional scratch exception (DD131/DD132, 2026-11-09).** Re-executing
 a scratch construction site starts a fresh immutable instance, not a
@@ -75,6 +79,13 @@ Literals, arithmetic from clean operands, `$#`, `$?`, `$$`, `$!`, and
 compiler-owned buffer captures introduce no taint. Assigning a clean
 expression keeps a clean binding clean; it does not resolve an already
 tainted live binding outside the failed-attest permission above.
+
+DD135 adds the direct `$(mkdtemp)` constructor: its generated fixed-`/tmp`
+pathname is clean and independently NUL-free, not output acquired through
+a kernel capture. Creation still has a checked/handled operational status;
+a handled recoverable error gives empty text and failure. This addition is
+unimplemented in [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
+The live-binding resolution rule above applies to its assignments too.
 
 (`$LINENO` was removed from this list — DG 2026-08-19 rejected it as a
 magic var; it no longer exists in sash, so it is never a taint source.)

@@ -213,6 +213,10 @@ separate status. The capture already consumes the value; the prefix
 discards nothing. Bare `arg`/`getenv` lookup status remains a distinct channel
 and must itself be explicitly handled or discarded (DD101). Their literal-
 default forms are value-only and reject the inert capture prefix.
+DD135's `mkdtemp` instead has a real operational creation status beside its
+direct value; ordinary implicit checking, capture-condition handling or
+inner status discard applies. Its pending implementation does not change
+the mandatory-consumption rule for lookup presence.
 Ordinary `- int_fn` and `- wait` still discard their actual values,
 rather than capture them. Fatal faults do not create a discardable
 status. `reject-statusless-intrinsic-suppression` owns pending enforcement

@@ -3,18 +3,21 @@ status: accepted
 
 1. An untyped single-producer binding may consume the actual status of a single
    external command, named predicate, otherwise-legal pipeline, bare
-   `arg`/`getenv` lookup or direct file slurp. Capture preserves stage eligibility.
+   `arg`/`getenv` lookup, direct file slurp or `mkdtemp` creation (DD135).
+   Capture preserves stage eligibility.
 2. Invoke a named predicate once: bind its stdout and consume its explicit
    returned status. Same-process effects persist on either result.
 3. Bind this attempt's bytes on false too, including partial/empty text;
-   a completed empty read succeeds. Handling is not attest.
+   a completed empty read succeeds. Failed `mkdtemp` creation supplies empty
+   text and failure, never a previous pathname. Handling is not attest.
 4. Assignment itself has no result. Declarations, void/integer calls,
    value-only captures, arbitrary expressions and multi-statement bodies gain
    no condition result; literal-default lookups are value-only (DD101).
 5. Ordinary handling-position, negation, taint and no-reach rules apply;
    discarded statuses cannot also be consumed.
 6. Stdout captures must retain a possible connected writer after redirects;
-   direct integer captures consume an integer and are outside that writer test.
+   direct value intrinsics and integer captures do not capture stdout and
+   are outside that writer test.
 
 ---
 
@@ -30,6 +33,8 @@ owns it.
 DD101's symmetric lookup decision (DG, 2026-11-13; journal 631) admits bare
 `arg` alongside bare `getenv`, but not their value-only literal-default forms.
 That extension is **unimplemented** in `require-getenv-status-handling`.
+DD135 adds direct `$(mkdtemp)` creation, also **unimplemented** in
+[mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 
 These are scoped forms, not general multi-value binding. The general
 multi-value `return` / `(stdout, status, stderr)` trio remains deferred to
@@ -50,7 +55,7 @@ In an existing **boolean/status-consuming context**, an untyped assignment
 whose RHS is one eligible producer is a **capture-condition**. The accepted
 producers are a single external command, an ~~external~~ otherwise-legal
 pipeline, a named predicate function, DD101's bare `arg`/`getenv` lookups,
-and a direct `$(<file)` read:
+a direct `$(<file)` read, and DD135's `$(mkdtemp)`:
 
 - the **condition consumes the producer's actual status**
   (`test = status == 0`); a recoverable nonzero result does **not** abort
@@ -71,7 +76,8 @@ and a direct `$(<file)` read:
 
 - **RHS shape:** a single external `$(cmd)` OR a pipeline `$(a | b)` ~~of external
   stages~~, a named predicate `$(f args...)`, bare `$(arg N)` / `$(getenv NAME)`,
-  or a direct `$(<file)`. ~~Excluded (stay SB4025): a user-function capture `$(f)`
+  a direct `$(<file)`, or zero-argument `$(mkdtemp)`.
+  ~~Excluded (stay SB4025): a user-function capture `$(f)`
   (functions convey status via `return` — DD#74 predicates).~~
   Excluded: void/integer function calls, value-only intrinsics (including
   `$(arg N DEFAULT)` / `$(getenv NAME DEFAULT)`),
@@ -84,11 +90,19 @@ and a direct `$(<file)` read:
 - **Stdout on a returned failure:** this attempt's partial/empty bytes remain,
   including for a named predicate.
   File reads follow the corresponding rule below; bare lookups retain DD101's
-  lookup-value contract. A truly-unused captured target is a dead variable
+  lookup-value contract. Failed `mkdtemp` creation binds empty text, not an
+  earlier pathname. A truly-unused captured target is a dead variable
   (SB5050). For an external command whose stdout is not needed, use the
   non-capturing `if ! cmd { … }` form.
 - **`$?` after:** no new rule — the existing DD#55 handling-position machinery
   applies (a capture-condition assignment provides `$?` like a command).
+
+`mkdtemp` returns a value directly, without a pipe or stdout-writer
+requirement. Its success value is clean and NUL-free; an empty failure
+result remains failure. An ordinary non-condition capture implicitly checks
+creation before assignment, unlike a bare lookup's mandatory explicit
+presence handling. Fatal faults, sole-value placement and ERR's readonly
+destination restrictions remain (DD111/DD130/DD135).
 
 Capture does not narrow an otherwise-legal pipeline's stage eligibility
 (DG, 2026-11-12). User functions behaving as filters remain legal stages;

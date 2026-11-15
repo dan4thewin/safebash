@@ -270,25 +270,37 @@ Building it now would be symmetry for its own sake.
 DD#75's values-only splat rule replaces the pair-flattening interpretation;
 the later Stage 8 correction below records the broken-round-trip reason.
 
-### Interior NUL crossing argv: a runtime check, not static analysis
+### Interior NUL crossing argv: retain the runtime guard
 
-A NUL-bearing value passed to an external command **silently truncates**
-(`printf "[%s]" $x` on `a\0b\0c` → `[a]`). Pipes, redirects and captures are
+Without a runtime guard, a NUL-bearing value passed to an external command
+**silently truncates** (`printf "[%s]" $x` on `a\0b\0c` → `[a]`).
+~~Pipes, redirects and captures are
 all byte-transparent; argv alone is not, because a C string is unavoidable
-there. Under a NUL-centric design this stops being exotic.
+there.~~ I/O payloads retain their counted bytes; argv and filesystem
+pathname interfaces are C-string boundaries. DD135 separately governs
+NUL-bearing filename predicates. Under a NUL-centric design this stops
+being exotic.
 
 DG: *"I don't want silent truncation of arguments, but it seems too unlikely to
-merit the same defensive posture we usually apply."* Agreed — and it needs no
-static analysis, because the test is exact and local:
+merit the same defensive posture we usually apply."* The runtime guard
+needs no static analysis, because the test is exact and local:
 
 > Every sash string is `(ptr, len)` and, per **DD#87**, NUL-terminated at
 > `[len]`. An interior NUL is precisely `memchr(ptr, 0, len) != NULL`.
 
 **Rule:** at the argv build site, an argument containing an interior NUL
 **aborts** (DD#55) with a diagnostic naming it. One `memchr` per argv entry per
-exec — negligible beside the `fork`/`execve` it precedes. No false positives,
-no false negatives, no analysis. Silent truncation becomes a loud abort for a
-handful of lines in the runtime's exec path.
+exec — negligible beside the `fork`/`execve` it precedes. No false positives
+or false negatives in that byte check. Silent truncation becomes a loud
+abort for a handful of lines in the runtime's exec path.
+
+DD135 later accepts a narrow additional use of static byte facts and
+predicate-derived proof in ERR: establish that the exact value cannot fail
+this otherwise-uncatchable guard. It retains the runtime guard, does not
+globally reject every possibly NUL-bearing argument, and does not equate
+taint cleanliness with NUL-freedom. `0?` is true for counted NUL presence;
+false `0?` or a true NUL-rejecting filename test can prove absence locally.
+Those additions are unimplemented, not a new catch/suppress form.
 
 ### Migration: convert mechanically
 

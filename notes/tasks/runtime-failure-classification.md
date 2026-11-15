@@ -64,6 +64,13 @@ usable file-error handling. The existing fork task owns by-form fatal
 routing and can use the existing fatal primitive without waiting for
 unrelated I/O classifications.
 
+DD135's [mkdtemp constructor](mkdtemp-value-intrinsic.md) is another
+independent consumer: preserve actual creation causes, collision retries,
+empty text plus handled failure and fatal faults. Its
+[ERR-local NUL proof](err-readonly-inputs-and-nul-proofs.md) can establish
+that an argv guard cannot fail, without making that failure catchable or
+relabeling the other currently uncatchable operations.
+
 Keep DD128's once-only/main-process handler ownership, allocation-free
 dispatch and actual-global state, DD55's no-reach rule, and typed function
 results. A child's completion status is not a new process-wide fatal
