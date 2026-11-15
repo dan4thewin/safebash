@@ -10,6 +10,7 @@ status: accepted
 3. Integer cells store and read the i64 value directly, without string
    parsing or a string round trip. A missing integer cell reads as zero.
    Ordinary string-output contexts render the integer as text.
+4. Iterating an int collection binds integers to the loop binder (DD#134).
 
 ---
 
