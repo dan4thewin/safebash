@@ -6,7 +6,10 @@ sub_title: "sash: a compiler for a safe subset of Bash"
 Using this tour
 ===
 
-Every `sash` snippet in this tour is a complete program.
+Every `sash` snippet in this tour is a complete program. The
+[GitHub edition](README.md) includes recorded output.
+
+**When running under presenterm** (`mk -p 1 tour`):
 
 * `→` / `l` and `←` / `h` move between slides; `Ctrl+P` opens the slide index.
 * `Ctrl+E` compiles the snippet on the current slide with `sash` and runs the
@@ -16,9 +19,9 @@ Every `sash` snippet in this tour is a complete program.
 Programs are run as `snippet world 42`, so the tour can show program
 arguments later on.
 
-The tour is a plain markdown file, `docs/tour/tour.md`. Edit a snippet while
-the tour is open and presenterm reloads it: change it, then press `Ctrl+E`
-again.
+The tour is a plain markdown file, `docs/tour/tour.md`. While it is open in
+presenterm, editing a snippet reloads it: change it, then press `Ctrl+E`
+again. GitHub shows a static copy; `mk -p 1 tour-doc` refreshes its outputs.
 
 <!-- end_slide -->
 
@@ -44,7 +47,7 @@ Behaviour is fixed at compile time
 
 ```bash +exec:sash +expect:failure
 cmd="echo hi"
-eval $cmd
+eval $cmd # rejected
 ```
 
 A compiled program cannot construct and run new code: there is no `eval`,
@@ -102,7 +105,7 @@ Types do not convert silently
 
 ```bash +exec:sash +expect:failure
 int n=3
-n=three
+n=three # type mismatch
 ```
 
 The message says how to convert a string deliberately — with a
@@ -131,7 +134,7 @@ No word splitting
 
 ```bash +exec:sash +expect:failure
 words="one two three"
-for w in $words { echo [$w] }
+for w in $words { echo [$w] } # scalar, not a list
 ```
 
 In Bash an unquoted `$words` is split on spaces and then globbed. In `sash`
@@ -164,7 +167,7 @@ Arithmetic never wraps
 ```bash +exec:sash +expect:failure
 int big=$((0x7fffffffffffffff))
 echo about to overflow
-echo $(( big + 1 ))
+echo $(( big + 1 )) # overflow
 ```
 
 Overflow, division by zero and negative shifts stop the program instead of
@@ -198,7 +201,7 @@ str nobody
 name=sash
 echo ${nobody:-anonymous} $name:-anonymous
 echo before ${nobody:~} after
-echo ${nobody:?a name is required}
+echo ${nobody:?a name is required} # empty
 ```
 
 These *dispositions* say what an empty value means:
@@ -216,7 +219,7 @@ Every variable is read
 
 ```bash +exec:sash +expect:failure
 total=10
-totl=20
+totl=20 # unused
 echo $total
 ```
 
@@ -233,7 +236,7 @@ Constants
 ```bash +exec:sash +expect:failure
 const limit=3
 echo limit is $limit
-limit=4
+limit=4 # const
 ```
 
 `const` freezes a scalar's value.
@@ -421,7 +424,7 @@ Results are never ignored by accident
 fn is_even {
   return (( $1 % 2 == 0 ))
 }
-is_even 3
+is_even 3 # unhandled status
 echo after
 ```
 
@@ -576,7 +579,7 @@ Failure stops the program
 
 ```bash +exec:sash +expect:failure
 echo before
-ls /no/such/dir
+ls /no/such/dir # missing directory
 echo never printed
 ```
 
@@ -622,7 +625,7 @@ Pipelines
 
 ```bash +exec:sash +expect:failure
 seq 1 5 | sort -r | head -3
-false | true
+false | true # failed stage
 echo never printed
 ```
 
@@ -643,7 +646,7 @@ Input is tainted
 
 ```bash +exec:sash +expect:failure
 user=$(getenv USER) || user=nobody
-echo Hello, $user
+echo Hello, $user # tainted
 ```
 
 Values from outside the program — the environment, its arguments, and
@@ -981,7 +984,7 @@ Exit and fail
 EXIT { - echo EXIT handler: status $(status) }
 ERR { - echo ERR handler: status $(status) }
 echo working
-fail 3
+fail 3 # explicit failure
 ```
 
 `exit [N]` ends the program in an orderly way and runs `EXIT`. `fail [N]`
@@ -998,7 +1001,7 @@ Signals
 ```bash +exec:sash +expect:failure
 signal 15 EXIT
 EXIT { - echo EXIT after signal $(signum), status $(status) }
-kill -TERM $(getpid)
+kill -TERM $(getpid) # signal exit
 sleep 1
 echo not reached
 ```
@@ -1029,7 +1032,8 @@ for ((i = 1; i <= 15; i++)) {
 }
 ```
 
-Edit `docs/tour/tour.md` to finish this program, then press `Ctrl+E`.
+Edit `docs/tour/tour.md` to finish this program, then press `Ctrl+E` in
+presenterm (or regenerate the GitHub edition).
 
 Hint: an `if`/`elif` chain on `(( i % 15 == 0 ))` and friends works.
 
@@ -1070,9 +1074,10 @@ Where next
 * `--no-taint` disables taint checking while you port a script. Nothing
   else is relaxed.
 
-```bash +exec
+```bash +exec:sash
 printf 'name=$1\necho "hi $name"\n' > old.sh
 sash-convert old.sh
 ```
 
-(That last snippet runs Bash, to show `sash-convert` on a two-line script.)
+This safebash snippet creates a two-line Bash script and runs `sash-convert`
+on it.

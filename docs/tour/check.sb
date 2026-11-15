@@ -1,9 +1,64 @@
-# Compile to target/tour/check. -v also prints successful snippet output.
+# Compile to target/tour/check. --render publishes the GitHub edition.
 fn cleanup {
     if [[ -n $work:! ]] {
         # NUL-delimited data avoids ERR's uncatchable external-argv guard.
         if write $work:!$'\x00' | xargs -0 -r /usr/bin/rm -rf -- { : }
     }
+    if [[ -n $draft:! ]] {
+        if write $draft:!$'\x00' | xargs -0 -r /usr/bin/rm -f -- { : }
+    }
+}
+fn usage {
+    echo 'usage: check [-v | --render]' >&2
+    exit 2
+}
+fn emit {
+    if (( render == 1 )) { echo "$1" >> ${draft:?} }
+}
+fn render_output {
+    str fence='```'
+    int normalized=0
+    : > ${work:?}/output.txt
+    while readline record {
+        rendered=$record:!
+        if [[ $title == Globs && $(dirname $rendered) == $work/s ]] {
+            rendered='/tmp/<tour>/'$(basename $rendered)
+            (( normalized++ ))
+        } elif [[ $title == "Background jobs" ]] && match $rendered '^started job [0-9]+$' {
+            rendered='started job <pid>'
+            (( normalized++ ))
+        } elif [[ $title == "Capturing output" ]] && match $rendered '^kernel .+$' {
+            rendered='kernel <kernel-release>'
+            (( normalized++ ))
+        } elif [[ $title == "Reading lines" ]] && match $rendered '^hostname: .+$' {
+            rendered='hostname: <hostname>'
+            (( normalized++ ))
+        }
+        while match $rendered $fence { fence+='`' }
+        echo $rendered >> ${work:?}/output.txt
+    }
+    if [[ $title == Globs || $title == "Background jobs" ||
+          $title == "Capturing output" || $title == "Reading lines" ]] {
+        if (( normalized == 0 )) {
+            echo check: expected sample field not found on slide $title >&2
+            exit 1
+        }
+    }
+    emit ""
+    if [[ $expected == fail ]] {
+        emit '**Output (expected failure):**'
+    } else {
+        emit '**Output:**'
+    }
+    emit ""
+    if [[ -z $output:! ]] {
+        emit '_No output._'
+    } else {
+        emit ${fence}text
+        /usr/bin/cat $work/output.txt >> ${draft:?}
+        emit $fence
+    }
+    emit ""
 }
 EXIT { cleanup }
 ERR { cleanup }
@@ -20,26 +75,93 @@ if [[ ! -x $here/sash-snippet ]] {
     echo check: $here/sash-snippet not found, build the safebash tour helpers first >&2
     exit 1
 }
+if [[ ! -x $root/target/release/sash ]] {
+    echo check: $root/target/release/sash not found, build the compiler first >&2
+    exit 1
+}
 path=$(- getenv PATH)
 search_path=$here:$root/target/release:$path:!
 option=$(arg 1 "")
-int verbose=0
-if [[ $option:! == -v ]] { verbose=1 }
+int verbose=0 render=0 argument_count=$(argc)
+if (( argument_count > 2 )) { usage }
+if (( argument_count == 2 )) {
+    if [[ $option:! == -v ]] {
+        verbose=1
+    } elif [[ $option:! == --render ]] {
+        render=1
+    } else {
+        usage
+    }
+}
 
 work=$(mktemp -d -t sash-tour.XXXXXXXXXX)
 attest work -d
-int count=0 bad=0 slide=1 inside=0 start=0 line_number=0
+array demo_env
+str draft
+if (( render == 1 )) {
+    demo_env=(USER=tour LC_ALL=C NO_COLOR=1)
+    # A sibling file keeps the final rename on the destination filesystem.
+    draft=$(mktemp $root/docs/tour/.README.md.XXXXXXXXXX)
+    attest draft -f
+    emit '<!-- Generated from tour.md; edit that file, then run mk -p 1 tour-doc. -->'
+}
+int count=0 bad=0 slide=1 inside=0 plain_fence=0 start=0 line_number=0
+int frontmatter=0 has_title=0
 str title expected actual result
 exec < ${root:?}/docs/tour/tour.md
 while readline line {
     # This is trusted tour source, copied literally for the compiler to check.
     text=$line:!
     (( line_number++ ))
+    if (( line_number == 1 )) {
+        if [[ $text == --- ]] {
+            frontmatter=1
+            continue
+        } elif (( render == 1 )) {
+            echo check: tour must start with frontmatter >&2
+            exit 1
+        }
+    }
+    if (( frontmatter == 1 )) {
+        if [[ $text == --- ]] {
+            frontmatter=0
+            if (( render == 1 && has_title == 0 )) {
+                echo check: tour frontmatter needs a title >&2
+                exit 1
+            }
+            emit ""
+            emit 'Recorded output accompanies each program below. For the interactive presentation,'
+            emit 'open [tour.md](tour.md) with `mk -p 1 tour`; keyboard controls apply only there.'
+            emit 'Regenerate this file with `mk -p 1 tour-doc`.'
+            emit ""
+            emit 'Samples use arguments `world 42`, `USER=tour` and the C locale.'
+            emit 'Scratch paths, job PIDs, kernel release and hostname use the placeholders'
+            emit '`/tmp/<tour>/`, `<pid>`, `<kernel-release>` and `<hostname>`.'
+        } elif match $text '^title: ' {
+            has_title=1
+            emit "# ${text:7}"
+        } elif match $text '^sub_title: ' {
+            text=${text:11}
+            text =~ s/^"//, s/"$//
+            emit ""
+            emit $text
+        }
+        continue
+    }
+    if (( plain_fence == 1 )) {
+        emit $text
+        if [[ $text == '```' ]] { plain_fence=0 }
+        continue
+    }
     if (( inside == 0 )) {
         if [[ $text == '<!-- end_slide -->' ]] {
             (( slide++ ))
             title=""
-        } elif match $text '^```bash \+exec:sash' {
+            emit ""
+        } elif [[ $text == '<!-- jump_to_middle -->' || $text == '<!-- pause -->' ]] {
+            :
+        } elif [[ $text == '```bash +exec:sash' ||
+                  $text == '```bash +exec:sash +expect:failure' ]] {
             inside=1
             (( count++ ))
             start=$line_number
@@ -48,16 +170,25 @@ while readline line {
             /usr/bin/rm -rf -- $work/s
             /usr/bin/mkdir -- $work/s
             : > ${work:?}/s/snippet.sh
+            emit '```bash'
+        } elif match $text '^(`{3,}|~{3,}).*\+exec' {
+            echo check: unsupported executable fence at line $line_number >&2
+            exit 1
+        } elif match $text '^```' {
+            plain_fence=1
+            emit $text
         } elif match $text ^=== {
-            :
-        } elif [[ -n $text && -z $title ]] {
-            title=$text
+            emit '---'
+        } else {
+            if [[ -n $text && -z $title ]] { title=$text }
+            emit $text
         }
         continue
     }
     if [[ $text == '```' ]] {
         inside=0
-        if output=$(/usr/bin/env PATH=$search_path $here/sash-snippet $work/s 2>&1 </dev/null) {
+        emit '```'
+        if output=$(/usr/bin/env PATH=$search_path @demo_env:~ $here/sash-snippet $work/s 2>&1 </dev/null) {
             actual=ok
         } else {
             actual=fail
@@ -72,14 +203,22 @@ while readline line {
         if (( verbose == 1 )) || [[ $result != ok ]] {
             echo '    | '$(gsub $output:! $'\n' $'\n    | ')
         }
+        if (( render == 1 )) && [[ $result == ok ]] {
+            echo $output:! > ${work:?}/output.raw
+            render_output < ${work:?}/output.raw
+        }
         continue
     }
-    text =~ s/^\x2f{3} //
+    if [[ ${text:0:4} == '/// ' ]] {
+        text=${text:4}
+    } else {
+        emit $text
+    }
     echo $text >> ${work:?}/s/snippet.sh
 }
 
-if (( inside != 0 )) {
-    echo check: unterminated snippet starting at line $start >&2
+if (( frontmatter != 0 || plain_fence != 0 || inside != 0 )) {
+    echo check: unterminated frontmatter or code fence at end of tour >&2
     exit 1
 }
 if (( count == 0 )) {
@@ -87,4 +226,10 @@ if (( count == 0 )) {
     exit 1
 }
 echo $count snippets, $bad mismatched
-exit $(( bad == 0 ? 0 : 1 ))
+if (( bad != 0 )) { exit 1 }
+if (( render == 1 )) {
+    /usr/bin/chmod 644 $draft
+    /usr/bin/mv -T -- $draft $root/docs/tour/README.md
+    draft=""
+    echo rendered $root/docs/tour/README.md
+}

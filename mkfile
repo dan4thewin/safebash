@@ -151,9 +151,14 @@ install-hooks:V:
 
 check:V: lint test complexity
 
-tour:V: build
+tour-helpers:V: build
 	mkdir -p target/tour &&
 	target/release/sash docs/tour/tour.sb -o target/tour/tour &&
 	target/release/sash docs/tour/check.sb -o target/tour/check &&
-	target/release/sash docs/tour/sash-snippet.sb -o target/tour/sash-snippet &&
+	target/release/sash docs/tour/sash-snippet.sb -o target/tour/sash-snippet
+
+tour:V: tour-helpers
 	target/tour/tour
+
+tour-doc:V: tour-helpers
+	target/tour/check --render
