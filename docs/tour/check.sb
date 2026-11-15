@@ -1,0 +1,90 @@
+# Compile to target/tour/check. -v also prints successful snippet output.
+fn cleanup {
+    if [[ -n $work:! ]] {
+        # NUL-delimited data avoids ERR's uncatchable external-argv guard.
+        if write $work:!$'\x00' | xargs -0 -r /usr/bin/rm -rf -- { : }
+    }
+}
+EXIT { cleanup }
+ERR { cleanup }
+signal 1 EXIT
+signal 2 EXIT
+signal 15 EXIT
+
+self=$(readlink /proc/$(getpid)/exe)
+attest self -f
+here=$(dirname $self)
+root=$(realpath $here/../..)
+attest root -d
+if [[ ! -x $here/sash-snippet ]] {
+    echo check: $here/sash-snippet not found, build the safebash tour helpers first >&2
+    exit 1
+}
+path=$(- getenv PATH)
+search_path=$here:$root/target/release:$path:!
+option=$(arg 1 "")
+int verbose=0
+if [[ $option:! == -v ]] { verbose=1 }
+
+work=$(mktemp -d -t sash-tour.XXXXXXXXXX)
+attest work -d
+int count=0 bad=0 slide=1 inside=0 start=0 line_number=0
+str title expected actual result
+exec < ${root:?}/docs/tour/tour.md
+while readline line {
+    # This is trusted tour source, copied literally for the compiler to check.
+    text=$line:!
+    (( line_number++ ))
+    if (( inside == 0 )) {
+        if [[ $text == '<!-- end_slide -->' ]] {
+            (( slide++ ))
+            title=""
+        } elif match $text '^```bash \+exec:sash' {
+            inside=1
+            (( count++ ))
+            start=$line_number
+            expected=ok
+            if match $text '\+expect:failure' { expected=fail }
+            /usr/bin/rm -rf -- $work/s
+            /usr/bin/mkdir -- $work/s
+            : > ${work:?}/s/snippet.sh
+        } elif match $text ^=== {
+            :
+        } elif [[ -n $text && -z $title ]] {
+            title=$text
+        }
+        continue
+    }
+    if [[ $text == '```' ]] {
+        inside=0
+        if output=$(/usr/bin/env PATH=$search_path $here/sash-snippet $work/s 2>&1 </dev/null) {
+            actual=ok
+        } else {
+            actual=fail
+        }
+        result=ok
+        if [[ $actual != $expected ]] {
+            result=MISMATCH
+            (( bad++ ))
+        }
+        /usr/bin/printf '%-8s slide %2d line %4d  expect %-4s got %-4s  %s\n' \
+            $result $slide $start $expected $actual $title
+        if (( verbose == 1 )) || [[ $result != ok ]] {
+            echo '    | '$(gsub $output:! $'\n' $'\n    | ')
+        }
+        continue
+    }
+    text =~ s/^\x2f{3} //
+    echo $text >> ${work:?}/s/snippet.sh
+}
+
+if (( inside != 0 )) {
+    echo check: unterminated snippet starting at line $start >&2
+    exit 1
+}
+if (( count == 0 )) {
+    echo check: no runnable sash snippets in $root/docs/tour/tour.md >&2
+    exit 1
+}
+echo $count snippets, $bad mismatched
+exit $(( bad == 0 ? 0 : 1 ))

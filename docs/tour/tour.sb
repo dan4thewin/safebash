@@ -1,0 +1,26 @@
+# Compile to target/tour/tour; pass presenterm options unchanged.
+self=$(readlink /proc/$(getpid)/exe)
+attest self -f
+here=$(dirname $self)
+root=$(realpath $here/../..)
+attest root -d
+
+if [[ ! -x $root/target/release/sash ]] {
+    echo tour: $root/target/release/sash not found, run 'mk build' first >&2
+    exit 1
+}
+if [[ ! -x $here/sash-snippet ]] {
+    echo tour: $here/sash-snippet not found, build the safebash tour helpers first >&2
+    exit 1
+}
+if ! which presenterm >/dev/null 2>&1 {
+    echo tour: presenterm not found, see https://mfontanini.github.io/presenterm/ >&2
+    exit 1
+}
+
+path=$(- getenv PATH)
+argv 1 options
+# PATH is the caller's tool search path; presenterm validates its own options.
+exec env PATH=$here:$root/target/release:${path:!} \
+    presenterm -x -c $root/docs/tour/presenterm.yaml \
+    @{options:!~} $root/docs/tour/tour.md

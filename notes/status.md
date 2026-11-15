@@ -1,5 +1,5 @@
 title: Status
-modified: 2026-11-13
+modified: 2026-11-15
 
 # Current status
 
@@ -10,22 +10,67 @@ handoff, not a second journal: replace superseded progress and keep the
 dated account in [journal/](journal/). Implementation priorities remain
 with DG and the individual [task records](tasks/).
 
-## Draft for review
+## Outline and tour
 
 [Language-specification outline](../docs/SPEC-outline.md): one terse nested
 list, treating provisional and pending DD rules as complete for this draft
-only. DG requested preserving the original on `spec-outline` before
-pedagogic reordering; [journal 630](journal/630-language-specification-outline.md)
-records the scope. This is not a shipped-language reference or a completed
-specification.
+only. Original snapshot `2ef86c2a` remains available; the pedagogically
+reordered draft and accepted-policy updates are now committed on `spec-outline`.
+[Journal 630](journal/630-language-specification-outline.md) records the outline;
+[journal 631](journal/631-symmetric-input-lookups.md) records the lookup change.
+This is not a shipped-language reference or a completed specification.
+
+The runnable [presenterm tour](../docs/tour/tour.md) is committed alongside
+its native helpers. Run `mk -p 1 tour` to build and launch it;
+`target/tour/check` checks its executable snippets. Its map counter uses the
+supported keyed `+=`, not arithmetic map-cell `++`.
+The trust slide explains justified per-read `:!` uses:
+validation in ordinary code or a content-independent operation such as `strlen`.
+PID/status examples use named intrinsics with their punctuation aliases noted;
+familiar function positionals are paired with the canonical `args` forms.
+Attest examples lead with `p?`/`g?`, with a compound predicate for optional
+printable input. The expanded regex section teaches `match`/`sub`/`gsub`
+before their convenience spellings, with a regex attest, chained edits,
+and the distinction between literal word backslashes and necessary quoting.
 
 ## Just completed
 
-- **Getenv status handling required by policy.** DD101 now requires an
-  explicit consumer or discard; using or attesting the string is not enough.
-  Taint remains independent. Enforcement is queued in
+- **Review set captured in seven coherent commits on `spec-outline`.**
+  Completed compiler/runtime repairs, three policy packages, the reordered
+  outline, tour deck and native helpers have distinct publication records.
+  DG's three revised `.sb` files are preserved exactly. The `tour` target
+  creates its output directory and stops on any compilation failure.
+  [Journal 636](journal/636-publishing-outline-tour-and-policy-work.md)
+  records the grouping, current evidence and remaining boundaries.
+- **ERR input/path policy recorded, not implemented.**
+  [DD135](decisions/DD135-err-readonly-inputs-nul-and-mkdtemp.md) adopts
+  readonly inherited ERR bindings, contains-NUL `0?` (false on empty),
+  NUL-rejecting filename tests, local ERR byte proofs and clean fixed-`/tmp`
+  `mkdtemp`. Rules/outline/backlog agree; implementation remains queued.
+  [Journal 635](journal/635-err-inputs-nul-and-mkdtemp.md) records the decision
+  and accounts for the earlier uncommitted code.
+- **Native tour helpers delivered.** The `.sb` sources compile into
+  `target/tour/` and use the presenterm configuration's native runner.
+  A coupled runtime repair stops `readline` splitting long records at
+  4,096 bytes. [Journal 634](journal/634-tour-helpers-in-safebash.md) records
+  the original side-by-side port and its evidence; journal 636 records
+  the current helper versions and publication.
+- **Indexed updates repaired.** A write evaluates its key
+  once; a compound update retains the old cell value before RHS effects.
+  Arithmetic updates and ordinary indexed `+=` share the lowering. The inert
+  IR is schema 3. [Journal 633](journal/633-indexed-updates-evaluate-once.md)
+  records the repair and its evidence.
+- **Loop-binder typing policy accepted.** DD134: `for v in @a` over an
+  int collection binds integers, following ordinary assignment from a cell.
+  Implementation is queued in
+  [loop-binder-element-type](tasks/loop-binder-element-type.md);
+  [journal 632](journal/632-loop-binder-element-type.md) records the ruling.
+- **Symmetric input lookups accepted.** DD101 gives bare `arg`/`getenv`
+  text plus presence status requiring handling or discard. Both literal-default
+  forms return only text; defaults apply on absence, never present-empty.
+  All four remain tainted. Implementation is queued in the expanded
   [require-getenv-status-handling](tasks/require-getenv-status-handling.md);
-  [journal 629](journal/629-explicit-getenv-status.md) records the ruling.
+  [journal 631](journal/631-symmetric-input-lookups.md) records the ruling.
 - **Named predicate capture policy accepted.** DD88 now permits an
   otherwise-legal predicate call to bind stdout and consume its explicit
   returned status, without weakening body checks, taint or same-process
@@ -53,6 +98,10 @@ specification.
 
 ## Deferred work and boundaries
 
+- DD135's [predicate/file-test repair](tasks/nul-predicate-and-filename-tests.md)
+  precedes its [readonly ERR/local-proof work](tasks/err-readonly-inputs-and-nul-proofs.md).
+  [mkdtemp](tasks/mkdtemp-value-intrinsic.md) is independently queued; none
+  completes the broader recoverable-file-failure backlog.
 - The [public language specification](tasks/specification-document.md) and
   [source license notices/Cargo metadata](tasks/apply-source-license-notices.md)
   are separate follow-ups, not completed by the documentation refresh.
@@ -68,21 +117,24 @@ specification.
   status. [DD131](decisions/DD131-directory-selectors-scratch-collections.md)
   and [DD132](decisions/DD132-validated-regex-immutable-scratch.md) describe
   the provisional selectors/scratch/regex package, not shipped features.
+- The indexed-update fix does not complete the general
+  [expression-order repair](tasks/q-capture-hoisting-order.md).
 - Coverage remains paused pending DG's direction. Resumption requires a
   fresh union and provenance check, not the pre-port cold-line ranking.
   This cleanup does not start that work or another implementation batch.
 
 ## Last recorded gate
 
-The generated block below is the previous actual gate's snapshot.
-Documentation-only changes do not imply a new spec sweep.
+The generated block records the exact compiler/runtime/spec sources in this
+series, checked before publication. Its commit label is the pre-publication
+HEAD `2ef86c2a`, not the commit containing the repairs.
 
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
-## Current branch: main
+## Current branch: spec-outline
 
-## Spec status: 11332 passing / 0 failing of 11345 (spec.db @ c15d14b3)
+## Spec status: 11362 passing / 0 failing of 11375 (spec.db @ 2ef86c2a)
 
-_Regenerated 2026-11-12 by `mk status`. Edits inside this block will be
+_Regenerated 2026-11-15 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

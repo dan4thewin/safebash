@@ -1,0 +1,12 @@
+# Compile to target/tour/sash-snippet, not over docs/tour/sash-snippet.
+directory=$(arg 1 "")
+attest directory -d
+cd $directory
+
+if diagnostics=$(env sash snippet.sh -o snippet 2>&1) {
+    exec env ./snippet world 42
+} else {
+    # Compiler diagnostics are displayed as data, not interpreted.
+    echo ${diagnostics:!}
+    exit 1
+}
