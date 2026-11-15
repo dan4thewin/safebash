@@ -1,9 +1,10 @@
 title: DD#65 — Prune the ${var:OP} modifier family
 status: accepted
 
-1. `:-` defaults, `:?` messages and `arg N DEFAULT` take literal operands.
+1. `:-` defaults, `:?` messages, `arg N DEFAULT` and `getenv NAME DEFAULT`
+   take literal operands.
    A dollar in a disposition operand requires whole-operand single quoting;
-   `arg` rejects expansions structurally.
+   lookup defaults reject expansions structurally.
 2. `:-` selects its default for the subject's meaningful zero: empty string
    or integer zero. Integer defaults are integer literals. Arithmetic string
    conversion uses DD77's validity-based disposition instead.
@@ -391,6 +392,12 @@ there instead, by walking the parsed expression for any expansion
 (`first_expansion`). The single-quote escape falls out for free: a
 `SingleQuoted` carries no expansion to find. The code is the same, SB4070,
 because the rule is the same rule.
+
+DD101's symmetric lookup decision (DG, 2026-11-13) applies that same literal
+operand contract to `getenv NAME DEFAULT`; implementation is pending in
+`require-getenv-status-handling`. Both defaulted lookups return only the
+selected tainted string. Their trigger is **absence**, not an empty present
+value or `:-`'s meaningful-zero rule.
 
 **What this retires.** The interpolating-word operand was the *only* reason
 these existed, and all of them are now deleted:

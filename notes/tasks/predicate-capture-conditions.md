@@ -39,8 +39,9 @@ Attached redirects keep DD130's operation/failure contract.
 Outside a handling context, capture alone does not consume a predicate's
 status: `text=$(- f)` remains the explicit stdout-only form. Conversely,
 `if text=$(- f)` discards the very status it needs. DD101 now requires
-explicit handling or discard of `getenv` lookup status too;
-`require-getenv-status-handling` owns that enforcement. Neither permission
+explicit handling or discard of bare `arg`/`getenv` lookup status too;
+their literal-default forms instead return only text. The expanded
+`require-getenv-status-handling` owns those changes. Neither permission
 to ignore status nor implicit value validation is part of this extension.
 
 ## Starting evidence
@@ -118,7 +119,8 @@ does not thereby gain a result. `reject-discarded-status-consumers` keeps
 source discard distinct from internal unchecked handling.
 
 `recoverable-file-failures` owns direct slurp and recoverable file handling;
-`require-getenv-status-handling` owns the lookup-status obligation;
+`require-getenv-status-handling` owns both bare lookup statuses, their
+handling obligation and the value-only literal-default forms;
 `bug-int-capture-redirect-switches-kind` owns integer capture's separate
 channel. `bug-sb4025-advice-misdescribes-rhs` owns the broader advice repair
 and its separate inner-negation/quoted-RHS questions. Preserve the accepted

@@ -96,7 +96,9 @@ Acceptance must distinguish the independent mechanisms:
   Use a target with prior data to prove that failure does not reuse it.
 - Retain unhandled aborts, fatal-fault controls, byte/newline behavior,
   filename-operand no-reach, rejected RHS shapes and ordinary external/
-  `getenv` capture-conditions. Do not use a blanket SB5101 exemption in ERR.
+  bare-lookup capture-conditions. DD101's literal-default lookups remain
+  value-only; coordinate its pending extension with
+  `require-getenv-status-handling`. Do not use a blanket SB5101 exemption in ERR.
 - Run focused native/C before-controls and independent reversions for
   classification, status consumption and failure-data publication. Choose
   fresh spec ids from history and predict the full gate only after the

@@ -3,8 +3,9 @@ status: implemented
 
 1. Sash bindings and environment variables are separate namespaces with no
    implicit mirroring.
-2. Read environment data through `getenv`; explicitly handle or discard its
-   lookup status. Taint checks are independent (DD24/DD101).
+2. Read environment data through `getenv`: explicitly handle/discard bare
+   lookup status, or supply a literal default for absence. Every form remains
+   tainted; present-empty never selects the default (DD24/DD101).
 3. Delegate per-command environments to `/usr/bin/env`. A sash binding is
    resultless and needs a separator before a following command (DD71).
 4. `cd` requires exactly one directory argument, literal or computed.
@@ -16,15 +17,16 @@ namespaces. There is no implicit mirroring in either direction.
 
 ## Reading env vars
 
-The only way to read an environment variable is `$(getenv NAME)`.
+The explicit environment read is `$(getenv NAME [DEFAULT])`.
 The result is tainted (DD#24) and ~~must be blessed before use.~~ requires
 legal attest or an explicit trusted read under DD91/DD93.
 
-DD101 also requires explicit handling of lookup status through a legal
-capture-condition, or discard inside `$(- getenv NAME)`. Using the string
-does not consume that status, and taint validation does not replace presence
-handling. This 2026-11-12 revision is pending in
-`require-getenv-status-handling`.
+Without DEFAULT, DD101 requires explicit handling of lookup status through
+a legal capture-condition, or discard inside `$(- getenv NAME)`. Using the
+string does not consume that status, and taint validation does not replace
+presence handling. A literal DEFAULT instead handles absence and yields only
+the selected tainted string. Present-empty does not select it. Mandatory
+handling and the default form are pending in `require-getenv-status-handling`.
 
 `$HOME` in sash source refers to a sash variable named `HOME`. It
 does NOT implicitly read the `HOME` environment variable. If no sash
@@ -45,7 +47,7 @@ bless home [[ -d $home ]]
 The current `attest` spelling appears in the `cd` example below.
 
 Auto-bless patterns in `known_externals.rs` provide conservative
-validation for common env vars, but the `$(getenv NAME)` call is
+validation for common env vars, but the explicit `getenv` call is
 still required.
 
 ## Writing env vars
@@ -103,8 +105,11 @@ The implicit getenv fallback from experiment 027.
 `$(getenv NAME)` now carries a **lookup status**: unset is a failure, set
 (including set-to-empty) is a success. This makes unset and `NAME=""`
 distinguishable, which they were not before. ~~Uncaught is allowed.~~
-The value is `""` for both absence and present-empty, but status must now
-be explicitly handled or discarded (DG, 2026-11-12). Taint remains independent.
+For this bare form, the value is `""` for both absence and present-empty, but
+status must now be explicitly handled or discarded (DG, 2026-11-12).
+Taint remains independent.
+The literal-default form added by DG on 2026-11-13 instead resolves absence
+within the lookup and returns only a string.
 See [DD#101](DD101-getenv-lookup-status.md).
 
 Note the examples above use `bless`, which DD#93 renamed to **`attest`**.

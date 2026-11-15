@@ -1,12 +1,13 @@
 title: "DD#111 — a value intrinsic is exempt inside `$( )` only when it *is* the substitution"
 status: accepted
 
-1. A value-only intrinsic is legal in `$(…)` only as its lone top-level
+1. A value intrinsic is legal in `$(…)` only as its lone top-level
    statement, where it is rewritten to a value. It has no ordinary
    statement-position meaning, including elsewhere in a capture body.
 2. Capturing a statusless value leaves no result for `-` to discard.
-   `getenv`'s separate lookup status must be explicitly handled or discarded;
-   the string's taint is independent (DD101).
+   This includes `arg`/`getenv` with a literal default (DD101).
+3. Bare `arg`/`getenv` supply separate presence status requiring explicit
+   handling or discard. Every lookup form's string remains tainted.
 
 ---
 
@@ -44,11 +45,13 @@ including fresh permission at capture entry.
 The whole-substitution exemption does not make every prefixed spelling
 legal. DG rejected `$(- toupper abc)` and other value-intrinsic captures
 with no separate status to discard (DD55, 2026-11-08; journal 590).
-The capture consumes their value. `getenv` is different because DD101
-gives it a lookup status as well. That status must be explicitly consumed
-or discarded, even when the string is used; `$(- getenv NAME)` discards
-only the status and leaves the value tainted. The 2026-11-12 obligation is
-pending in `require-getenv-status-handling`; statusless-prefix rejection
+The capture consumes their value. DD101's bare `arg` and `getenv` forms
+instead supply a separate lookup status. Consume or discard that status,
+even when the string is used; `$(- arg N)` / `$(- getenv NAME)` discard
+only presence and leave the value tainted. With a literal default, either
+lookup returns only a value, so an inner `-` discards nothing and rejects.
+The 2026-11-12/13 lookup changes are pending in
+`require-getenv-status-handling`; general statusless-prefix rejection
 remains with `reject-statusless-intrinsic-suppression`. Neither grants new
 statement-position meaning to an intrinsic or changes the sole-statement rule.
 

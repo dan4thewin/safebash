@@ -72,13 +72,19 @@ Every string slot is a *leading* argument, so a count suffices:
 
 | intrinsic | string slots |
 |---|---|
-| `toupper` `tolower` `strlen` `basename` `dirname` `getenv` | 1 |
+| `toupper` `tolower` `strlen` `basename` `dirname` | 1 |
+| `getenv` | 1 (name), plus the optional literal default (DD101) |
 | `match` `matchall` | 2 (subject, pattern) |
 | `sub` `gsub` | 3 (subject, pattern, replacement) |
 
 Not just the subject: `$(gsub $s "b" $n)` puts an int in the
 *replacement* and is equally a coercion. The trailing array target of
 the 3-arg `match`/`matchall` form is excluded by the count.
+
+DD101's `getenv` default form is accepted but not implemented. Its extra
+string slot also obeys DD65's literal restriction; quoting an expansion
+does not make it an admissible default. Delivery is owned by
+`require-getenv-status-handling`.
 
 `join` is absent deliberately — its first operand is a collection
 (SB4030 already) and its separator must be a literal (DD#106), so

@@ -2,18 +2,20 @@ title: DD#42 — getenv and argv as builtins
 status: superseded
 superseded-by: DD60
 
-1. `$(getenv NAME)` is the explicit environment read and takes exactly one
-   argument; its string result is tainted.
-2. The lookup succeeds for a present name, including an empty value, and
-   fails with empty text for an absent name. Explicitly handle or discard
-   its status; a string consumer alone does not handle it (DD101).
+1. `$(getenv NAME [DEFAULT])` is the explicit environment read; every
+   form returns tainted text.
+2. Without DEFAULT, a present name succeeds, including empty; absence fails
+   with empty text. Explicitly handle or discard status; a string consumer
+   alone does not handle it (DD101).
+3. A literal DEFAULT handles absence and makes the lookup value-only.
+   Present-empty stays empty; no status remains to test or discard (DD101).
 
 ---
 
 **The argv/argc half of this DD is superseded by [DD#60](DD60-argv-trio.md)**
-(C-semantics `argv`/`arg`/`argc` trio). `$(getenv VAR)` remains the canonical
-env-var read; DD101 governs its status. The historical argv/argc text below is
-retained for context; for current behavior see DD#60.
+(C-semantics `argv`/`arg`/`argc` trio). `getenv` remains the canonical env-var
+read; DD101 governs presence and literal defaults. The argv/argc text below
+is retained for context; for current behavior see DD#60.
 
 `$(getenv VAR)` reads an environment variable. ~~`$(argv N)` reads
 positional parameter N (1-based). `$(argc)` returns the count of
@@ -41,15 +43,20 @@ string), nonzero when it is unset — so
 
     home=$(getenv HOME) || home=/root
 
-is a legal capture-condition. The value semantics above are unchanged: the
-result is still a tainted string, still `""` when the name is absent, and
-`getenv` still takes exactly one argument (DD#101 deliberately did **not**
-adopt the `$(arg N DEFAULT)` shape).
+is a legal capture-condition. Without a default, the result is still a tainted
+string, still `""` when the name is absent.
+~~`getenv` still takes exactly one argument (DD#101 deliberately did **not**
+adopt the `$(arg N DEFAULT)` shape).~~
 
 DD101's 2026-11-12 revision requires explicit handling or discard of that
-status. An unhandled lookup is a compile error; `$(- getenv NAME)` retains
+status. An unhandled bare lookup is a compile error; `$(- getenv NAME)` retains
 the value while explicitly discarding presence. Neither handling nor discard
-resolves taint. Enforcement is pending in `require-getenv-status-handling`.
+resolves taint.
+
+DD101's 2026-11-13 revision adds `$(getenv NAME DEFAULT)` with the same
+literal-default contract as `arg`: select DEFAULT only on absence, and return
+only the selected tainted string. Bare `arg` also gains the same presence result.
+The expanded `require-getenv-status-handling` owns these pending changes.
 
 Note for readers arriving from the abort discussion: this file's "There is no
 silent empty return" is scoped to `$(argv N)` **out-of-range bounds**, the
@@ -60,6 +67,5 @@ it says nothing about environment lookups — an earlier revision of
 ## See also
 
 - DD#24 — Taint quarantine and bless (getenv results are tainted)
-- DD#26 — Integer overflow traps (same abort philosophy)
 - DD#53 — Env var isolation (getenv is the only way to read env vars)
-- DD#101 — `$(getenv NAME)` lookup status
+- DD#101 — shared lookup status and literal defaults

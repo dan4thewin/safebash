@@ -3,28 +3,45 @@ status: implemented
 supersedes: DD42
 
 1. `$(argc)` is the clean C-style argument count, including the program
-   name. `$(arg N)` returns one tainted string, indexed from zero, and
-   aborts out of range; an optional literal default supplies the fallback.
-   Argument indices obey DD#112; negative indices are rejected.
-2. `argv [N] a` fills an array with `argv[N:]`, defaulting to zero,
+   name.
+2. `$(arg N)` returns one tainted string plus presence status, indexed from
+   zero: present-empty succeeds; absent supplies empty text and failure.
+   Explicitly handle or discard status under DD101.
+3. `$(arg N DEFAULT)` returns only a tainted string: the supplied value,
+   including empty, or literal DEFAULT on absence. It has no status to
+   test or discard. Index validation still applies.
+4. Argument indices obey DD#112; malformed and negative indices are rejected.
+5. `argv [N] a` fills an array with `argv[N:]`, defaulting to zero,
    auto-declaring an eligible target and replacing its contents. A slice
    starting beyond the arguments is empty, not an error.
-3. `$(argv)` and `$(argv N)` are tainted source splats, usable only as the
+6. `$(argv)` and `$(argv N)` are tainted source splats, usable only as the
    sole source of a `for` header. Each iteration binds source data; a
    stored tainted array instead needs attest-all before an ordinary splat.
-4. Program arguments use this trio; function arguments use DD#75's
+7. Program arguments use this trio; function arguments use DD#75's
    immutable `args` collection. Acquisition, adjacent attest and unresolved
    live-binding taint follow DD#121/DD#127/DD#128.
 
 ---
 
+DD101's symmetric `arg`/`getenv` contract was accepted on 2026-11-13
+(journal 631). `arg`'s new presence result and mandatory handling/discard
+are **not implemented**; the expanded
+[`require-getenv-status-handling`](../tasks/require-getenv-status-handling.md)
+owns delivery. The original trio remains implemented; `argc`, `argv` and
+function arguments are unchanged.
+
 ## Addendum 2026-08-17 — `$(arg N DEFAULT)` optional default
 
-`$(arg N)` out-of-range **aborts** (below). This addendum adds an *opt-in*
+~~`$(arg N)` out-of-range **aborts** (below).~~ This addendum added an *opt-in*
 fallback: `$(arg N DEFAULT)` returns `argv[N]` if `N` is in range, else the
-value of `DEFAULT`. The abort form is unchanged — a bare `$(arg N)` still
+value of `DEFAULT`. ~~The abort form is unchanged — a bare `$(arg N)` still
 aborts, so a *forgotten* argument is still caught; the default is only for a
-*genuinely optional* argument.
+*genuinely optional* argument.~~
+
+Under the current shared contract, a bare lookup's presence must be handled
+or discarded; `dir=$(arg 1) || fail 1` explicitly requires the argument.
+The defaulted form handles absence itself and returns only the chosen string.
+A supplied empty argument remains empty, even with a nonempty DEFAULT.
 
 <del>
 
@@ -95,12 +112,16 @@ count of user-supplied arguments. The program name (`argv[0]`) is always
 present, so `$(argc) >= 1` always holds. `$(argc)` is **clean** — it is a
 count (process metadata, like `$#`), not external data.
 
-`$(arg N)` returns the Nth program argument as a single string, 0-indexed,
-and is **tainted**:
+`$(arg N)` returns the Nth program argument as a single tainted string,
+0-indexed, plus its presence status (DD101):
   - `$(arg 0)`  → argv[0]  = program name
   - `$(arg 1)`  → argv[1]  = first user arg
-  - `$(arg N)`  for N >= `$(argc)` aborts at runtime with a clean error
-    (consistent with DD#26 overflow-trap philosophy; no silent empty)
+  - `$(arg N)` for N >= `$(argc)` supplies `""` and failure status;
+    a supplied empty argument instead supplies `""` and success.
+
+~~An out-of-range `$(arg N)` aborts at runtime with a clean error,
+consistent with DD#26's overflow-trap philosophy; no silent empty.~~
+Missing input now has an explicit result, not an implicit assertion.
 
 `$(argv)` returns the entire argv array, including the program name at
 index 0. Equivalent to `$(argv 0)`. **Tainted**, splat-context only.
@@ -124,8 +145,10 @@ Any other appearance is a compile error:
   - `[[ -n $(argv) ]]` rejected
   - `$(($(argv)))`     rejected
 
-`$(arg N)` and `$(argc)` are scalar-returning, legal anywhere a scalar
-substitution is, subject to DD#24 taint rules.
+Bare `$(arg N)` requires a compatible presence consumer or explicit
+`$(- arg N)`. Defaulted `$(arg N DEFAULT)` and `$(argc)` are value-only,
+subject to their ordinary scalar-context and taint rules. Neither value-only
+form supplies a capture-condition status or a spare status for `-`.
 
 Negative indices (`$(arg -1)`, `$(argv -1)`) are rejected at compile time
 — no negative indexing in v1.
@@ -225,7 +248,8 @@ not an element of `args`.
 
 - DD#22 — no word splitting (quotes yield one string; array splats unquoted)
 - DD#24 — taint quarantine (argv/arg sources are tainted; argc clean)
-- DD#26 — integer overflow traps (same abort philosophy for `$(arg N)`)
+- DD#101 — shared lookup presence, handling and literal-default contracts
+- DD#112 — argument-index validation
 - DD#41 — sash-native array syntax (`@arr`; `len`/`keys`/`join`)
 - DD#46 — positionals function-local (top-level redirects to here)
 - DD#61 — array taint construction + bless-all (~~`array a=$(argv)` is a

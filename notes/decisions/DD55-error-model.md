@@ -18,8 +18,8 @@ status: implemented
    non-void call results require compatible consumption or explicit discard.
    DD88 named-predicate captures bind stdout and consume the returned status,
    without handling operand/body failures.
-   `getenv` lookup status likewise requires explicit handling or discard
-   independently of its string value and taint (DD101).
+   Bare `arg`/`getenv` lookup status likewise requires handling or discard;
+   literal-default forms return only tainted text (DD101).
 6. Anonymous stdout bodies may return void, not explicit statuses.
    Process-replacing exec is excluded from stdout bodies and their callees;
    direct integer captures retain their integer channel through redirects.
@@ -297,12 +297,15 @@ creates another result channel; existing placement and redirect-syntax
 restrictions remain.
 
 This is a result-channel rule, not a test of whether particular arguments
-make failure likely. DD101's `getenv` has a real lookup status in addition
-to its value, so it is not in this class. That status must be consumed
-through a legal capture-condition or discarded inside `$(- getenv NAME)`;
-capturing the string alone is not handling. Unhandled lookups are compile
-errors, independently of taint or an enclosing condition. This November 12
-revision is pending in `require-getenv-status-handling`.
+make failure likely. DD101's bare `arg` and `getenv` forms have a real
+lookup status in addition to the value. Consume it through a legal
+capture-condition or discard it inside `$(- arg N)` / `$(- getenv NAME)`;
+capturing the string alone is not handling. Unhandled bare lookups are compile
+errors, independently of taint or an enclosing condition. Supplying a literal
+default handles absence and makes either lookup value-only, so
+`$(- arg N DEFAULT)` / `$(- getenv NAME DEFAULT)` have no status to discard.
+All four forms remain tainted. The November 12/13 revisions are pending in
+`require-getenv-status-handling`.
 An external command's status is likewise distinct from captured stdout.
 
 Under DD132's provisional model, `sub`/`gsub` also have a real second
@@ -861,8 +864,9 @@ retains this attempt's output on a false return and preserves same-process
 effects and taint. The body remains independently checked.
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
 owns implementation. ~~This is not `getenv`'s exception to mandatory
-handling.~~ DD101 now requires explicit handling or discard for lookup status
-too; its separate implementation owner is `require-getenv-status-handling`.
+handling.~~ DD101 now requires explicit handling or discard for bare lookup
+status too; literal-default lookups instead return only a value. Its separate
+implementation owner is `require-getenv-status-handling`.
 
 ### Anonymous capture returns (DG, 2026-11-06)
 

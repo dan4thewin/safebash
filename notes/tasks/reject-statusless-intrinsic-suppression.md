@@ -6,7 +6,8 @@ depends: []
 gates:
   - "Captured value intrinsics without a separate status receive a located refusal for their source - in native and C, independent of taint switches"
   - "The rule covers string/integer results and all otherwise legal capture placements; wrappers and redirects do not change result kind"
-  - "Ordinary value captures, getenv lookup handling/discard, external stdout captures, explicit integer/pid discard and existing body/operand boundaries are preserved"
+  - "Bare arg/getenv lookup handling/discard is preserved; their literal-default forms are value-only and reject inert capture prefixes"
+  - "Ordinary value captures, external stdout captures, explicit integer/pid discard and existing body/operand boundaries are preserved"
   - "Historical noreach.12 and other affected specs are reviewed; a prefix refusal is not accepted as proof of the no-reach barrier"
   - "Changed contracts use fresh global ids; focused before/reversion evidence and the full predicted gate pass"
 
@@ -34,16 +35,18 @@ itself is otherwise legal. Wrappers and redirects do not create a status
 or turn a value capture into stdout capture; this grants no new redirect
 or statement-position syntax to intrinsics.
 
-DD101's `getenv` has a lookup status as well as a value. Preserve its
-legal status discard and ordinary capture-condition handling, while
+DD101's bare `arg`/`getenv` forms have lookup status as well as a value.
+Preserve legal status discard and ordinary capture-condition handling, while
 `reject-discarded-status-consumers` forbids consuming an explicitly
 discarded status. Preserve legal external stdout captures too.
 
-DD101's 2026-11-12 revision makes that lookup-status handling/discard
-mandatory, independently of taint. `require-getenv-status-handling` owns
-the new obligation; this task must not reject its legal `$(- getenv NAME)`
-form as though it had no second result.
-Taint and status-availability rules remain in force.
+DD101's 2026-11-12/13 revisions require that handling/discard and add
+literal-default value-only forms for both lookups. The expanded
+`require-getenv-status-handling` owns delivery. Preserve `$(- arg N)` and
+`$(- getenv NAME)`, but reject `$(- arg N DEFAULT)` and
+`$(- getenv NAME DEFAULT)`: the defaults already resolve absence and leave
+no status to discard. Classify by legal form, not builtin name alone.
+All four forms remain tainted; existing status-availability rules still apply.
 
 DD132 provisionally gives `sub`/`gsub` a real boolean beside their text,
 so the integrated `q-glob-semantics` branch trial must classify them

@@ -1,9 +1,10 @@
 title: DD#24 — Taint Quarantine and Bless
 status: implemented
 
-1. Environment values and program argument values are tainted. Fd/pipe reads,
-   including kernel-backed captures, introduce taint; compiler-owned buffer
-   copies introduce none and do not clear existing taint.
+1. Environment and program-argument values are tainted, even when a lookup
+   selects a literal default. Fd/pipe reads, including kernel-backed captures,
+   introduce taint; compiler-owned buffer copies introduce none and do not
+   clear existing taint.
 2. Quarantine applies at every value-use site, not only dangerous sinks.
    Explicit `:!` reads override the guard without validating the binding.
 3. Own taint is resolved in its producing body or immediately after that body's
@@ -27,15 +28,17 @@ incorporating DD#43, DD#44, DD#47, DD#49.
 A binding acquires taint from:
 
 - `x=$(- getenv VAR)` — environment read with explicit lookup-status discard
-- `x=$(arg N)` — single program positional param (DD#60)
+- `x=$(- arg N)` — program argument read with explicit lookup-status discard
 - `array a=$(argv)` / `array a=$(argv N)` — whole/sliced argv snapshot (DD#60)
 - `read ARR` or `readline x` from any fd, including a builtin-produced pipe
 - any kernel-backed `$( … )`, whether it captures an external command,
   a user function or an anonymous body
 
-DD101 requires the environment lookup's status to be handled or explicitly
-discarded. Both outcomes remain tainted; consuming status does not validate
-contents, and attest or `:!` does not consume lookup status.
+DD101 requires bare `arg`/`getenv` presence status to be handled or explicitly
+discarded. A literal default instead resolves absence and makes the lookup
+value-only. All four forms remain tainted, including absent/default outcomes;
+neither handling nor fallback validates contents, and attest or `:!` does not
+consume a bare lookup's status.
 
 DD#127's boundary is the **kernel read**, not whether the intended producer
 execs. A compiler-owned buffer capture introduces no taint; every pipe and
@@ -303,8 +306,8 @@ same as argument/for-word position. Likewise a *direct* tainted
 scalar in a `[[ ]]` operand or a redirect target is a read.
 
 DG's model: every `$( )` is internally `_tmp=$(…)` and reuses the one
-read-checking machinery, whichever position it sits in. A bare
-*source* (`x=$(getenv X)` / `$(arg N)`) remains the sanctioned way to
+read-checking machinery, whichever position it sits in. A direct
+*source* (`x=$(- getenv X)` / `x=$(- arg N)`) remains the sanctioned way to
 obtain external data (it taints the target); only a *read of
 already-tainted data* is rejected. `len` stays exempt (cardinality,
 not element data); `join`/`keys` expose element data and are reads.

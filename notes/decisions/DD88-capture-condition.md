@@ -2,14 +2,15 @@ title: DD#88 - Capture-conditions bind values and consume producer results
 status: accepted
 
 1. An untyped single-producer binding may consume the actual status of a single
-   external command, named predicate, otherwise-legal pipeline, `getenv` lookup
-   or direct file slurp. Capture preserves pipeline-stage eligibility.
+   external command, named predicate, otherwise-legal pipeline, bare
+   `arg`/`getenv` lookup or direct file slurp. Capture preserves stage eligibility.
 2. Invoke a named predicate once: bind its stdout and consume its explicit
    returned status. Same-process effects persist on either result.
 3. Bind this attempt's bytes on false too, including partial/empty text;
    a completed empty read succeeds. Handling is not attest.
-4. Assignment itself has no result. Declarations, void/integer function calls,
-   arbitrary expressions and multi-statement bodies gain no condition result.
+4. Assignment itself has no result. Declarations, void/integer calls,
+   value-only captures, arbitrary expressions and multi-statement bodies gain
+   no condition result; literal-default lookups are value-only (DD101).
 5. Ordinary handling-position, negation, taint and no-reach rules apply;
    discarded statuses cannot also be consumed.
 6. Stdout captures must retain a possible connected writer after redirects;
@@ -26,6 +27,9 @@ DG accepted named predicate-function capture-conditions on 2026-11-12
 (journal 628). That extension is also **unimplemented**;
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
 owns it.
+DD101's symmetric lookup decision (DG, 2026-11-13; journal 631) admits bare
+`arg` alongside bare `getenv`, but not their value-only literal-default forms.
+That extension is **unimplemented** in `require-getenv-status-handling`.
 
 These are scoped forms, not general multi-value binding. The general
 multi-value `return` / `(stdout, status, stderr)` trio remains deferred to
@@ -45,15 +49,15 @@ assignment as a value binding with "no meaningful exit status" — true for
 In an existing **boolean/status-consuming context**, an untyped assignment
 whose RHS is one eligible producer is a **capture-condition**. The accepted
 producers are a single external command, an ~~external~~ otherwise-legal
-pipeline, a named predicate function, DD101's `getenv` lookup, and a direct
-`$(<file)` read:
+pipeline, a named predicate function, DD101's bare `arg`/`getenv` lookups,
+and a direct `$(<file)` read:
 
 - the **condition consumes the producer's actual status**
   (`test = status == 0`); a recoverable nonzero result does **not** abort
   (the status is consumed — DD#55's "binding the status" rule);
-- the producer's **text is bound to the target**. External output, environment
-  data and file input retain their taint; handling acquisition failure is
-  not validation of the acquired data;
+- the producer's **text is bound to the target**. External output,
+  environment/program-argument data and file input retain their taint;
+  handling acquisition failure is not validation of the acquired data;
 - `$?` is available as the **first expression of the handling branch** (the
   existing DD#55 handling-position rule), so `if x=$(cmd) { … } else { echo $? }`
   reads the real failing code in the else branch;
@@ -66,10 +70,11 @@ pipeline, a named predicate function, DD101's `getenv` lookup, and a direct
 ### Scope
 
 - **RHS shape:** a single external `$(cmd)` OR a pipeline `$(a | b)` ~~of external
-  stages~~, a named predicate `$(f args...)`, `$(getenv NAME)`, or a direct
-  `$(<file)`. ~~Excluded (stay SB4025): a user-function capture `$(f)`
+  stages~~, a named predicate `$(f args...)`, bare `$(arg N)` / `$(getenv NAME)`,
+  or a direct `$(<file)`. ~~Excluded (stay SB4025): a user-function capture `$(f)`
   (functions convey status via `return` — DD#74 predicates).~~
-  Excluded: void/integer function calls, other value-only intrinsics,
+  Excluded: void/integer function calls, value-only intrinsics (including
+  `$(arg N DEFAULT)` / `$(getenv NAME DEFAULT)`),
   a concatenation such as
   `foo$(cmd)`, a multi-statement `$(a; b)`, and any literal RHS.
 - **Untyped only:** `if int n=$(cmd)` (typed declaration) is NOT a
@@ -78,7 +83,7 @@ pipeline, a named predicate function, DD101's `getenv` lookup, and a direct
   conditions use the same producer-result rule.
 - **Stdout on a returned failure:** this attempt's partial/empty bytes remain,
   including for a named predicate.
-  File reads follow the corresponding rule below; `getenv` retains DD101's
+  File reads follow the corresponding rule below; bare lookups retain DD101's
   lookup-value contract. A truly-unused captured target is a dead variable
   (SB5050). For an external command whose stdout is not needed, use the
   non-capturing `if ! cmd { … }` form.
@@ -133,8 +138,9 @@ declarations, concatenations and multi-statement bodies remain ineligible.
 Outside a handling context, a status-function stdout capture still requires
 explicit discard (`text=$(- f)`). ~~DD101's permission to ignore lookup
 absence belongs to `getenv`, not to functions.~~ DD101 now requires explicit
-handling or discard of lookup status too. Conversely, neither `if text=$(- f)`
-nor `if text=$(- getenv NAME)` can consume the status that source `-` discards.
+handling or discard of bare lookup status too. Conversely, `if text=$(- f)`,
+`if text=$(- arg N)` and `if text=$(- getenv NAME)` cannot consume the status
+that source `-` discards.
 
 **Implementation pending:** `predicate-capture-conditions` owns eligibility,
 result plumbing and native/C behavior. Preserve the existing shared
@@ -319,10 +325,15 @@ exception: `$(getenv NAME)` interrogates external state and can report a
 not-found **result**, so it composes with both `x=$(getenv N) || …`
 and `if ! x=$(getenv N) { … }`. This lookup extension is implemented.
 DG's later 2026-11-12 revision requires explicit handling or discard:
-a plain value-only capture is a compile error, while `$(- getenv NAME)`
+capturing only the bare lookup's text is a compile error, while `$(- getenv NAME)`
 discards lookup status without declassifying its value. That enforcement
-is pending in `require-getenv-status-handling`; it does not broaden the
-capture-condition grammar.
+is pending in `require-getenv-status-handling`.
+
+DG's 2026-11-13 symmetric lookup rule adds bare `$(arg N)` to the same
+consumers: use actual presence, not text length, and evaluate once. Supplying
+a literal default to either lookup makes it value-only, hence ineligible as
+a capture-condition. The same task owns this pending extension; typed
+declarations and other excluded RHS shapes remain excluded.
 The accepted file-read extension and provisional regex extension are
 specified above; value-only producers do not gain a separate result merely
 by using `$()` notation.

@@ -4,7 +4,9 @@ status: accepted
 1. A literal `arg` index is a non-negative decimal integer written as digits;
    leading zeros are allowed, partial parses and malformed spellings are not.
 2. Computed indices must be integer-valued (DD89) and retain runtime
-   bounds checks. Literal negative indices reject at compile time.
+   index validation. Literal negative indices reject at compile time.
+   A valid index beyond the supplied arguments is absence under DD101,
+   not a malformed index.
 
 ---
 
@@ -14,6 +16,8 @@ status: accepted
 
 The index in `$(arg N)` / `$(arg N DEFAULT)`, **when it is a literal**, must be
 a non-negative decimal integer. Anything else is a compile-time error, SB5078.
+These examples isolate index validity; a valid bare lookup also needs
+explicit presence handling or discard under DD101.
 
 ```sh
 x=$(arg abc)     # SB5078
@@ -22,8 +26,8 @@ x=$(arg -)       # SB5078
 x=$(arg -x)      # SB5078
 x=$(arg +1)      # SB5078
 x=$(arg -1)      # SB5038 — still the DD#60 negative-index rule
-x=$(arg 01)      # fine — digits, not spelling
-x=$(arg $i)      # fine — computed, a runtime concern
+x=$(arg 01)      # valid index; presence still needs handling or discard
+x=$(arg $i)      # integer index; runtime validation and presence rules apply
 ```
 
 The computed example requires an integer `i` (DD89); it does not permit
@@ -50,12 +54,14 @@ the second digit changes which argument you get, with no signal at all.
 
 This is not a new rule so much as an unfinished one. `arg_index_diag` already
 existed as a typo guard, and DD#60 already states that `$(arg -1)` is rejected
-at compile time. Spec `av.t6` already pins the governing intent for the
-neighbouring case:
+at compile time. The historical neighboring bounds rule, pinned by `av.t6`,
+was:
 
-> `$(arg N)` for N >= argc aborts at runtime (no silent empty)
+> ~~`$(arg N)` for N >= argc aborts at runtime (no silent empty)~~
 
-An out-of-range index refuses to guess. A malformed index was guessing.
+DD101's 2026-11-13 contract replaces that abort with presence status or a
+literal fallback. It does not weaken this rule: malformed and negative
+indices remain invalid, and a default cannot make them missing-input cases.
 
 ## Scope: literals only
 

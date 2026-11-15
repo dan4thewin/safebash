@@ -10,15 +10,17 @@ gates:
 
 # getenv presence handling
 
-**Current policy (DG, 2026-11-12):** DD101 now requires explicit handling or
-discard of every lookup status. The original lookup-status delivery below
-remains done; `require-getenv-status-handling` owns the new enforcement.
+**Current policy (DG, 2026-11-12/13):** DD101 requires explicit handling or
+discard for bare `arg`/`getenv`. Both also have literal-default value-only
+forms; present-empty never selects the fallback, and every form stays tainted.
+The original lookup-status delivery below remains done; the expanded
+`require-getenv-status-handling` owns the new contract's implementation.
 Historical observations below are not current acceptance gates. In particular,
 taint validation does not establish presence, and `||` excludes only
 unconditional abort, not checking an unhandled failure.
 
 > **DECIDED (DG, 2026-09-12).** Presence is signalled by the **exit status of
-> the lookup**, and there is **no default argument**. See "Decision" at the
+> the lookup**, and there is ~~**no default argument**~~. See "Decision" at the
 > bottom; the two candidate designs above are kept for context only.
 
 DG (2026-09-03), on the DD#88 capture-condition rejecting `$(getenv NAME)`:
@@ -65,9 +67,9 @@ capture-condition machinery. DG to choose one or both.
 > "the intrinsic isn't failing, but the lookup of a particular env var
 > fails; no default arg; rather `home=$(getenv HOME) || home=/home/dg`"
 
-This rejects the optional-default design outright and adopts status-based
-presence. The framing matters: the objection that DD#88/SB4025 assume
-intrinsics "can't fail" does not apply, because **the intrinsic is not
+This rejected the optional-default design at that time and adopted status-based
+presence. DD101 now allows both. The framing matters: the objection that
+DD#88/SB4025 assume intrinsics "can't fail" does not apply, because **the intrinsic is not
 failing** — it performs a lookup correctly and reports that the lookup found
 nothing. That is a result, not a malfunction.
 
@@ -106,7 +108,7 @@ DG settled both open points:
   unset/set-to-empty distinction — the entire point of the feature — stays
   unrecoverable.
 
-No default argument (contrast DD#60's `$(arg N DEFAULT)`).
+~~No default argument (contrast DD#60's `$(arg N DEFAULT)`).~~
 ~~No abort (which would be incompatible with `||`).~~ No abort was the
 original status-only choice, not a consequence of `||`. Written up as
 **`notes/decisions/DD101-getenv-lookup-status.md`**.
