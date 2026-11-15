@@ -27,5 +27,17 @@ measurement, spec sweep or coverage run.
 
 DG requested a branch snapshot, then a more pedagogic order: simpler
 concepts first, taint before `:!`, and a capture definition before its
-enclosing-binding rules. This commit preserves the original outline
-unchanged on `spec-outline`; the ordering revision follows.
+enclosing-binding rules. Snapshot `2ef86c2a`, pushed on `spec-outline`,
+preserves the original outline unchanged; main is unchanged.
+
+The revised draft is uncommitted. The AI reorganized it into 21 topics:
+words, bindings and simple commands first; tests, collections and functions
+before captures; taint before trust and scratch; regex operations before
+regex-proof details; process composition and capture-conditions later.
+Scope/lifetime constraints now accompany the construct they constrain,
+rather than preceding its definition in an early scope section.
+
+Rules were moved or split without selecting new language behavior.
+Brief syntax/term introductions supply the missing context. The provisional
+package remains complete only within the draft; no implementation or
+permanent specification machinery is implied.
