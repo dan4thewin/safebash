@@ -104,3 +104,91 @@ DD134's element-typed loop binders and the symmetric lookup policy remain
 queued, not implemented here. The `write` discussion remains unsettled.
 Both local lockfiles and the runtime archive are unchanged. No coverage run
 or unrelated implementation was started.
+
+## Tour follow-up: justified trusted reads
+
+DG corrected slide 47's framing of `:!` as wanting the input "as-is".
+Its purpose is to omit a redundant attest when ordinary code already
+validates rigorously, or when the intended use is safe for any contents.
+The slide now demonstrates `strlen $input:!` without redundant braces and
+describes exhaustive dispatch over `sash-getopt` output as the other case.
+It preserves the per-read boundary: no validation or binding-wide
+declassification is implied. This clarifies DD91, not a new taint rule.
+
+## Tour follow-up: canonical names beside familiar shorthand
+
+DG requested keeping familiar `$1`, `$2` and `$#` in the function snippets,
+while naming their canonical `$args[0]`, `$args[1]` and `$(len args)` forms.
+The variadic slide distinguishes whole-array use from counting: the latter
+does not make a function variadic (DD81).
+
+The failure and signal snippets now use `$(status)` and `$(getpid)`, with
+`$?` and `$$` mentioned as aliases. The background example already used
+`$(getcpid)`; its prose now also names `$!` and distinguishes `waitstatus`
+from `status`. These are DD75/DD126's existing forms and availability rules,
+not new language behavior. The tour and all other review work remain
+uncommitted.
+
+All 49 snippets still pass. Exact-output checks also confirm the variadic,
+failure-handling, background-job and signal examples, so the signal example
+cannot pass merely by failing to compile.
+
+## Tour follow-up: unary shape checks before ordinary code
+
+DG preferred the useful `p?`/`g?` shorthands to regex-heavy attests, and
+asked to show a compound predicate allowing empty or printable input.
+The introductory, caught-failure, collection and captured-output examples
+now use those unary forms. Their explanation preserves DD93's exact
+boundary: both require non-empty ASCII text; `p?` permits spaces and `g?`
+does not. Attestation establishes that shape, not application-specific
+meaning. The passwd example first attests printability, then checks the
+root UID with an ordinary `if` before making its claim.
+
+The new compound-attest slide uses `attest s [[ -z $s || p? $s ]]`, followed
+by `echo ${s:-empty}`. Its `$(arg 1 "")` explicitly resolves an absent
+argument without introducing a separate lookup-status lesson; a supplied
+empty argument remains empty. The caught-failure example uses the missing
+third argument, so the tour actually exercises the failed-check branch.
+
+All 50 snippets pass. Exact outputs pin the edited examples; eleven direct
+runs of their extracted source cover missing/empty arguments, printable
+spaces, graphical punctuation, control bytes, non-ASCII input and the
+caught check's successful branch. Logs are retained as
+`tour-unary-attests-check.log` and `tour-unary-attests-results.json` in the
+same private evidence directory. No compiler, spec or language rule changed;
+all review work remains uncommitted.
+
+## Tour follow-up: give regex operations room
+
+DG asked to split the cramped regex slide, show one regex attest, explain
+why backslashes need no shell escaping, and teach the builtin operations
+before their convenience spellings. Six focused slides now cover matching,
+captures, a regex attest, `sub`/`gsub`, substitution sugar and chained edits.
+The capture slide also introduces `matchall`, used by the later exercise.
+
+The examples leave simple regex words unquoted. Parentheses and counted
+repetition in ordinary builtin arguments still need quotes: the initial
+unquoted draft correctly received parser diagnostics, so the final capture
+pattern is single-quoted. Quoting groups the argument; it does not disable
+regex syntax. The attest deliberately checks for digits somewhere in its
+input, then ordinary code extracts the first sequence. It does not claim
+that the whole input is numeric or resolve the existing anchor bug.
+
+The replacement examples distinguish new text from mutation. `foo =~`
+takes a binding name, not a `$foo` read. Its three-edit chain demonstrates
+left-to-right dependence, per-edit `g`, and continuation after a comma;
+the expansion chain produces text without writing the subject.
+
+All 55 snippets pass, including exact output assertions for the six new
+slides. Five direct controls of the extracted attest source cover a number,
+embedded digits, multiple sequences, a missing argument and no digits.
+Presenterm's overflow check accepts the six slides at 100 columns by 30
+rows and reports a deliberately oversized control. That control is judged
+by the rendered overflow error, not exit status: quitting its error screen
+also exits zero.
+
+Evidence is in `tour-regex-check-final.log`, `tour-regex-results.json`,
+`tour-regex-layout-final-100x30.log` and
+`tour-regex-layout-negative-control.log` in the same private directory.
+No compiler or spec change, new language rule, commit or push; the complete
+review set remains uncommitted.

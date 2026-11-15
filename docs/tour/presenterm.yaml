@@ -1,0 +1,18 @@
+# presenterm configuration for the safebash tour (mk tour).
+# Snippets are written as ```bash +exec:sash so they get bash highlighting
+# but are compiled by sash and run as static binaries.
+snippet:
+  exec:
+    custom:
+      bash:
+        filename: script.sh
+        hidden_line_prefix: "/// "
+        commands:
+          - ["bash", "$pwd/script.sh"]
+        alternative:
+          sash:
+            filename: snippet.sh
+            commands:
+              - ["sash-snippet", "$pwd"]
+defaults:
+  max_columns: 100
