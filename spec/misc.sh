@@ -49,10 +49,10 @@ run_sash_emit_ir() {
 # 104.1 --emit-ir accepted, and stamps a version a consumer can refuse on
 if in_modes native; then
     run_sash_emit_ir 'echo hello'
-    [[ $rc = 0 && -z $err && $out == *":ir-version 2"* \
-       && $out == *":exit-block nil"* && $out == *":err-block nil"* ]]; chk h128.104.1
+    [[ $rc = 0 && -z $err && $out == *":ir-version 3"* \
+       && $out == *":exit-block nil"* && $out == *":err-block nil"* ]]; chk ircell.1
 else
-    skip_chk h128.104.1
+    skip_chk ircell.1
 fi
 
 # 104.2 the capture is structural — IR node names, not an interpretation.
@@ -79,19 +79,19 @@ else
 fi
 
 # Both handlers have their own structural fields, not synthetic definitions
-# in :statements. Schema 2 replaces :end-block (DD104, DD128).
+# in :statements. Schema 3 retains schema 2's handler fields (DD104, DD128).
 if in_modes native; then
     run_sash_emit_ir 'echo hi
 EXIT {
 echo bye
 }
 ERR { - echo failed }'
-    [[ $rc = 0 && -z $err && $out == *":ir-version 2"* \
+    [[ $rc = 0 && -z $err && $out == *":ir-version 3"* \
        && $out == *":exit-block [{:kind :command"* \
        && $out == *":err-block [{:kind :suppressed"* \
-       && $out != *":end-block"* ]]; chk h128.104.5
+       && $out != *":end-block"* ]]; chk ircell.2
 else
-    skip_chk h128.104.5
+    skip_chk ircell.2
 fi
 
 # 104.6-104.8 the capture never holds an arithmetic `++`/`--` or `a[i]`
@@ -111,13 +111,19 @@ else
     skip_chk 104.6
 fi
 
-# 104.7 `(( v[0] += 5 ))` likewise — an assignment whose value reads the cell,
-#       never an `:arith-subscript-assign`
+# A compound cell assignment retains its operator and one index expression;
+# its RHS no longer contains a second copy of the cell read.
 if in_modes native; then
-    run_sash_emit_ir 'int array v=(1 2); (( v[0] += 5 )); echo ${v[0]}'
-    [[ $rc = 0 && -z $err && $out == *":kind :assignment"* && $out == *":kind :arith-subscript"* && $out != *"arith-subscript-assign"* ]]; chk 104.7
+    run_sash_emit_ir 'fn key -> int { return 0 }
+int array v=(1 2)
+(( v[(key)] += 5 ))
+echo $v[0]'
+    [[ $rc = 0 && -z $err && $out == *':assign {:name "v" :op :add'* \
+       && $out == *':value {:kind :arithmetic :expr {:kind :arith-literal :value 5}'* \
+       && $(grep -o ':kind :arith-funcall' <<< "$out" | wc -l) = 1 \
+       && $out != *':kind :arith-subscript'* ]]; chk ircell.3
 else
-    skip_chk 104.7
+    skip_chk ircell.3
 fi
 
 # 104.8 a C-style `for` header is desugared at parse time into a group holding

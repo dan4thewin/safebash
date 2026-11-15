@@ -16,7 +16,9 @@ pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             super::expr_handlers::handle_structured_arithmetic(a, expr, state)
         }
         ExprKind::ParameterExpansion(pe) => parameter_expansion_to_value(pe, state),
-        ExprKind::Subscript { name, index } => subscript_to_value(name, index, state),
+        ExprKind::Subscript { name, index } => {
+            subscript_to_value(name, expr_to_value(index, state), state)
+        }
         ExprKind::SlurpFile(path) => SsaValue::SlurpFile(Box::new(expr_to_value(path, state))),
         // Forms built from a sequence of child expressions.
         ExprKind::DoubleQuoted(_)
@@ -379,7 +381,7 @@ fn pe_operand_string(pe: &ParameterExpansion) -> String {
 /// defaulted and every `${N:~}` elided regardless of the argument).
 fn pe_source_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
     match &pe.index {
-        Some(index) => subscript_to_value(&pe.name, index, state),
+        Some(index) => subscript_to_value(&pe.name, expr_to_value(index, state), state),
         None => positional_to_value(&pe.name, state)
             .unwrap_or_else(|| SsaValue::Var(state.lookup(&pe.name))),
     }
@@ -393,13 +395,13 @@ fn assoc_array_to_value(pairs: &[(String, Expr)], state: &VersionState) -> SsaVa
     SsaValue::AssocArray(vals)
 }
 
-pub(super) fn subscript_to_value(name: &str, index: &Expr, state: &VersionState) -> SsaValue {
+pub(super) fn subscript_to_value(name: &str, index: SsaValue, state: &VersionState) -> SsaValue {
     let resolved = resolve_args_name(name, state);
     let is_integer = !state.assoc_arrays.contains(&resolved);
     let is_integer_value = state.type_map.get(&resolved).copied() == Some(crate::ir::VarType::Int);
     SsaValue::Subscript {
         array: state.lookup(&resolved),
-        index: Box::new(expr_to_value(index, state)),
+        index: Box::new(index),
         is_integer_key: is_integer,
         is_integer_value,
     }

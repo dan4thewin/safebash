@@ -1901,29 +1901,40 @@ pub extern "C" fn sash_assoc_lookup(
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
     let mut buf = [0u8; 4096];
+    let mut data = buf.as_mut_ptr();
+    let mut capacity = buf.len();
     let mut total = 0usize;
     let mut got_newline = false;
     loop {
-        if total >= buf.len() {
+        let mut byte = [0u8; 1];
+        let n =
+            unsafe { rustix::io::read(rustix::fd::BorrowedFd::borrow_raw(fd as i32), &mut byte) };
+        if !matches!(n, Ok(1)) {
             break;
         }
-        let n = unsafe {
-            rustix::io::read(
-                rustix::fd::BorrowedFd::borrow_raw(fd as i32),
-                &mut buf[total..total + 1],
-            )
-        };
-        match n {
-            Ok(0) => break,
-            Ok(1) => {
-                if buf[total] == b'\n' {
-                    got_newline = true;
-                    break;
-                }
-                total += 1;
-            }
-            _ => break,
+        if byte[0] == b'\n' {
+            got_newline = true;
+            break;
         }
+        if total == capacity {
+            let new_capacity = capacity * 2;
+            let grown = unsafe {
+                if capacity == buf.len() {
+                    let grown = sash_alloc(new_capacity);
+                    core::ptr::copy_nonoverlapping(data, grown, total);
+                    grown
+                } else {
+                    sash_crealloc(data, new_capacity)
+                }
+            };
+            if grown.is_null() {
+                sash_panic_oom(new_capacity);
+            }
+            data = grown;
+            capacity = new_capacity;
+        }
+        unsafe { *data.add(total) = byte[0] };
+        total += 1;
     }
     if total == 0 && !got_newline {
         // True EOF
@@ -1933,8 +1944,11 @@ pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
     let ptr = unsafe { alloc_cstr(total) };
     if total > 0 {
         unsafe {
-            core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
+            core::ptr::copy_nonoverlapping(data, ptr, total);
         }
+    }
+    if capacity != buf.len() {
+        unsafe { sash_free_ptr(data) };
     }
     (ptr, total)
 }

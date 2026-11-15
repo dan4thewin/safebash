@@ -7,8 +7,10 @@ supersedes: DD15
    that capture as a separate program without coupling compiler delivery to it.
 2. Emit every IR node exhaustively, without wildcard fallbacks or semantic
    interpretation; tags name IR nodes.
-3. Consumers must refuse unsupported schema versions. Schema 2 represents
-   optional EXIT and ERR bodies separately and distinguishes absent from empty.
+3. Consumers must refuse unsupported schema versions. Schema 3 retains a
+   compound cell assignment's arithmetic operator, single index and unexpanded
+   right-hand side.
+4. Optional EXIT and ERR bodies have separate fields; absent differs from empty.
 
 ---
 
@@ -109,12 +111,23 @@ bug, not a refactor:
 `:ir-version` is stamped so a consumer can refuse a capture it does not
 understand, rather than mis-read it.
 
-DD#128 advances the capture to **`:ir-version 2`**. The optional terminal
-bodies are recorded separately in `:exit-block` and `:err-block`; the old
-`:end-block` field is removed. An empty declared handler remains distinct
-from an absent handler. Both `--emit-ir` and the embedded/extracted IR use
-this shape. The data remains inert; consumers must refuse versions they
-cannot interpret rather than treating an unfamiliar handler as absent.
+DD#128 introduced **`:ir-version 2`**: optional terminal bodies in
+`:exit-block` and `:err-block`, replacing `:end-block`. An empty declared
+handler remains distinct from an absent handler.
+
+The indexed-update repair advances the capture to **`:ir-version 3`**
+(2026-11-13). An arithmetic cell update keeps its operation in the assignment's
+`:op`: `:add`, `:sub`, `:mul`, `:div`, `:mod`, `:bit-and`, `:bit-or`,
+`:bit-xor`, `:shl` or `:shr`. The assignment contains one `:index` and the
+original `:value`, not a second index inside a synthesized RHS cell read.
+Postfix `++`/`--` use `:add`/`:sub` with arithmetic literal 1. Ordinary
+assignment and `+=` keep `:set` and `:append`; scalar arithmetic mutations
+retain their existing expanded representation.
+
+Schema 3 retains schema 2's handler fields. Both `--emit-ir` and the
+embedded/extracted IR use the same schema. The data remains inert; consumers
+must refuse versions they cannot interpret rather than silently dropping a
+handler or interpreting a compound update as a plain store.
 
 ## Where the old code went
 

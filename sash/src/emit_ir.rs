@@ -31,7 +31,7 @@ use std::fmt::Write;
 
 /// Bumped when the shape of the emitted data changes incompatibly, so a
 /// consumer can refuse a capture it does not understand.
-pub const IR_VERSION: u32 = 2;
+pub const IR_VERSION: u32 = 3;
 
 /// Render a whole program as the inert janet data literal.
 pub fn emit_ir(program: &Program) -> String {
@@ -144,6 +144,7 @@ fn assign_op(o: &AssignOp) -> &'static str {
     match o {
         AssignOp::Set => ":set",
         AssignOp::Append => ":append",
+        AssignOp::Arith(op) => arith_op(*op),
     }
 }
 

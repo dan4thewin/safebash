@@ -13,6 +13,9 @@ status: accepted
    just as outside arithmetic. Assignment and read-modify-write forms
    can introduce integer bindings; reading alone does not. Valid
    nullary integer-function calls remain calls, not undeclared variables.
+5. An indexed write evaluates and retains its key once, before its RHS.
+   A compound update also retains the old cell value before the RHS runs,
+   following DD#86's evaluation-order rule.
 
 ---
 
@@ -56,6 +59,21 @@ statement subscript-assign write path). Bare `m[k]` on an associative array is a
 type error (`type_check`, both the read form and the lowered arith-indexed
 assignment). native+c; janet's arith VALUE path is a filed gap
 (`janet-arith-subscript-read`).
+
+### Indexed updates (2026-11-13)
+
+The implementation retains the compound operator until SSA lowering.
+Expanding `a[index] op= rhs` to `a[index] = a[index] op rhs` duplicated
+effects in `index`; merely reusing an unevaluated expression also let RHS
+effects change the selected key or old value. Lowering now saves the key,
+then the old cell value for an update, before evaluating the RHS.
+
+Ordinary indexed `+=` uses the same path for integer addition and string
+concatenation. Plain indexed `=` saves the key but does not read the old
+cell. The compiler preserves the implicit read in semantic checking.
+These are applications of DD#86, not permission for arithmetic map mutation;
+maps still use ordinary keyed writes. [DD104](DD104-decoupled-janet-oracle.md)
+records the corresponding inert-IR schema change.
 
 ## Part 2 — B2: undeclared reads are strict in arithmetic (SB5031 consistency)
 

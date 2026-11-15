@@ -1366,20 +1366,26 @@ fn handle_subscript_assign(
     ssa: &mut SsaProgram,
     mut block: BlockId,
 ) -> BlockId {
-    let rhs = expr_to_value(&a.value, state);
     // DD#100: `A[i]=v` writes through a collection-parameter slot, so resolve
     // to the caller's collection first — that binding is what makes the write
     // land on the caller's array (Part E). Unresolved, the name `A` reached
     // codegen as an undeclared array and ICE'd.
-    let name = super::expressions::resolve_args_name(&a.name, state);
+    let name = resolve_args_name(&a.name, state);
     let is_int_key = !state.assoc_arrays.contains(&name);
     let is_int_val = state.type_map.get(&name).copied() == Some(crate::ir::VarType::Int);
-    let val = build_subscript_rhs(&name, a, idx, rhs, is_int_val, state);
-    let idx_val = expr_to_value(idx, state);
-    // A `$(f)` capture in either operand has to be materialized into a temp
-    // first, in source order — an unlifted call reaching codegen is an ICE.
-    let idx_val = lift_int_func_calls(idx_val, ssa, state, &mut block);
-    let val = lift_int_func_calls(val, ssa, state, &mut block);
+    let key_type = if is_int_key {
+        VarType::Int
+    } else {
+        VarType::String
+    };
+    let idx_val =
+        save_subscript_operand(expr_to_value(idx, state), key_type, state, ssa, &mut block);
+    let val = build_subscript_rhs(a, &idx_val, is_int_val, state, ssa, &mut block);
+    let val = if is_int_val {
+        SsaValue::IntCell(Box::new(val))
+    } else {
+        val
+    };
     ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
         array: name,
         index: idx_val,
@@ -1389,35 +1395,55 @@ fn handle_subscript_assign(
     block
 }
 
-/// Build the stored value for a subscript assignment, honoring DD#76 int cells
-/// and the `+=` read-modify-write. Plain `a[i] = v` discards the current
-/// element (correct); `a[i] += v` reads it back: arithmetic add for an int
-/// cell, string concat otherwise.
+/// DD86: retain the selected cell before evaluating an RHS that can mutate it.
 fn build_subscript_rhs(
-    name: &str,
     a: &Assignment,
-    idx: &Expr,
-    rhs: SsaValue,
+    index: &SsaValue,
     is_int_val: bool,
-    state: &VersionState,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: &mut BlockId,
 ) -> SsaValue {
-    let append = a.op == crate::ir::AssignOp::Append;
-    match (append, is_int_val) {
-        (true, true) => {
-            let current = subscript_to_value(name, idx, state);
-            SsaValue::IntCell(Box::new(SsaValue::ArithBinOp {
-                left: Box::new(current),
-                op: ArithOp::Add,
-                right: Box::new(rhs),
-            }))
+    let op = match a.op {
+        AssignOp::Set => {
+            return lift_int_func_calls(expr_to_value(&a.value, state), ssa, state, block)
         }
-        (true, false) => {
-            let current = subscript_to_value(name, idx, state);
-            SsaValue::Concat(vec![current, rhs])
-        }
-        (false, true) => SsaValue::IntCell(Box::new(rhs)),
-        (false, false) => rhs,
+        AssignOp::Append => is_int_val.then_some(ArithOp::Add),
+        AssignOp::Arith(op) => Some(super::expr_handlers::ir_op_to_ssa(op)),
+    };
+    let current = subscript_to_value(&a.name, index.clone(), state);
+    let ty = if is_int_val {
+        VarType::Int
+    } else {
+        VarType::String
+    };
+    let current = save_subscript_operand(current, ty, state, ssa, block);
+    let rhs = lift_int_func_calls(expr_to_value(&a.value, state), ssa, state, block);
+    match op {
+        Some(op) => SsaValue::ArithBinOp {
+            left: Box::new(current),
+            op,
+            right: Box::new(rhs),
+        },
+        None => SsaValue::Concat(vec![current, rhs]),
     }
+}
+
+fn save_subscript_operand(
+    value: SsaValue,
+    ty: VarType,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: &mut BlockId,
+) -> SsaValue {
+    let value = lift_int_func_calls(value, ssa, state, block);
+    let name = state.reserve_temp_name(format!("__subscript_value_{}", ssa.blocks.len()), ty);
+    let target = state.define(&name);
+    ssa.block_mut(*block).insts.push(SsaInst::Assign {
+        target: target.clone(),
+        value,
+    });
+    SsaValue::Var(target)
 }
 
 /// `var += val` — append form. An `( … )` literal appends element by element;

@@ -1180,8 +1180,9 @@ pub struct Assignment {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssignOp {
-    Set,    // =
-    Append, // +=
+    Set,              // =
+    Append,           // +=
+    Arith(IrArithOp), // arithmetic cell read-modify-write
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2311,11 +2312,10 @@ pub fn incdec_brief(var: &str, inc: bool) -> String {
 
 /// The *target* of a mutation, named without claiming how it was spelled.
 ///
-/// For the sites that only ever see the **decomposed** form. Every mutation
-/// spelling — `x = e`, `x op= e`, `x++`, `a[i] op= e` — reaches
-/// `validate_assignment_stmt` as `Assignment { op: Set, value: BinOp }`,
-/// because `lower_arith_mutation_structured` collapses all four on purpose.
-/// The operator is therefore *gone* before the diagnostic is built.
+/// For sites that see a lowered assignment rather than its source spelling.
+/// Scalar compound mutations become ordinary assignments; cell mutations
+/// retain their arithmetic operator, but not the distinction between `++`
+/// and `+= 1`. Neither form can reconstruct the original spelling.
 ///
 /// That site used to call [`assign_brief`] regardless, so SB5007 reported
 /// `mutation x = ...` for `if (( x++ ))` — which is not an assignment at all —

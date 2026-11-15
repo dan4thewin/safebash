@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=144
+plan=147
 echo "1..$plan" >&3
 
 set +e
@@ -555,6 +555,38 @@ echo "$x$y"'
 # rl.10 …and at least one
 run_sash 'echo hi | readline'
 [[ $rc != 0 && $err == *SB5057* ]]; chk rl.10
+
+# A newline, not the old 4096-byte scratch buffer, ends a record.
+printf '%4095s\n%4096s\n%4097s\n%8192s\n%16385s\n\n' a b c d e > long-records.in
+run_sash 'fn copy_lines {
+    while readline line { echo ${line:!} }
+}
+copy_lines < ./long-records.in > ./long-records.out'
+[[ $rc = 0 && -z $out && -z $err && -z $rerr ]] &&
+    cmp -s long-records.in long-records.out; chk rlsize.1
+
+# Preserve NUL/UTF-8 across the old boundary and emit the final unterminated
+# record once. The echo supplies its one missing newline.
+{ printf '%4094s' x; printf '\0\342\230\203'; printf '%5000s' y; } > binary-record.in
+cp binary-record.in binary-record.expected
+printf '\n' >> binary-record.expected
+run_sash 'int records=0
+fn copy_lines {
+    while readline line {
+        echo ${line:!}
+        (( records++ ))
+    }
+}
+copy_lines < ./binary-record.in > ./binary-record.out
+echo $records'
+[[ $rc = 0 && $out = 1 && -z $err && -z $rerr ]] &&
+    cmp -s binary-record.expected binary-record.out; chk rlsize.2
+
+# Growth failure must abort rather than deliver a successful partial record.
+printf '%32768s\n' x > large-record.in
+SASH_CFLAGS=--heap-size=16K run_sash 'readline line < ./large-record.in
+echo $(strlen ${line:!})'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *"out of memory (requested "* ]]; chk rlsize.3
 
 
 # ════════ DD#99 stage 2: `read` — NUL-separated fields into an array ════════

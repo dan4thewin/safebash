@@ -1488,16 +1488,18 @@ fn assign_op_for(tok: &ATok) -> Option<Option<IrArithOp>> {
     })
 }
 
-/// Lower a mutation arithmetic expression to a Statement.
-/// The `name[index] = <arith>` statement every mutation form lowers to. All
-/// four spellings — `v = e`, `v op= e`, `v++`, `a[i] op= e` — differ only in
-/// the name, the optional index, and the right-hand expression.
-fn arith_assign_stmt(name: &str, index: Option<Expr>, value: ArithExpr, span: Span) -> Statement {
+fn arith_assign_stmt(
+    name: &str,
+    index: Option<Expr>,
+    op: AssignOp,
+    value: ArithExpr,
+    span: Span,
+) -> Statement {
     Statement {
         kind: StmtKind::Assignment(Assignment {
             name: name.to_string(),
             index,
-            op: AssignOp::Set,
+            op,
             value: Expr {
                 kind: ExprKind::Arithmetic(Box::new(value)),
                 span,
@@ -1517,27 +1519,6 @@ fn binop_on_var(var: &str, op: IrArithOp, right: Box<ArithExpr>) -> ArithExpr {
     }
 }
 
-/// The right-hand side of a subscript mutation: the bare value for `a[i] = v`,
-/// a read-modify against the `a[i]` cell for `a[i] op= v`.
-fn subscript_assign_rhs(
-    name: &str,
-    index: &ArithExpr,
-    op: Option<IrArithOp>,
-    value: &ArithExpr,
-) -> ArithExpr {
-    match op {
-        None => value.clone(),
-        Some(o) => ArithExpr::BinOp {
-            left: Box::new(ArithExpr::Subscript {
-                name: name.to_string(),
-                index: Box::new(index.clone()),
-            }),
-            op: o,
-            right: Box::new(value.clone()),
-        },
-    }
-}
-
 /// Lower a mutating arithmetic expression to a Statement.
 ///
 /// **Total over `ArithExpr` on purpose — do not add a wildcard.**
@@ -1549,20 +1530,24 @@ fn subscript_assign_rhs(
 /// and discards it — a mutation that quietly stopped mutating.
 fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
     match expr {
-        ArithExpr::Assign { var, value } => arith_assign_stmt(var, None, (**value).clone(), span),
-        ArithExpr::CompoundAssign { var, op, value } => {
-            arith_assign_stmt(var, None, binop_on_var(var, *op, value.clone()), span)
+        ArithExpr::Assign { var, value } => {
+            arith_assign_stmt(var, None, AssignOp::Set, (**value).clone(), span)
         }
+        ArithExpr::CompoundAssign { var, op, value } => arith_assign_stmt(
+            var,
+            None,
+            AssignOp::Set,
+            binop_on_var(var, *op, value.clone()),
+            span,
+        ),
         ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
         ArithExpr::PostIncDec { var, inc } => {
             let op = if *inc { IrArithOp::Add } else { IrArithOp::Sub };
             let step = Box::new(ArithExpr::Literal(1));
-            arith_assign_stmt(var, None, binop_on_var(var, op, step), span)
+            arith_assign_stmt(var, None, AssignOp::Set, binop_on_var(var, op, step), span)
         }
-        // arith-subscript model B (Stage 2): `a[i] = v`, `a[i] op= v`,
-        // `a[i]++`/`--`. Reuse the statement subscript-assign write path — the
-        // index and the computed RHS are arithmetic exprs; the read side (for
-        // `op=`/`++`) is the bare `a[i]` cell read (`ArithExpr::Subscript`).
+        // Keep the operation until lowering can evaluate and retain the key
+        // once. Expanding it to `a[i] = a[i] op v` evaluates `i` twice.
         ArithExpr::SubscriptAssign {
             name,
             index,
@@ -1573,8 +1558,13 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
                 kind: ExprKind::Arithmetic(index.clone()),
                 span,
             };
-            let rhs = subscript_assign_rhs(name, index, *op, value);
-            arith_assign_stmt(name, Some(index_expr), rhs, span)
+            arith_assign_stmt(
+                name,
+                Some(index_expr),
+                op.map_or(AssignOp::Set, AssignOp::Arith),
+                (**value).clone(),
+                span,
+            )
         }
         ArithExpr::Comma(exprs) => {
             let stmts: Vec<Statement> = exprs

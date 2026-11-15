@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=141
+plan=153
 echo "1..$plan" >&3
 
 set +e
@@ -952,6 +952,101 @@ if readline s { echo wrong }
 array a=("${s:!}")
 echo "[$(join a ,)]"'
 [[ $rc = 0 && -z $err && -z $rerr && $out = '[]' ]]; chk gzero.8
+
+# A read-modify-write selects one cell, even when evaluating the key has effects.
+run_sash 'int calls=0
+int array a=(10 20 30)
+fn key -> int { int selected=$calls; (( calls++ )); return $selected }
+(( a[(key)] += 5 ))
+echo $calls $a[0] $a[1]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '1 15 20' ]]; chk subonce.1
+
+run_sash 'int calls=0
+int array a=(10 20 30 40)
+fn key -> int { int selected=$calls; (( calls++ )); return $selected }
+(( a[(key)]++ ))
+(( a[(key)]-- ))
+echo $calls $a[0] $a[1] $a[2] $a[3]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '2 11 19 30 40' ]]; chk subonce.2
+
+run_sash 'int calls=0
+int array a=(16)
+fn key -> int { (( calls++ )); return 0 }
+(( a[(key)] += 3 ))
+(( a[(key)] -= 1 ))
+(( a[(key)] *= 2 ))
+(( a[(key)] /= 3 ))
+(( a[(key)] %= 5 ))
+(( a[(key)] |= 8 ))
+(( a[(key)] &= 14 ))
+(( a[(key)] ^= 3 ))
+(( a[(key)] <<= 1 ))
+(( a[(key)] >>= 1 ))
+echo $calls $a[0]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '10 9' ]]; chk subonce.3
+
+# Ordinary indexed += uses the same selected key for its read and write.
+run_sash 'int calls=0
+int array a=(10 20 30)
+fn key -> int { int selected=$calls; (( calls++ )); return $selected }
+a[$(( (key) ))]+=5
+echo $calls $a[0] $a[1]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '1 15 20' ]]; chk subonce.4
+
+run_sash 'int calls=0
+map m=([first]=A [second]=B)
+fn key {
+  (( calls++ ))
+  if (( calls == 1 )) { write first } else { write second }
+}
+m[$(key)]+=x
+echo $calls $m[first] $m[second]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '1 Ax B' ]]; chk subonce.5
+
+# The RHS may mutate both the key variable and the previously selected cell.
+run_sash 'int idx=0
+int array a=(10 20)
+fn rhs -> int { idx=1; a[0]=100; return 5 }
+(( a[idx] += (rhs) ))
+echo $idx $a[0] $a[1]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '1 15 20' ]]; chk subonce.6
+
+run_sash 'int idx=0
+int array a=(10 20)
+fn rhs -> int { idx=1; a[0]=100; return 5 }
+a[$idx]=$(rhs)
+echo $idx $a[0] $a[1]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '1 5 20' ]]; chk subonce.7
+
+run_sash 'key=first
+map m=([first]=A [second]=B)
+fn rhs { key=second; m[first]=changed; write x }
+m[$key]+=$(rhs)
+echo $key $m[first] $m[second]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 'second Ax B' ]]; chk subonce.8
+
+# DD79 still rejects arithmetic map mutation, without duplicating its diagnostic.
+run_sash 'int map m
+(( m[0]++ ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $(grep -cF 'is a map' <<< "$err") = 1 ]]; chk subonce.9
+
+run_sash 'array a=(word)
+(( a[0] += 1 ))
+echo $a[0]'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk subonce.10
+
+# Retaining the operation must not erase the implicit read from semantic checks.
+run_sash 'int array a=(3)
+(( a[0]++ ))'
+[[ $rc = 0 && -z $err && -z $rerr && -z $out ]]; chk subonce.11
+
+# The key remains a checked read even though it is no longer copied into the RHS.
+run_sash 'int array a=(3)
+str key=$(getenv SUBSCRIPT_INDEX)
+(( a[${key:-0}] += 1 ))
+echo $a[0]'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB5020]' <<< "$err") = 1 ]]; chk subonce.12
 
 set -e
 tally

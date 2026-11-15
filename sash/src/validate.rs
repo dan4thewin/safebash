@@ -1250,8 +1250,8 @@ fn validate_assignment_stmt(
     // SB5007: arithmetic assignment in condition context.
     // The DD#31 comma pattern is handled at the Group level.
     //
-    // Names the target and claims no operator: only the *decomposed* form
-    // arrives here, so the mutation's spelling is already gone. (This used to
+    // Names the target and claims no operator: lowering does not preserve
+    // the mutation's exact spelling. (This used to
     // call `assign_brief`, which claimed `=` for `x++` and dropped the
     // subscript from `a[0] -= 2`.) The nested form reports identically, via
     // `mutation_target_in` — same message for `if (( x = 5 ))` either way.
@@ -6888,6 +6888,7 @@ fn taint_assignment(
             &a.value,
             &a.name,
             sx.is_map(&a.name),
+            matches!(a.op, AssignOp::Arith(_)),
             tainted,
             sx.output,
             diags,
@@ -7058,7 +7059,7 @@ fn reject_tainted_elements<'a>(
     diags: &mut Vec<Diagnostic>,
 ) {
     for e in elems {
-        reject_tainted_into_array(e, name, is_map, tainted, output, diags);
+        reject_tainted_into_array(e, name, is_map, false, tainted, output, diags);
     }
 }
 
@@ -7067,11 +7068,15 @@ fn reject_tainted_into_array(
     e: &Expr,
     name: &str,
     is_map: bool,
+    reads_target: bool,
     tainted: &HashSet<String>,
     output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if is_taint_source(e, output) || expr_uses_tainted(e, tainted) {
+    if is_taint_source(e, output)
+        || expr_uses_tainted(e, tainted)
+        || (reads_target && tainted.contains(name))
+    {
         diags.push(Diagnostic::error_span(
             e.span,
             "SB5021",
@@ -11299,6 +11304,14 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
 /// Default statement handling: check its own expressions, then recurse
 /// into any control-flow child bodies (same scope).
 fn check_stmt_exprs_and_bodies(stmt: &Statement, known: &HashSet<String>, sink: &mut ReadSink) {
+    if let StmtKind::Assignment(Assignment {
+        name,
+        op: AssignOp::Arith(_),
+        ..
+    }) = &stmt.kind
+    {
+        sink.record(name, stmt.span, known);
+    }
     stmt.direct_exprs(&mut |e| check_expr_reads(e, known, sink));
     // A `(( … ))` statement / condition holds its reads in an `ArithExpr` tree,
     // not a direct `Expr` (`direct_exprs` returns nothing for it) — walk it so
@@ -12927,6 +12940,23 @@ mod tests {
             op: None,
         };
         check_arith_reads(&a, Span::new(1, 1), &HashSet::new(), &mut sink);
+    }
+
+    // Typing rejects string-array arithmetic; test the taint pass independently
+    // so retaining the operator cannot hide its implicit read from that pass.
+    #[test]
+    fn arithmetic_cell_updates_preserve_implicit_taint_reads() {
+        for (update, expected) in [("= 1", vec![]), ("+= 1", vec!["SB5021"])] {
+            let source = format!("array a\nread a\n(( a[0] {update} ))");
+            let (program, parse_diags) = crate::parse::parse(&source).unwrap();
+            assert!(parse_diags.is_empty(), "{parse_diags:?}");
+            let codes: Vec<_> = check_taint(&program)
+                .diagnostics
+                .into_iter()
+                .map(|d| d.code)
+                .collect();
+            assert_eq!(codes, expected, "{update}");
+        }
     }
 
     /// `BUILTINS` states that a name listed in it "is never PATH-resolved".
