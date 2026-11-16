@@ -272,6 +272,17 @@ roots, not as continuations of main's last SSA block.
 [`terminal.rs`](../sash/src/terminal.rs) checks ERR's operational-failure
 handling on executable SSA.
 
+Inherited logical bindings are readonly in ERR, including through
+same-process helpers, captures and collection aliases. The bound source's
+global/call census identifies imports; it does not freeze every global or
+prevent ERR-only working state and fresh private locals.
+[`terminal/nul.rs`](../sash/src/terminal/nul.rs) proves otherwise-unknown
+argv bytes locally at their use. It follows predicate outcomes on every
+reaching path and rewinds actual storage writes: an SSA version label is
+not a snapshot in either backend. Scalar integer types retain their byte
+guarantee; collection contents and keys need their own bounds. These proofs
+neither clear taint nor remove the runtime argv guard.
+
 Signal delivery records state; generated checkpoints perform EXIT dispatch.
 [`signals.rs`](../sash/src/signals.rs) shares one plan across explicit and
 backend-emitted polls, deferring dispatch across legal acquisition/attest

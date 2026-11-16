@@ -38,8 +38,9 @@ for an empty string"**.
 
 The counted-NUL predicate and filename guards are implemented in both
 backends ([journal 639](../journal/639-counted-nul-and-filename-guards.md)).
-Readonly ERR imports, predicate-derived ERR proofs and `mkdtemp` remain
-implementation work.
+Readonly ERR imports and predicate-derived ERR proofs are also implemented
+([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
+`mkdtemp` remains implementation work.
 
 ## Readonly at the ERR boundary
 
@@ -190,8 +191,8 @@ predicate-derived NUL proof.
   complete; the predicate and all three shared filename boundaries enforce
   the counted-byte contract in both backends.
 - [Readonly ERR inputs and NUL proofs](../tasks/err-readonly-inputs-and-nul-proofs.md):
-  identify imports, enforce write restrictions and extend the localized
-  SB5101 proof query after the runtime predicate contracts hold.
+  complete; SB5102 rejects inherited logical writes, and the localized
+  SB5101 query checks the actual value and every reaching path.
 - [mkdtemp value intrinsic](../tasks/mkdtemp-value-intrinsic.md):
   implement creation, direct result/status handling and both byte/taint facts.
 

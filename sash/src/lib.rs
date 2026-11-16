@@ -441,7 +441,7 @@ pub fn cli_main(args: Vec<String>) {
     let mut ssa = transform_or_exit(input, &bound, &names, type_map);
     ssa.source_names = names.clone();
     signals::prepare(&mut ssa, &taint_analysis.signal_pairs);
-    check_terminal_or_exit(input, &ssa, &taint_analysis, &parsed.flags, &names);
+    check_terminal_or_exit(input, &bound, &ssa, &taint_analysis, &parsed.flags, &names);
 
     // DD#86: more-specific semantic/type/transform errors win over SB5050.
     let mut dead = validate::check_dead_variables(&bound);
@@ -647,12 +647,13 @@ fn ssa_taint_disabled(flags: &[&str]) -> bool {
 /// the bound program so every local carries its scope.
 fn check_terminal_or_exit(
     input: &str,
+    bound: &ir::Program,
     ssa: &ssa::SsaProgram,
     analysis: &validate::TaintAnalysis,
     flags: &[&str],
     names: &bindings::SourceNames,
 ) {
-    let mut errors = terminal::check_err(ssa);
+    let mut errors = terminal::check_err(ssa, bound);
     if !cst_taint_disabled(flags) {
         errors.extend(analysis.check_signal_entries(&ssa_taint::signal_entries(ssa)));
     }

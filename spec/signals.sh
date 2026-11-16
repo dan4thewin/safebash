@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 / DD#128 — signals and terminal handlers
 . common.sh
-plan=73
+plan=125
 setup signals
 
 set +e
@@ -515,6 +515,465 @@ run_sash 'x=before
 attest x [[ $x == allowed ]]
 ERR { - echo "read[${x:!}]" }'
 [[ $rc = 3 && -z $err && $out = 'read[changed]' && $rerr == *'command failed (exit 3)'* ]]; chk h128.gstate.2
+
+# DD135: ERR imports are readonly, including writes without a preceding read.
+bad=0
+for edit in 'g=new' 'g+=x' '(( n+=1 ))' '(( n++ ))'; do
+    run_sash 'str g=old; int n=1
+ERR { '"$edit"'; - echo "$g:$n" }
+fail'
+    [[ $rc = 1 && $err == *SB5102* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errro.1
+
+bad=0
+for edit in 'a=(new)' 'a+=(new)' 'a[0]=new' 'a[0]+=x' \
+            'unset a' 'unset a[0]' 'm=([k]=new)' 'm[k]=new' \
+            'm[k]+=x' 'unset m' 'unset m[k]'; do
+    run_sash 'array a=(old); map m=([k]=old)
+ERR { '"$edit"'; - echo "$(len a):$(len m)" }
+fail'
+    [[ $rc = 1 && $err == *SB5102* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errro.2
+
+bad=0
+for edit in 'if readline g { : }' 'if read a { : }' 'argv a' \
+            'keys m a' 'if match abc . a { : }' 'read $g a'; do
+    run_sash 'str g=old; array a=(old); map m=([k]=old)
+ERR { '"$edit"'; - echo "${g:!}:$(len a):$(len m)" }
+fail'
+    [[ $rc = 1 && $err == *SB5102* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errro.3
+
+# The outer call and the actual write both appear in the diagnostic.
+run_sash 'fn change { g=new }
+str g=old
+change
+ERR { change; - echo $g }
+fail'
+[[ $rc = 1 && $err == *':4:7: error [SB5102]'* &&
+   $err == *'inherited binding `g` at 1:13'* ]]; chk errro.4
+
+run_sash 'fn change { A[0]=new }
+fn forward { change =A }
+array a=(old)
+ERR { forward =a; - echo ${a[0]} }
+fail'
+[[ $rc = 1 && $err == *SB5102* && $err == *'inherited binding `a`'* ]]; chk errro.5
+
+run_sash 'str g=old
+ERR { str result=$(g=new; echo result); - echo "$g:$result" }
+fail'
+[[ $rc = 1 && $err == *SB5102* && $err == *'inherited binding `g`'* ]]; chk errro.6
+
+# Identity-only forwarding is observable to the source census, not the SSA.
+run_sash 'fn outside { : }
+outside =a
+ERR { array a=(old); a[0]=new; - echo ${a[0]} }
+fail'
+[[ $rc = 1 && $err == *SB5102* && $err == *'inherited binding `a`'* ]]; chk errro.7
+
+run_sash 'fn outside { - echo $v }
+outside
+ERR { for v in one two { - echo $v } }
+fail'
+[[ $rc = 1 && $err == *SB5102* && $err == *'inherited binding `v`'* ]]; chk errro.8
+
+run_sash 'fn outside { - echo $g }
+EXIT { outside }
+ERR { str g=old; g=new; - echo $g }
+fail'
+[[ $rc = 1 && $err == *SB5102* ]]; chk errro.9
+
+run_sash 'str g=old
+fn work { str copy=$g; copy+=x; - echo $copy }
+ERR {
+  str scratch=work
+  scratch+=ing
+  array a=(old)
+  a[0]=new
+  work
+  - echo "$scratch:${a[0]}"
+}
+fail'
+[[ $rc = 1 && $out = $'oldx\nworking:new' && -z $err && -z $rerr ]]; chk errro.10
+
+# Main/EXIT may mutate; a forked job in ERR mutates only its process copy.
+run_sash 'str g=old
+fn change { g=$1; - echo $g }
+change main
+EXIT { g=exit; echo $g; fail }
+ERR { - change child &; - wait; - echo $g }'
+[[ $rc = 1 && $out = $'main\nexit\nchild\nexit' && -z $err && -z $rerr ]]; chk errro.11
+
+SASH_CFLAGS=--no-taint run_sash 'str g=old
+ERR { g=new; - echo $g }
+fail'
+[[ $rc = 1 && $err == *SB5102* ]]; chk errro.12
+
+run_sash 'int n=0
+ERR { str s=7; if attest s (( n=s )) { : } else { exit 1 }; - echo "$n" }
+fail'
+[[ $rc = 1 && $err == *SB5102* && $err == *'inherited binding `n`'* ]]; chk errro.13
+
+run_sash 'str g=good
+ERR { if attest g p? { : } else { exit 1 }; - echo $g }
+fail'
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errro.14
+
+# Unknown read bytes, a true filename test, and a separately handled command.
+run_sash 'str data=$(/bin/echo /tmp)
+ERR { if [[ -d ${data:!} ]] { if /bin/echo ${data:!} { : } } }
+fail'
+[[ $rc = 1 && $out = /tmp && -z $err && -z $rerr ]]; chk errnul.1
+
+run_sash 'str data=$(/bin/echo /tmp)
+fn cleanup { if [[ -d ${data:!} ]] { if /bin/echo ${data:!} { : } } }
+ERR { cleanup }
+fail'
+[[ $rc = 1 && $out = /tmp && -z $err && -z $rerr ]]; chk errnul.2
+
+bad=0
+for predicate in '! 0?' 'p?' 'g?' 'i?'; do
+    run_sash 'str data=$(/bin/echo 7)
+ERR { if [[ '"$predicate"' ${data:!} ]] { if /bin/echo ${data:!} { : } } }
+fail'
+    [[ $rc = 1 && $out = 7 && -z $err && -z $rerr ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errnul.3
+
+bad=0
+for predicate in -a -b -c -d -e -f -g -G -h -k -L -N -O -p -r -s -S -u -w -x; do
+    run_sash 'str data=$(/bin/echo /tmp)
+ERR {
+  if [[ '"$predicate"' ${data:!} ]] { if /bin/echo ${data:!} { : } }
+  - echo done
+}
+fail'
+    [[ $rc = 1 && $out == *done && -z $err && -z $rerr ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errnul.4
+
+bad=0
+for predicate in -nt -ot -ef; do
+    run_sash 'str left=$(/bin/echo /tmp); str right=$(/bin/echo /tmp)
+ERR {
+  if [[ ${left:!} '"$predicate"' ${right:!} ]] {
+    if /bin/echo ${left:!} ${right:!} { : }
+  }
+  - echo done
+}
+fail'
+    [[ $rc = 1 && $out == *done && -z $err && -z $rerr ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errnul.5
+
+bad=0
+for predicate in '0? ${data:!}' '! -d ${data:!}' '! p? ${data:!}' \
+                 '${data:!} != other'; do
+    run_sash 'str data=$(/bin/echo /tmp)
+ERR { if [[ '"$predicate"' ]] { if /bin/echo ${data:!} { : } } }
+fail'
+    [[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errnul.6
+
+run_sash 'str data=$(/bin/echo /tmp)
+ERR { if [[ 0? ${data:!} ]] { : } else { if /bin/echo ${data:!} { : } } }
+fail'
+[[ $rc = 1 && $out = /tmp && -z $err && -z $rerr ]]; chk errnul.7
+
+# Lazy conjunction proves both reached operands; either OR path must suffice.
+run_sash 'str a=$(/bin/echo one); str b=$(/bin/echo two)
+ERR {
+  if [[ ! 0? ${a:!} && ! 0? ${b:!} ]] { if /bin/echo "${a:!}:${b:!}" { : } }
+  if [[ p? ${a:!} || g? ${a:!} ]] { if /bin/echo ${a:!} { : } }
+}
+fail'
+[[ $rc = 1 && $out = $'one:two\none' && -z $err && -z $rerr ]]; chk errnul.8
+
+run_sash 'str a=$(/bin/echo one); str b=$(/bin/echo two)
+ERR { if [[ ! 0? ${a:!} || ! 0? ${b:!} ]] { if /bin/echo ${a:!} { : } } }
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.9
+
+# Neither a prior mention, another binding nor a main-path proof suffices.
+bad=0
+for body in \
+    'if [[ ! 0? ${a:!} ]] { : }; if /bin/echo ${a:!} { : }' \
+    'if [[ ! 0? ${b:!} ]] { if /bin/echo ${a:!} { : } }'; do
+    run_sash 'str a=$(/bin/echo one); str b=$(/bin/echo two)
+ERR { '"$body"' }
+if [[ ! 0? ${a:!} && ! 0? ${b:!} ]] { fail }
+fail'
+    [[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk errnul.10
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  str work=${data:!}
+  if [[ ! 0? $work ]] {
+    str copy=$work
+    work=$'\''bad\x00value'\''
+    if /bin/echo $copy { : }
+  }
+}
+fail'
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errnul.11
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  str work=${data:!}
+  if [[ ! 0? $work ]] {
+    work=$'\''bad\x00value'\''
+    if /bin/echo $work { : }
+  }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.12
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  str work=${data:!}
+  str before=$work
+  work=new
+  if [[ ! 0? $work ]] { if /bin/echo $before { : } }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.13
+
+run_sash 'array a=(good $'\''bad\x00value'\'')
+ERR {
+  int i=0
+  if [[ ! 0? ${a[$i]} ]] {
+    str copy=${a[$i]}
+    i=1
+    if /bin/echo $copy { : }
+  }
+}
+fail'
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errnul.14
+
+run_sash 'array a=(good $'\''bad\x00value'\'')
+ERR {
+  int i=0
+  if [[ ! 0? ${a[$i]} ]] {
+    i=1
+    if /bin/echo ${a[$i]} { : }
+  }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.15
+
+run_sash 'array a=(good $'\''bad\x00value'\'')
+fn cleanup {
+  if [[ ! 0? ${A[0]} ]] { if /bin/echo ${A[0]} { : } }
+}
+fn forward { cleanup =A }
+ERR { forward =a }
+fail'
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errnul.16
+
+# A mutable collection selection changes even when its binding has no new version.
+run_sash 'ERR {
+  array a=(good)
+  if [[ ! 0? ${a[0]} ]] {
+    a[0]=$'\''bad\x00value'\''
+    if /bin/echo ${a[0]} { : }
+  }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.17
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  if [[ ! 0? ${data:!-fallback} ]] { if /bin/echo ${data:!-fallback} { : } }
+}
+fail'
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errnul.18
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  str work=${data:!}
+  if [[ ! 0? $work ]] {
+    int i=0
+    while (( i < 2 )) { if /bin/echo $work { : }; (( i+=1 )) }
+  }
+}
+fail'
+[[ $rc = 1 && $out = $'good\ngood' && -z $err && -z $rerr ]]; chk errnul.19
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  str work=${data:!}
+  if [[ ! 0? $work ]] {
+    int i=0
+    while (( i < 2 )) {
+      if /bin/echo $work { : }
+      work=$'\''bad\x00value'\''
+      (( i+=1 ))
+    }
+  }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.20
+
+# Content checks do not declassify, and handled argv does not catch other faults.
+run_sash 'str data=$(/bin/echo good)
+ERR { if [[ ! 0? ${data:!} ]] { if /bin/echo $data { : } } }
+fail'
+[[ $rc = 1 && $err == *SB5020* ]]; chk errnul.21
+
+run_sash 'str data=$(/bin/echo good)
+ERR { if [[ ! 0? ${data:!} ]] { /bin/echo ${data:!} } }
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'uncaught command failure'* &&
+   $err != *'NUL-byte argv guard'* ]]; chk errnul.22
+
+# Both reaching definitions must be safe, not just the version printed at use.
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  if [[ 0? ${data:!} ]] { work=fallback } else { work=${data:!} }
+  if /bin/echo $work { : }
+}
+fail'
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errnul.23
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  if [[ ! 0? ${data:!} ]] { work=safe } else { work=${data:!} }
+  if /bin/echo $work { : }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.24
+
+# A returned predicate preserves the actual branch evidence through inlining.
+run_sash 'str data=$(/bin/echo good)
+fn valid {
+  if [[ ! 0? ${data:!} ]] { return 0 } else { return 1 }
+}
+ERR { if valid { if /bin/echo ${data:!} { : } } }
+fail'
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errnul.25
+
+run_sash 'str data=$(/bin/echo good)
+fn invalid {
+  if [[ 0? ${data:!} ]] { return 0 } else { return 1 }
+}
+ERR { if invalid { if /bin/echo ${data:!} { : } } }
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.26
+
+run_sash 'str a=$(/bin/echo one); str b=$(/bin/echo two)
+ERR {
+  if ! [[ 0? ${a:!} || 0? ${b:!} ]] { if /bin/echo "${a:!}:${b:!}" { : } }
+}
+fail'
+[[ $rc = 1 && $out = one:two && -z $err && -z $rerr ]]; chk errnul.27
+
+# Later value calls can overwrite an earlier operand's physical slot.
+run_sash 'fn change -> int { work=$'\''bad\x00value'\''; return 1 }
+str data=$(/bin/echo good)
+ERR {
+  str work=${data:!}
+  if [[ ! 0? $work ]] {
+    if /bin/echo $work "$(( (change) + 1 ))" { : }
+  }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.28
+
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  if [[ ! 0? ${data:!} ]] { if /bin/echo "${data:!}"$'\''\x00'\'' { : } }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.29
+
+# A fresh lookup result cannot borrow a previous test's truth.
+run_sash 'str data=$(/bin/echo good)
+ERR {
+  - [[ ! 0? ${data:!} ]]
+  if env=$(getenv PATH) { if /bin/echo "${env:!}:${data:!}" { : } }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.30
+
+run_sash 'ERR {
+  str env=$(getenv PATH)
+  int n=7
+  if /bin/true literal ${env:!} "$n" { - echo safe }
+}
+fail'
+[[ $rc = 1 && $out = safe && -z $err && -z $rerr ]]; chk errnul.31
+
+run_sash 'ERR {
+  int n=7
+  (( n+=1 ))
+  int array a=(1)
+  a[0]=$n
+  if /bin/echo "$n" "${a[0]}" @{a:-} { : }
+}
+fail'
+[[ $rc = 1 && $out = '8 8 8' && -z $err && -z $rerr ]]; chk errnul.32
+
+run_sash 'ERR {
+  array a=(old)
+  a[0]=good
+  a+=(extra)
+  unset a[1]
+  map m=([old]=old)
+  m[new]=new
+  unset m[old]
+  keys m k
+  if /bin/echo @{a:-} @{m:-} @{k:-} { : }
+}
+fail'
+[[ $rc = 1 && $out = 'good new new' && -z $err && -z $rerr ]]; chk errnul.33
+
+run_sash 'str data=$(/bin/true)
+ERR {
+  if [[ ! 0? ${data:!-fallback} ]] { if /bin/echo ${data:!-fallback} { : } }
+}
+fail'
+[[ $rc = 1 && $out = fallback && -z $err && -z $rerr ]]; chk errnul.34
+
+run_sash 'ERR {
+  array a=($'\''bad\x00key'\'' value)
+  map m=@{a:-fallback}
+  keys m k
+  if /bin/echo @{k:-} { : }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.35
+
+run_sash 'ERR {
+  map m=([old]=value)
+  str key=$'\''bad\x00key'\''
+  m[$key]=good
+  keys m k
+  if /bin/echo @{k:-} { : }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.36
+
+run_sash 'ERR {
+  array captures=(old)
+  if match abc "a(b)" captures { if /bin/echo @{captures:-} { : } }
+}
+fail'
+[[ $rc = 1 && $out = 'ab b' && -z $err && -z $rerr ]]; chk errnul.37
+
+run_sash 'fn change -> int { work=$'\''bad\x00value'\''; return 1 }
+ERR {
+  str work=before
+  if /bin/echo "$work$(change)" { : }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.38
 
 set -e
 tally

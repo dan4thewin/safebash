@@ -2,7 +2,7 @@
 
 use crate::ir::Span;
 use crate::ssa::*;
-use crate::ssa_taint::{classify_main, instruction_target, Classification};
+use crate::ssa_taint::{classify_main, Classification};
 use crate::terminal::{live_blocks, live_insts};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 

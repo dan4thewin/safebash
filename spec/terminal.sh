@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#128 — checked EXIT and explicitly handled ERR.
 . common.sh
-plan=81
+plan=78
 setup terminal
 
 set +e
@@ -229,55 +229,35 @@ SASH_CFLAGS=--no-taint-cst run_sash '
 v=$(getenv DD128_VALUE)
 fail 1
 ERR {
-    attest v [[ $v == allowed ]] || v=clean
+    attest v [[ $v == allowed ]] || exit 1
     - echo "$v"
 }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.23
-
-SASH_CFLAGS=--no-taint-cst run_sash '
-v=$(getenv DD128_VALUE)
-fail 1
-ERR {
-    v=allowed
-    attest v [[ $v == allowed ]] || v=clean
-    - echo "$v"
-}'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.24
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errstate.1
 
 DD128_VALUE=allowed SASH_CFLAGS=--no-taint-cst run_sash '
 v=$(getenv DD128_VALUE)
 fail 1
 ERR {
-    v=$(getenv DD128_VALUE)
-    attest v [[ $v == allowed ]] || v=clean
-    - echo "$v"
+    work=$(getenv DD128_VALUE)
+    attest work [[ $work == allowed ]] || work=clean
+    - echo "$work:${v:!}"
 }'
-[[ $rc = 1 && $out = allowed && -z $err ]]; chk migratea.25
-
-SASH_CFLAGS=--no-taint-cst run_sash '
-v=$(getenv DD128_VALUE)
-fail 1
-ERR {
-    if [[ "$$" == impossible ]] { v=$(getenv DD128_VALUE) }
-    attest v [[ $v == allowed ]] || v=clean
-    - echo "$v"
-}'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.26
+[[ $rc = 1 && $out = allowed:allowed && -z $err ]]; chk errstate.2
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 argv a
 fail 1
 ERR {
-    if attest item in a [[ -n $item ]] { - echo done } else { unset a }
+    if attest item in a [[ -n $item ]] { - echo done } else { exit 1 }
 }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.27
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errstate.3
 
 SASH_CFLAGS=--no-taint-cst run_sash '
-fn check { if attest item in A [[ -n $item ]] { - echo done } else { unset A } }
+fn check { if attest item in A [[ -n $item ]] { - echo done } else { exit 1 } }
 argv a
 fail 1
 ERR { check =a }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.28
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errstate.4
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 str v=initial
@@ -290,12 +270,6 @@ EXIT {
     echo "$v"
 }'
 [[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.29
-
-SASH_CFLAGS=--no-taint-cst run_sash '
-v=$(getenv DD128_VALUE)
-fail 1
-ERR { v=clean; - echo "$v" }'
-[[ $err == *"tainted variable"* && $err == *"SSA taint backstop"* ]]; chk migratea.30
 
 # Collection mutations invalidate count and nonempty proofs in ERR.
 run_sash '

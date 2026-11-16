@@ -5,14 +5,25 @@ use crate::ir::{HandlerKind, Span, VarType};
 use crate::ssa::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-pub(crate) fn check_err(program: &SsaProgram) -> Vec<Diagnostic> {
+mod nul;
+
+pub(crate) fn check_err(program: &SsaProgram, source: &crate::ir::Program) -> Vec<Diagnostic> {
     let Some(handler) = program.handlers.get(&HandlerKind::Err) else {
         return Vec::new();
     };
     let facts = Facts::new(program);
+    let imports = crate::validate::err_imports(source);
+    let nul = nul::Prover::new(program, &facts);
     let mut errors = Vec::new();
     for id in live_blocks(program, handler.block) {
-        block_failures(program, program.block(id), &facts, &mut errors);
+        block_failures(
+            program,
+            program.block(id),
+            &facts,
+            &imports,
+            &nul,
+            &mut errors,
+        );
     }
     let mut seen = HashSet::new();
     errors.retain(|d| seen.insert((d.line, d.col, d.message.clone())));
@@ -23,23 +34,63 @@ fn block_failures(
     program: &SsaProgram,
     block: &BasicBlock,
     facts: &Facts<'_>,
+    imports: &HashSet<String>,
+    nul: &nul::Prover<'_, '_>,
     errors: &mut Vec<Diagnostic>,
 ) {
     let mut origin = block.origin;
-    for inst in live_insts(block) {
+    for (index, inst) in live_insts(block).iter().enumerate() {
         if let SsaInst::SourceOrigin(next, _) = inst {
             origin = *next;
             continue;
         }
+        errors.extend(readonly_failure(
+            program,
+            origin.or(block.origin),
+            inst,
+            imports,
+        ));
         errors.extend(
-            instruction_failures(inst, facts)
+            instruction_failures(inst, facts, &|arg| nul.proves((block.id, index), arg))
                 .iter()
                 .map(|failure| failure_diagnostic(program, origin.or(block.origin), failure)),
         );
     }
 }
 
+fn readonly_failure(
+    program: &SsaProgram,
+    origin: Option<usize>,
+    inst: &SsaInst,
+    imports: &HashSet<String>,
+) -> Option<Diagnostic> {
+    let name = instruction_write(inst).filter(|name| imports.contains(*name))?;
+    let (site, call) = origin_sites(program, origin);
+    Some(Diagnostic::error_span(
+        call,
+        "SB5102",
+        format!(
+            "ERR cannot write inherited binding `{name}` at {}:{}; use ERR-only \
+             working state or a fresh private local instead",
+            site.line, site.col
+        ),
+    ))
+}
+
 fn failure_diagnostic(program: &SsaProgram, origin: Option<usize>, failure: &str) -> Diagnostic {
+    let (site, call) = origin_sites(program, origin);
+    Diagnostic::error_span(
+        call,
+        "SB5101",
+        format!(
+            "ERR can be abandoned by {failure} at {}:{}; catch or suppress that failure \
+             where it occurs. Handling an enclosing command or function result does not reach it",
+            site.line, site.col
+        ),
+    )
+}
+
+fn origin_sites(program: &SsaProgram, origin: Option<usize>) -> (Span, Span) {
     let mut path = Vec::new();
     let mut next = origin;
     while let Some(id) = next {
@@ -51,15 +102,7 @@ fn failure_diagnostic(program: &SsaProgram, origin: Option<usize>, failure: &str
     }
     let site = path.first().copied().unwrap_or(Span::new(1, 1));
     let call = path.last().copied().unwrap_or(site);
-    Diagnostic::error_span(
-        call,
-        "SB5101",
-        format!(
-            "ERR can be abandoned by {failure} at {}:{}; catch or suppress that failure \
-             where it occurs. Handling an enclosing command or function result does not reach it",
-            site.line, site.col
-        ),
-    )
+    (site, call)
 }
 
 pub(crate) fn live_insts(block: &BasicBlock) -> &[SsaInst] {
@@ -245,7 +288,7 @@ impl<'a> Facts<'a> {
     }
 
     fn collect_definition(&mut self, inst: &'a SsaInst, incoming: bool, program: &SsaProgram) {
-        let Some(target) = crate::ssa_taint::instruction_target(inst) else {
+        let Some(target) = instruction_target(inst) else {
             return;
         };
         self.definitions
@@ -564,7 +607,11 @@ fn intrinsic_proof(argv: &[SsaValue], facts: &Facts<'_>) -> Proof {
 }
 
 /// Total over executable SSA instructions; do not add a wildcard.
-fn instruction_failures(inst: &SsaInst, facts: &Facts<'_>) -> Vec<String> {
+fn instruction_failures(
+    inst: &SsaInst,
+    facts: &Facts<'_>,
+    argv_safe: &impl Fn(&SsaValue) -> bool,
+) -> Vec<String> {
     let mut errors = Vec::new();
     match inst {
         SsaInst::Command {
@@ -574,7 +621,9 @@ fn instruction_failures(inst: &SsaInst, facts: &Facts<'_>) -> Vec<String> {
             redirects,
             checked,
         } => {
-            errors.extend(command_failures(name, *kind, args, *checked, facts));
+            errors.extend(command_failures(
+                name, *kind, args, *checked, facts, argv_safe,
+            ));
             redirect_failure(redirects, &mut errors);
             values_failures(args, facts, &mut errors);
         }
@@ -583,7 +632,7 @@ fn instruction_failures(inst: &SsaInst, facts: &Facts<'_>) -> Vec<String> {
             checked,
             capture,
             ..
-        } => pipeline_failures(stages, *checked, capture, facts, &mut errors),
+        } => pipeline_failures(stages, *checked, capture, facts, argv_safe, &mut errors),
         SsaInst::PipelineFinish { checked: true, .. } => {
             errors.push("uncaught producer failure".to_string())
         }
@@ -649,6 +698,7 @@ fn pipeline_failures(
     checked: bool,
     capture: &PipelineCapture,
     facts: &Facts<'_>,
+    argv_safe: &impl Fn(&SsaValue) -> bool,
     errors: &mut Vec<String>,
 ) {
     if checked {
@@ -657,7 +707,7 @@ fn pipeline_failures(
     if let PipelineCapture::Value(_) = capture {
         errors.push("a capture drain's uncatchable read failure".to_string());
         for (name, args, _) in stages.iter().filter(|(name, _, _)| name.starts_with('/')) {
-            argv_failure(name, args, facts, errors);
+            argv_failure(name, args, argv_safe, errors);
             values_failures(args, facts, errors);
         }
     }
@@ -688,12 +738,13 @@ fn command_failures(
     args: &[SsaValue],
     checked: bool,
     facts: &Facts<'_>,
+    argv_safe: &impl Fn(&SsaValue) -> bool,
 ) -> Vec<String> {
     let mut errors = Vec::new();
     match kind {
         BuiltinCmd::Other => {
             errors.extend(checked.then(|| format!("uncaught command failure (`{name}`)")));
-            argv_failure(name, args, facts, &mut errors);
+            argv_failure(name, args, argv_safe, &mut errors);
         }
         BuiltinCmd::Echo | BuiltinCmd::Cd | BuiltinCmd::Close | BuiltinCmd::StoreBgPid => {
             errors.extend(checked.then(|| format!("uncaught `{name}` failure")));
@@ -746,8 +797,13 @@ fn command_failures(
     errors
 }
 
-fn argv_failure(name: &str, args: &[SsaValue], facts: &Facts<'_>, errors: &mut Vec<String>) {
-    if args.iter().any(|arg| facts.value(arg).may_nul) {
+fn argv_failure(
+    name: &str,
+    args: &[SsaValue],
+    argv_safe: &impl Fn(&SsaValue) -> bool,
+    errors: &mut Vec<String>,
+) {
+    if args.iter().any(|arg| !argv_safe(arg)) {
         errors.push(format!("the uncatchable NUL-byte argv guard for `{name}`"));
     }
 }

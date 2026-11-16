@@ -1047,6 +1047,70 @@ impl SsaInst {
     }
 }
 
+/// Total over SSA definitions; do not add a wildcard.
+pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
+    match inst {
+        SsaInst::Assign { target, .. }
+        | SsaInst::ReadLine { target, .. }
+        | SsaInst::ReadArray { target, .. }
+        | SsaInst::CaptureEnd { target, .. }
+        | SsaInst::ArgvFill { target, .. }
+        | SsaInst::KeysFill { target, .. }
+        | SsaInst::SplitValue { target, .. }
+        | SsaInst::MapFromArray { target, .. }
+        | SsaInst::Attest { target, .. }
+        | SsaInst::AttestRetag { target, .. } => Some(target),
+        SsaInst::Pipeline { capture, .. } => capture.target(),
+        SsaInst::Command { .. }
+        | SsaInst::Test(..)
+        | SsaInst::SubscriptAssign { .. }
+        | SsaInst::ArrayAppend { .. }
+        | SsaInst::MatchInto { .. }
+        | SsaInst::CaptureStart { .. }
+        | SsaInst::AttestAll { .. }
+        | SsaInst::RedirectPush { .. }
+        | SsaInst::PipelineFinish { .. }
+        | SsaInst::RedirectPop { .. }
+        | SsaInst::SourceOrigin(..) => None,
+    }
+}
+
+/// Logical storage writes, not version definitions. Total; do not add a wildcard.
+pub(crate) fn instruction_write(inst: &SsaInst) -> Option<&str> {
+    match inst {
+        SsaInst::SubscriptAssign { array, .. }
+        | SsaInst::ArrayAppend { array, .. }
+        | SsaInst::MatchInto { array, .. } => Some(array),
+        SsaInst::Command {
+            kind: kind @ (BuiltinCmd::TableDelete | BuiltinCmd::TableDeleteIdx),
+            args,
+            ..
+        } => {
+            let [table, _] = kind.expect_ssa_args(args);
+            Some(&kind.expect_var_arg(table).name)
+        }
+        SsaInst::Assign { .. }
+        | SsaInst::ReadLine { .. }
+        | SsaInst::ReadArray { .. }
+        | SsaInst::CaptureEnd { .. }
+        | SsaInst::ArgvFill { .. }
+        | SsaInst::KeysFill { .. }
+        | SsaInst::SplitValue { .. }
+        | SsaInst::MapFromArray { .. }
+        | SsaInst::Pipeline { .. } => instruction_target(inst).map(|target| target.name.as_str()),
+        SsaInst::Attest { .. }
+        | SsaInst::AttestRetag { .. }
+        | SsaInst::AttestAll { .. }
+        | SsaInst::Command { .. }
+        | SsaInst::Test(..)
+        | SsaInst::CaptureStart { .. }
+        | SsaInst::RedirectPush { .. }
+        | SsaInst::PipelineFinish { .. }
+        | SsaInst::RedirectPop { .. }
+        | SsaInst::SourceOrigin(..) => None,
+    }
+}
+
 /// Arithmetic operators for $(( )) and (( )) contexts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithOp {

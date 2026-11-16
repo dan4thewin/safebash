@@ -1,5 +1,5 @@
 title: Enforce readonly ERR inputs and localized NUL proofs
-status: open
+status: done
 priority: P2
 kind: work
 depends: [nul-predicate-and-filename-tests]
@@ -27,11 +27,11 @@ helpers and collection slots. `transform/entry.rs` currently seeds
 the import set. A declaration inside ERR is not sufficient proof of
 exclusive ownership if ordinary execution also accesses the binding.
 
-Enforcement must cover contents as well as names. `check_const_writes`
-currently relies on scalar-only consts, and `ssa_taint::instruction_target`
-is not a complete mutation census. Do not reuse either as a complete answer
-without accounting for element/append/unset/output-target/alias channels.
-Share existing canonical walks and decoded binding identities.
+Enforcement covers contents as well as names. `check_const_writes` still
+relies on scalar-only consts. The definition inventory is now shared as
+`ssa::instruction_target`; the separate total `ssa::instruction_write`
+accounts for element/append/unset/output-target/alias channels without
+mistaking value-preserving attests for writes.
 
 ## NUL query
 
@@ -63,12 +63,11 @@ Fresh input can instead enter writable ERR-owned working state.
 
 ## Evidence and boundaries
 
-The existing native control in the session's
-`files/tour-cleanup-directory-proof-20261114.json` still receives SB5101
+At policy recording, the native control in the session's
+`files/tour-cleanup-directory-proof-20261114.json` received SB5101
 for a handled external argument after `-d ${work:!}` in a cleanup helper.
-The runtime also truncates the filename test at NUL, so deleting that
-refusal before the prerequisite repair would be unsound. No new compiler
-probe was run for this task record.
+The runtime also truncated the filename test at NUL. Journal 639 fixed
+that prerequisite before this unit enabled the predicate-derived proof.
 
 Pin the direct/helper cleanup forms, both predicate polarities, wrong-value
 and one-predecessor refusals, loops and collection aliases. Include writes
@@ -81,3 +80,20 @@ dispatch. Other uncatchable failures retain
 [recoverable-file-failures](recoverable-file-failures.md) as their owners.
 [mkdtemp](mkdtemp-value-intrinsic.md) is independently useful and is not a
 prerequisite for these predicate proofs.
+
+## Delivered 2026-11-16
+
+[Journal 640](../journal/640-readonly-err-and-local-nul-proofs.md) records
+the implementation and acceptance evidence. Actual imports reuse the bound
+source's global/call census; live same-process SSA writes enforce SB5102.
+The local backward prover follows actual storage writes, separate test/status
+outcomes and all feasible predecessors. Checked scalar integer types remain
+NUL-free independently of a particular value version.
+
+`errro.1`-`.14` and `errnul.1`-`.38` cover the new contracts. Four fresh
+`errstate` cases preserve independent SSA-taint coverage without forbidden
+import writes; seven superseded `migratea` fixtures retire. Native and C
+before-controls and eleven independent reversion mechanisms are recorded.
+The ordinary gate passes at 11505 results, with every retained unit-A
+status unchanged. Runtime guards, taint, dispatch and the IR schema remain
+unchanged. The separate constructor unit is still pending.

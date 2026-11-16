@@ -438,34 +438,6 @@ fn update_global_state(
     }
 }
 
-/// Total over SSA definitions; do not add a wildcard.
-pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
-    match inst {
-        SsaInst::Assign { target, .. }
-        | SsaInst::ReadLine { target, .. }
-        | SsaInst::ReadArray { target, .. }
-        | SsaInst::CaptureEnd { target, .. }
-        | SsaInst::ArgvFill { target, .. }
-        | SsaInst::KeysFill { target, .. }
-        | SsaInst::SplitValue { target, .. }
-        | SsaInst::MapFromArray { target, .. }
-        | SsaInst::Attest { target, .. }
-        | SsaInst::AttestRetag { target, .. } => Some(target),
-        SsaInst::Pipeline { capture, .. } => capture.target(),
-        SsaInst::Command { .. }
-        | SsaInst::Test(..)
-        | SsaInst::SubscriptAssign { .. }
-        | SsaInst::ArrayAppend { .. }
-        | SsaInst::MatchInto { .. }
-        | SsaInst::CaptureStart { .. }
-        | SsaInst::AttestAll { .. }
-        | SsaInst::RedirectPush { .. }
-        | SsaInst::PipelineFinish { .. }
-        | SsaInst::RedirectPop { .. }
-        | SsaInst::SourceOrigin(..) => None,
-    }
-}
-
 struct Pass<'a> {
     program: &'a SsaProgram,
     user_functions: std::collections::HashSet<String>,

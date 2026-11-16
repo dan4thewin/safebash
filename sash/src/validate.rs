@@ -9457,14 +9457,61 @@ struct GlobalAccess {
 
 type CollectionGlobalUses = HashMap<String, BTreeMap<String, GlobalAccess>>;
 
+/// DD135: an ERR-only declaration is not private if ordinary execution or EXIT
+/// names it, including through a helper or an otherwise-unused collection slot.
+pub(crate) fn err_imports(program: &Program) -> HashSet<String> {
+    let globals = crate::bindings::global_names(program);
+    let funcs = program.function_defs().map(|f| f.name.clone()).collect();
+    let uses = collection_global_uses(program, &funcs);
+    let mut census = take_census(program);
+    for sites in census.fns.values_mut() {
+        sites.calls.clear();
+    }
+    let mut imports = HashSet::new();
+    let mut root_uses = BTreeMap::new();
+    let roots = std::iter::once(program.statements.as_slice()).chain(
+        program
+            .handlers()
+            .filter(|(kind, _)| *kind != HandlerKind::Err)
+            .map(|(_, body)| body),
+    );
+    for body in roots {
+        collect_scope_names(body, &mut imports);
+        crate::ir::walk_scoped_stmts(body, "", &mut |stmt, owner| {
+            record_root_access(stmt, owner, &globals, &funcs, &mut root_uses, &mut census);
+        });
+    }
+    imports.extend(root_uses.into_keys());
+    imports.extend(
+        census
+            .fns
+            .iter()
+            .filter(|(_, sites)| !sites.calls.is_empty())
+            .flat_map(|(name, _)| uses[name].keys().cloned()),
+    );
+    imports
+}
+
+fn record_root_access(
+    stmt: &Statement,
+    owner: &str,
+    globals: &HashSet<String>,
+    funcs: &HashSet<String>,
+    uses: &mut BTreeMap<String, GlobalAccess>,
+    census: &mut Census,
+) {
+    if !owner.is_empty() || matches!(stmt.kind, StmtKind::Function(_)) {
+        return;
+    }
+    record_global_accesses(stmt, "", globals, funcs, uses);
+    census.record_stmt(stmt, "");
+}
+
 /// DD#100's non-aliasing contract is static and independent of taint.
 /// Resolved local names cannot collide with globals. Each function's footprint
 /// includes every definition and every reachable callee, without call contexts.
 fn collection_global_uses(program: &Program, funcs: &HashSet<String>) -> CollectionGlobalUses {
-    let mut globals = HashSet::new();
-    for block in program_blocks(program) {
-        collect_global_names(block, &mut globals);
-    }
+    let globals = crate::bindings::global_names(program);
     let mut direct = CollectionGlobalUses::new();
     for f in program.function_defs() {
         let uses = direct.entry(f.name.clone()).or_default();
