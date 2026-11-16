@@ -68,19 +68,22 @@ validation. `--locked` allows downloading the selected dependencies; it
 does not imply `--offline`, vendoring, a compiler/toolchain pin, or
 bit-identical binaries.
 
-## Independent DD129 repair
+## Completed independent DD129 repair
 
-`bug-fresh-clone-rustix-runtime-private` remains the P1 owner of removing
-unsupported rustix APIs. Recording or tracking a working old resolution
-does not close it, and freezing 1.1.4 is not its remedy.
+The [private-rustix repair](bug-fresh-clone-rustix-runtime-private.md)
+is complete; [journal 619](../journal/619-public-linux-syscall-layer.md)
+records its implementation and fresh-resolution proof. This pointer was
+reconciled on 2026-11-16; lockfile enforcement remains unimplemented.
+Tracking a working resolution is not a substitute for removing unsupported
+APIs or for the independent fresh-resolution compatibility control.
 
-Its acceptance control deliberately removes the runtime lock only in an
+That control deliberately removes the runtime lock only in an
 isolated source copy, resolves fresh dependencies, then performs a locked
 build. A tracked archive will now include the lock, so extracting one
 alone is insufficient. Neither task may rewrite the working checkout's
 locks merely to run that control.
 
-Coordinate the two units without inventing a delivery-order dependency.
+The completed API repair is not a blocker for this task.
 The existing hook snapshot-consistency policy also applies to lockfiles
 consumed by a check: being generated does not exempt a reviewed build
 input from staged/worktree agreement.

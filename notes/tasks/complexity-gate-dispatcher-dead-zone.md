@@ -1,10 +1,19 @@
 title: "Complexity gate: pure dispatchers with cc in (3×mean, 3×mean+15) cannot be exempted"
-status: open
+status: done
 priority: P3
 kind: decision
 depends: []
 gates:
   - "the gate's dispatcher exemption is reachable for a cc≈13 / cog=1 function, or the dead zone is accepted deliberately"
+
+## Completed; record reconciled 2026-11-16
+
+DG selected the `cog <= 2` exemption on 2026-09-16, recorded in
+[journal 108](../journal/108-cog-cc-rubric.md) and the
+[contributor rubric](../../AGENTS.md#complexity-index--known-residual).
+The current pre-commit query requires `cognitive > 2` before rejecting,
+in addition to the wide-dispatcher delta test. Both exemptions are delivered;
+the numerical cohort and unchosen alternatives below are historical.
 
 ## The finding
 

@@ -1,24 +1,36 @@
 title: Ongoing complexity reduction via cog/cc rubric
-status: active
+status: superseded
 priority: P2
 kind: work
 depends: []
 gates:
   - top non-grandfathered function clears the rubric on touch
   - new violators never land (gate blocks them)
-  - plan to tighten threshold 3× → 2× → 1.5× as cohort clears
+  - historical threshold-tightening plan superseded by retaining 3×
 
 # Ongoing complexity reduction via cog/cc rubric
 
+## Superseded; record reconciled 2026-11-16
+
+DG's 2026-09-12 ruling retains the 3x-current-means,
+grandfather-on-modify gate rather than scheduling a burn-down followed by
+2x/1.5x thresholds. The [current contributor rubric](../../AGENTS.md#complexity-index--known-residual)
+also includes the later `cog <= 2` dispatcher exemption. It remains mandatory
+when touching compiler functions.
+
+This closes the separate rolling-wave/tightening plan, not the standing
+quality rule, and does not claim the remaining hotspots are gone. The June
+measurements and query below are historical, not the current gate formula
+or a fresh work queue.
+
 The named-hotspot work in
-[r47-reduce-parser-complexity-hotspots](r47-reduce-parser-complexity-hotspots)
+[r47-reduce-parser-complexity-hotspots](r47-reduce-parser-complexity-hotspots.md)
 closed 2026-06-05 with all 6 targeted parser hotspots refactored.
 Phases 11–12 then introduced the cognitive-vs-cyclomatic rubric
 ([journal 108](../journal/108-cog-cc-rubric.md)) and the
 grandfather-on-modify complexity gate (commit `323eeb4`).
 
-This task captures the **standing cohort work** the gate is built
-around. It is the home for ongoing refactor waves, the
+At filing, this task collected the ongoing refactor waves, the
 threshold-tightening plan, and the rolling list of violators.
 
 ## Progress (2026-06-07 wave)
@@ -59,7 +71,7 @@ tightened twice without any policy change.
 | `aa3ccbf` | `check_cmd_in_stmt`             | 11→5      | 17→4       | is_regex_mutation + let-else |
 | `1b6cd37` | `intern_inst`                   | 17→11     | 17→3       | intern_command_parts dedup |
 
-## The rubric (verbatim from journal 108)
+## The June rubric (historical)
 
 ```
 reject if (cog - cc > -15)                     -- not a pure dispatcher
@@ -79,7 +91,7 @@ when a commit's staged hunks intersect a violator's line range —
 the function must be brought into compliance before the touching
 commit lands.
 
-## Current cohort (post-wave, 2026-06-07)
+## Historical cohort (post-wave, 2026-06-07)
 
 96 remaining violators. The number rose from 15 (pre-wave) as the
 threshold tightened twice (cog 11.46 → 9.84 → 8.83), pulling in
@@ -107,7 +119,7 @@ ORDER BY MAX(s.cyclomatic / stats.mcc, s.cognitive / stats.mcog) DESC;
 "
 ```
 
-## Pure dispatchers (excluded by rubric)
+## Pure dispatchers (June rubric)
 
 Functions with `delta = cog - cc ≤ -15` are excluded: high CC but
 flat structure (one arm per variant, no nesting). They show in the
@@ -121,12 +133,12 @@ These should stay flat. If any of them ever sprouts nesting they'd
 fail on the delta check (cog goes up but cc stays flat → delta
 shrinks → eligible for the rubric).
 
-## Threshold-tightening plan
+## Superseded threshold-tightening plan
 
-The gate is currently 3× mean. As the grandfathered cohort clears,
-tighten:
+The original plan was to tighten beyond 3× mean as the grandfathered
+cohort cleared:
 
-1. **3× mean (now).** Cohort cleared from 15 → 15 (ratchet kept
+1. **3× mean (at filing).** Cohort cleared from 15 → 15 (ratchet kept
    surfacing new entries as means dropped). Each touch in
    `sash/src/` triggers refactor.
 2. **2× mean.** Once cohort clears to ~5 or fewer violators.
@@ -135,7 +147,7 @@ tighten:
 Tightening doesn't re-grandfather; pre-existing functions above the
 new threshold become new cohort members.
 
-## Strategy notes
+## Historical strategy notes
 
 - **Cog drives the refactor priority, not cc.** A cog=22 dispatcher
   with cc=10 is harder to read than a cc=22 function with cog=8.
@@ -160,9 +172,9 @@ new threshold become new cohort members.
 - [journal 108](../journal/108-cog-cc-rubric.md) — rubric derivation
 - [journal 109](../journal/109-pre-dd53-cruft-in-handle-cd.md) — handle_cd cruft
 - Commit `323eeb4` — gate enforcement
-- [r47-reduce-parser-complexity-hotspots](r47-reduce-parser-complexity-hotspots)
+- [r47-reduce-parser-complexity-hotspots](r47-reduce-parser-complexity-hotspots.md)
   — closed predecessor (named hotspots, parser-side)
-- [r47-set-extraction-floor-cc50](r47-set-extraction-floor-cc50) —
+- [r47-set-extraction-floor-cc50](r47-set-extraction-floor-cc50.md) —
   superseded predecessor (numeric floor approach)
 - `.githooks/pre-commit` — gate implementation
 - `extract-instctx-setup` — specific cohort target also tracked separately

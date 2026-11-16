@@ -1,14 +1,27 @@
-title: "sash-convert — `cmd \"$@\"` has no faithful conversion; pick the empty-case default"
-status: blocked
+title: "sash-convert: update empty-splat guidance for :~"
+status: open
 priority: P3
-kind: design
+kind: work
 depends: []
-blocked_on: DG
 gates:
-  - "DG picks: MANUAL-only (current), `@{a:-WORD}` scaffold, or `@{a:?WORD}` scaffold"
-  - "if a scaffold is chosen, conv.x7 asserts it round-trips"
+  - "guidance for Bash positional and array splats includes :~ as the zero-argument empty case, distinct from :- and :?"
+  - "guidance follows current collection, argument and taint rules without claiming that new language syntax is needed"
+  - "focused converter specs pin the guidance and unchanged literal/non-splat controls; no automatic scaffold or taint policy is selected by this reconciliation"
 
-## The fork
+## Remaining work (reconciled 2026-11-16)
+
+[DD84](../decisions/DD84-optional-args-elision.md) already supplies
+`@{a:~}`: an empty array contributes zero arguments. `@{a:-}` instead
+contributes one empty argument, and `@{a:?}` aborts. The language fork in
+this filing is settled; it is not blocked on DG inventing a fourth form.
+
+The converter work is not complete. Current `convert_splat` and
+`convert_bracket_splat` guidance still names only `:-`/`:?` for `"$@"` and
+`"${array[@]}"`, omitting the available zero-argument case. Correct that
+advice and its regression coverage. Retain DD57's manual-fallback boundary;
+this cleanup does not choose or implement an automatic scaffold.
+
+## Historical fork
 
 `converter-positional-use-needs-bless` is implemented except for this case.
 DG's 2026-07-08 resolution said to emit:
@@ -25,8 +38,9 @@ an external command:
 > would run it with too few arguments. State the empty case: `@{a:-WORD}`
 > (empty → the single arg WORD) or `@{a:?WORD}` (empty → abort with WORD)
 
-So the scaffold as written does not compile, and the two spellings that do
-both diverge from bash, which runs the command with **zero** arguments:
+The scaffold as written does not compile. The filing considered only the
+two alternatives below, both of which diverge from Bash's **zero** arguments
+for an empty splat:
 
 | spelling | empty `"$@"` behaviour | matches bash? |
 |---|---|---|
@@ -34,7 +48,7 @@ both diverge from bash, which runs the command with **zero** arguments:
 | `cmd @{a:?WORD}` | aborts with `WORD` | no |
 | (bash) | runs `cmd` with no arguments | — |
 
-## Current behaviour (shipped, journal 289)
+## Historical emitted example (journal 289)
 
 A MANUAL marker naming the fork, and no rewrite:
 
@@ -49,7 +63,7 @@ This satisfies the parent task's gate ("either compiles or carries a MANUAL
 marker") and does not silently change what the script does. Pinned by
 `spec/convert.sh` conv.x7.
 
-## Options
+## Historical options
 
 1. **Keep MANUAL-only.** Honest; the author is told exactly what to decide.
    Costs: converted scripts using `cmd "$@"` need a hand edit before they
@@ -61,9 +75,9 @@ marker") and does not silently change what the script does. Pinned by
 3. **Scaffold with `@{a:-…}`.** Compiles; an empty argument list silently
    grows one argument. This is the worst of the three: it changes behaviour
    quietly.
-4. **A fourth sash spelling** meaning "empty → pass nothing", which would make
-   the conversion faithful. This is a language change (DD#22 territory), not a
-   converter change, and would need its own DD.
+4. **A fourth sash spelling** meaning "empty → pass nothing". DD84's `:~`
+   subsequently settled this part; it is no longer an open language choice.
 
-Option 4 is the only one that makes `cmd "$@"` mechanically convertible.
-Whether that case is common enough to justify a language surface is DG's call.
+The empty-case expressiveness question is resolved. Converter guidance and
+any separately selected automatic rewriting must use the current rules,
+not this obsolete two-choice inventory.

@@ -1,5 +1,5 @@
 title: Status
-modified: 2026-11-15
+modified: 2026-11-16
 
 # Current status
 
@@ -39,6 +39,12 @@ and the distinction between literal word backslashes and necessary quoting.
 
 ## Just completed
 
+- **Backlog reconciled.** Removed 32 deferred Janet records; closed five
+  completed and three superseded items. There are 148 non-terminal records
+  left, not 148 independent ready jobs. The empty-splat converter task now
+  owns its still-obsolete guidance, not an unchosen language extension.
+  [Journal 638](journal/638-backlog-retirement-and-closeouts.md) records
+  evidence, historical retrieval and three proposed workstreams.
 - **Single-source interactive and static tour delivered.**
   The root README highlights the GitHub edition and interactive launch command
   before its small example.

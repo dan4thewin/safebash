@@ -1,5 +1,5 @@
 title: "BUG: `readline` into an int crashes the compiler (native) or emits C that does not compile"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -7,6 +7,18 @@ gates:
   - "every program under What that reads into a declared int is rejected with a diagnostic, in both backends; none reaches codegen"
   - "k3 and the migration under Fix keep printing what they print today"
   - "specs pin r1 and r3 in both backends, asserting the code (not a bare `-n $err`)"
+
+## Completed; record reconciled 2026-11-16
+
+[Journal 567](../journal/567-static-global-storage.md) records the delivered
+scalar-reader target check. `register_readline_target` rejects an int target
+with located SB4030 before either backend; `gtype.1` pins the message.
+Current native and C-emission controls still give that specific refusal,
+including with the front-end taint pass disabled. Reading a string and
+converting explicitly remains the supported route.
+
+The original report and its proposed gates are historical, not outstanding
+work.
 
 ## What
 

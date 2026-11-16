@@ -63,7 +63,8 @@ DG: *"every change seems to yield more janet bugs/gaps."*
 Not noise, and worth recording because a restart should not rediscover
 it. Thirteen are DD#56 signal specs; `cf.f9/f10/f12/i2` are the genuine
 control-flow gaps. Together they confirm the 2026-08-16 diagnosis in
-`notes/tasks/janet-rt-primitive-library.md`: the backend re-implemented
+[the historical primitive-library task](https://github.com/dan4thewin/safebash/blob/6e99b1f1845a7159b0ba5dd33b745d13c1bf2403/notes/tasks/janet-rt-primitive-library.md):
+the backend re-implemented
 leaf primitives inline (spawning fake `getpid`/`read`/`regex` commands)
 instead of calling a real primitive library. That task file also names
 the exact trigger for this decision — "only if janet's purpose shifts
@@ -143,7 +144,18 @@ guard sites document exactly which constructs janet never reached.
 point of `--emit-ir` is that the next attempt consumes a capture instead
 of living inside the compiler.
 
-## Consequences
+At DG's request, the 32 deferred Janet task records were removed on 2026-11-16.
+[Journal 638](../journal/638-backlog-retirement-and-closeouts.md) records
+that cleanup; the full records remain retrievable in the
+[pre-cleanup task snapshot](https://github.com/dan4thewin/safebash/tree/6e99b1f1845a7159b0ba5dd33b745d13c1bf2403/notes/tasks).
+This retires the old backlog, not the independent post-beta oracle idea
+or the inert `--emit-ir` contract. Earlier journals' task names are
+historical references to those retained Git records.
+
+## Consequences at adoption (2026-09-12)
+
+The task counts and C-task statuses below describe that adoption, not the
+current backlog.
 
 - Removed: `emit_janet.rs`, `emit_janet_map.rs`, `sash/janet/sash-rt.janet`,
   `sash/tests/janet_tests.rs`, the `--janet`/`--janet-map` flags, and the

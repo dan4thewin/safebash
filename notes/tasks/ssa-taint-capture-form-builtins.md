@@ -1,5 +1,5 @@
 title: "SSA taint backstop: capture-form builtins decide taint before taint analysis runs"
-status: open
+status: done
 priority: P2
 kind: hardening
 depends: []
@@ -7,6 +7,23 @@ gates:
   - "under `--no-taint-cst` a builtin capture whose operands are tainted (`x=$(join @a)` for a tainted `a`) is rejected by the SSA backstop"
   - "0 spec regressions with the CST pass ON — a clean builtin capture must not false-positive"
   - "spec `taint_switch.sh` gains sw.* cases for the capture form"
+
+## Completed; record reconciled 2026-11-16
+
+The transform-time `CaptureEnd.tainted` flag is gone.
+[Journal 560](../journal/560-taint-at-the-read-boundary.md) records deriving
+kernel-capture taint from the actual transport and preserving existing taint
+through buffer copies. `sw.26`-`.28` pin the read-boundary backstop.
+
+Current native and C-emission controls with `--no-taint-cst` reject reads
+of results from both `$(join a)` over a tainted array and `$(echo "$s")`
+over a tainted scalar with the actual SSA taint-backstop diagnostic.
+Their clean counterparts compile. The join control uses today's bare
+collection operand, not the retired `$(join @a)` spelling.
+This closes the reported clean-result gap, not every separate SSA precision
+task.
+
+## Historical report
 
 Split out of `ssa-taint-full-backstop.md` on 2026-09-30, when that task's other
 two gaps closed. This is the last one.

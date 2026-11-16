@@ -3,7 +3,6 @@ status: done
 priority: P3
 kind: bug
 depends: []
-effort: effort-janet-backend-parity
 gates:
   - "c: SsaInst::CaptureStart/CaptureEnd are emitted (redirect fn stdout into a buffer, store into the target), not `/* TODO inst */` — `s=$(f)` and `echo $(f)` capture f's stdout"
   - "janet: `$(f)` on a user function captures the function's stdout (inline/with-out-str), not `(os/spawn [\"f\"])` exec of the name"

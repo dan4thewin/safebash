@@ -1,5 +1,5 @@
 title: "Bug: the validator taints a `while readline` loop fed by a clean pipe, though the SSA backstop binds it clean"
-status: open
+status: superseded
 priority: P2
 kind: bug
 depends: []
@@ -9,6 +9,19 @@ gates:
   - "the validator and the SSA backstop decide a pipe reader's taint from the same upstream stages, whether the reader is a bare stage or a `while` condition"
   - "a reader inside a capture, a function body, a redirected command or a background child within the loop does not inherit the loop's clean pipe (the suspension rule `state.pipe_reader` follows in the transform)"
   - "specs pin each row in both modes; l15 is pinned when B35 lands too"
+
+## Superseded; record reconciled 2026-11-16
+
+[DD127](../decisions/DD127-taint-across-function-boundaries.md) replaces the
+premise of this filing: every kernel pipe/fd read introduces taint, including
+a reader fed entirely by builtins. [Journal 560](../journal/560-taint-at-the-read-boundary.md)
+records removal of `clean_pipe` from both analyses. The requested exemption
+must not be implemented.
+
+Actual compiler-owned buffer copies remain distinct from kernel reads.
+Wider buffer eligibility belongs to
+[q-buffer-capture-eligibility](q-buffer-capture-eligibility.md).
+The original observations and repair proposal below are historical.
 
 ## Found
 

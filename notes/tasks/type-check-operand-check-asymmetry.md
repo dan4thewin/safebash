@@ -1,5 +1,5 @@
 title: "`check_command` and `check_subscript_in_stmt` disagree on which operand checks run"
-status: next
+status: done
 priority: P3
 kind: investigation
 depends: []
@@ -7,6 +7,18 @@ gates:
   - "the difference is explained: either a documented reason, or a bug with a probe that demonstrates it"
   - "if a gap: a spec pins each operand check at each site"
   - "if deliberate: a comment at both sites naming why the sets differ"
+
+## Completed; record reconciled 2026-11-16
+
+Commit [55e0214d](https://github.com/dan4thewin/safebash/commit/55e0214de8908caddf85b4487b8191fdd56a4022)
+identified `check_subscript_in_stmt` as a private duplicate, deleted it,
+and moved its unique checks into `check_command`. Its 66-program comparison
+and `types.sh` 75.148-75.156 cover the repaired gap and duplicate diagnostics.
+
+The current shared command check includes both `check_len_operand` and
+`check_int_sink_operands`. Current native and C-emission controls reject
+scalar `len` in string binding, int binding and argument captures with the
+specific advice to use `strlen`. The investigation below is historical.
 
 # Two type-check entry points, two different check sets
 

@@ -1,5 +1,5 @@
 title: "Remove four unreachable arms from `tok_to_text`"
-status: next
+status: done
 priority: P4
 kind: cleanup
 depends: []
@@ -7,6 +7,16 @@ gates:
   - "`LParen`/`RParen`/`DblParen`/`DblParenClose` arms removed from `tok_to_text`"
   - "the remaining default is `unreachable!()` or an explicit diagnostic, not a silent fallthrough"
   - "spec suite unchanged; no new specs needed (the arms are unreachable)"
+
+## Completed; record reconciled 2026-11-16
+
+Commit [58cae45b](https://github.com/dan4thewin/safebash/commit/58cae45bf50186cd0c57cbf5c28b1c992b02875a)
+removed the rival parenthesis renderings under DD116. The current
+`tok_to_text` names the intercepted variants explicitly and panics with
+"paren tokens are handled by step_arith_collect, not tok_to_text".
+The totality arms remain deliberately; their misleading ordinary answers
+do not. The old token names and literal arm-deletion sketch below are
+historical, not a reason to delete the exhaustive guard.
 
 # Four dead arms in `tok_to_text`
 
