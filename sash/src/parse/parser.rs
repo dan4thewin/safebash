@@ -2329,6 +2329,7 @@ fn is_unary_test_op(op: &str) -> bool {
             | "i?" // strict, i64-representable integer (renamed from `-i`)
             | "p?" // non-empty, all bytes ASCII printable (0x20–0x7E)
             | "g?" // non-empty, all bytes ASCII graph (0x21–0x7E)
+            | "0?" // contains a counted NUL byte
             | "-b"
             | "-c"
             | "-p"

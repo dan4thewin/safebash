@@ -1720,6 +1720,16 @@ pub unsafe extern "C" fn sash_is_graph(s_ptr: *const u8, s_len: i64) -> i64 {
     is_graph_inner(bytes) as i64
 }
 
+/// DD135: `0?` inspects counted bytes, never the storage terminator.
+#[no_mangle]
+pub unsafe extern "C" fn sash_has_nul(s_ptr: *const u8, s_len: i64) -> i64 {
+    if s_len <= 0 || s_ptr.is_null() {
+        return 0;
+    }
+    let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+    bytes.contains(&0) as i64
+}
+
 /// DD#77 arith `:-` disposition: `${s:-N}` in arithmetic. The i64 value of `s`
 /// when it is a valid, representable integer; otherwise `default` (the numeric
 /// literal N). Not-a-valid-integer unifies unset/empty/non-numeric/out-of-range.
@@ -2920,6 +2930,9 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
     if path_ptr.is_null() || path_len <= 0 {
         return 0;
     }
+    if unsafe { sash_has_nul(path_ptr, path_len) } != 0 {
+        return 0;
+    }
     let path = unsafe { core::slice::from_raw_parts(path_ptr, path_len as usize) };
 
     // We need a null-terminated path for syscalls
@@ -3251,6 +3264,10 @@ pub extern "C" fn sash_file_newer(
     p2_ptr: *const u8,
     p2_len: i64,
 ) -> i64 {
+    // A NUL-bearing second operand must not become the "missing file" true case.
+    if unsafe { sash_has_nul(p1_ptr, p1_len) != 0 || sash_has_nul(p2_ptr, p2_len) != 0 } {
+        return 0;
+    }
     let get_mtime = |ptr: *const u8, len: i64| -> Option<i64> {
         if ptr.is_null() || len <= 0 {
             return None;
@@ -3290,6 +3307,9 @@ pub extern "C" fn sash_file_same_dev(
     p2_ptr: *const u8,
     p2_len: i64,
 ) -> i64 {
+    if unsafe { sash_has_nul(p1_ptr, p1_len) != 0 || sash_has_nul(p2_ptr, p2_len) != 0 } {
+        return 0;
+    }
     let get_dev_ino = |ptr: *const u8, len: i64| -> Option<(u64, u64)> {
         if ptr.is_null() || len <= 0 {
             return None;

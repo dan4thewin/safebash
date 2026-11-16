@@ -113,7 +113,7 @@ rules still apply.
 | `i?` | a strict, i64-representable integer (**renamed from `-i`**) |
 | `p?` | non-empty and every byte is ASCII **printable** (0x20–0x7E) |
 | `g?` | non-empty and every byte is ASCII **graph** (0x21–0x7E, i.e. printable non-space) |
-| `0?` | contains a NUL byte within its counted contents; **false on empty** (DD135, implementation pending) |
+| `0?` | contains a NUL byte within its counted contents; **false on empty** (DD135) |
 
 - **`-i` → `i?` (hard rename).** `-i` was sash-native (bash has no `-i`, DD#77);
   folding it into the `?`-suffix family pulls it out of bash's `-X` namespace.
@@ -121,9 +121,10 @@ rules still apply.
 - **Non-empty required.** `p?`/`g?` on the empty string are **false** (`i?` is
   already false on empty). These are one-token sanitizers: "non-empty and all
   bytes in the class."
-- **ASCII-only.** High bytes (≥ 0x80) are rejected; ambiguous non-ASCII is part
-  of what a shape test screens out. A UTF-8-aware variant may come later (a
-  distinct spelling), not now.
+- **ASCII classes.** `p?` and `g?` reject high bytes (≥ 0x80); ambiguous
+  non-ASCII is part of what these shape tests screen out. A UTF-8-aware
+  variant may come later (a distinct spelling), not now. `0?` imposes no
+  ASCII restriction.
 - **Reserved space.** The `?`-suffix opens a clean namespace for the remaining
   POSIX classes later (`a?` alnum, `d?` digit, `l?` alpha, `s?` space, …); the
   operator token + runtime dispatch are built so adding one is a one-liner. Not
@@ -141,8 +142,10 @@ DD135 also requires every filename predicate to return false before lookup
 on a NUL-bearing operand, including either operand of `-nt`/`-ot`/`-ef`.
 True filename tests and true `i?`/`p?`/`g?`, or false `0?`, can justify
 NUL-freedom at a specific ERR use. An ordinary predicate never implicitly
-attests its input; inherited taint still requires trusted reads. These
-runtime and ERR-proof additions are pending in DD135's implementation tasks.
+attests its input; inherited taint still requires trusted reads. The predicate
+and runtime guards are implemented
+([journal 639](../journal/639-counted-nul-and-filename-guards.md)); the
+dependent ERR proof remains implementation work.
 
 #### Provisional addition: `r?` (DG, 2026-11-09)
 

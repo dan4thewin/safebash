@@ -46,7 +46,9 @@ DG chose **B**: one uniform termination invariant. At a C-string boundary,
 passing the pointer represents the whole value only when its counted
 contents have no interior NUL. DD99 retains the runtime argv guard;
 DD135 adds NUL-rejecting filename predicates and a counted-content `0?`
-test, with implementation pending. Neither counts the storage terminator.
+test, implemented in both backends
+([journal 639](../journal/639-counted-nul-and-filename-guards.md)).
+Neither counts the storage terminator.
 
 ## The rule
 

@@ -245,6 +245,11 @@ pairs, integers are signed 64-bit values, and arrays/maps share the
 bounds correctness: allocations, terminators, interior NULs and foreign
 interfaces still require explicit handling.
 
+`0?` tests for NUL in the counted contents, excluding the storage terminator.
+The native and C backends share its runtime helper and the filename guards:
+every filename predicate rejects NUL before lookup, in either binary operand.
+These are byte properties, not implicit taint validation.
+
 The heap is an mmap-backed region managed by
 [`heap4.c`](../sash-rt/csrc/heap4.c), a first-fit/coalescing allocator, not a
 bump allocator. `--heap-size` supplies a compiled-in reservation limit.

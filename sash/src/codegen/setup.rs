@@ -428,6 +428,10 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_is_graph", Linkage::Import, &is_graph_sig)
         .expect("declare sash_is_graph");
 
+    let has_nul_func = module
+        .declare_function("sash_has_nul", Linkage::Import, &is_int_sig)
+        .expect("declare sash_has_nul");
+
     // sash_atoi_or(s_ptr, s_len, default) -> i64 — DD#77 arith `${s:-N}`
     let mut atoi_or_sig = Signature::new(CallConv::SystemV);
     atoi_or_sig.params.push(AbiParam::new(I64)); // s_ptr
@@ -892,6 +896,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         is_int: is_int_func,
         is_print: is_print_func,
         is_graph: is_graph_func,
+        has_nul: has_nul_func,
         atoi_or: atoi_or_func,
         atoi_or_abort: atoi_or_abort_func,
         itoa: itoa_func,

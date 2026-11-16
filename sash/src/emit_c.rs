@@ -181,6 +181,7 @@ fn emit_prologue(out: &mut String) {
     // DD#93 Part C content-shape validators (`p?` / `g?`).
     writeln!(out, "extern i64 sash_is_print(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_is_graph(const char* p, i64 n);").unwrap();
+    writeln!(out, "extern i64 sash_has_nul(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_atoi_or(const char* p, i64 n, i64 d);").unwrap();
     writeln!(
         out,
@@ -2911,6 +2912,7 @@ fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes
         "i?" => format!("sash_is_int({}, {})", ptr, len),
         "p?" => format!("sash_is_print({}, {})", ptr, len),
         "g?" => format!("sash_is_graph({}, {})", ptr, len),
+        "0?" => format!("sash_has_nul({}, {})", ptr, len),
         // INVARIANT: mirrors codegen/tests.rs::lower_unary. The parser's
         // is_unary_test_op gates which operators reach here; each one is
         // either handled above or is a file test, except -v/-o/-R/-t which

@@ -252,8 +252,9 @@ fn lower_test_unary(
         "i?" => emit_shape_test(builder, module, externs.is_int, ptr, len),
         "p?" => emit_shape_test(builder, module, externs.is_print, ptr, len),
         "g?" => emit_shape_test(builder, module, externs.is_graph, ptr, len),
+        "0?" => emit_shape_test(builder, module, externs.has_nul, ptr, len),
         // INVARIANT: the parser's is_unary_test_op gates which operators reach
-        // here; each one it accepts is either handled above (-n/-z/i?/p?/g?)
+        // here; each one it accepts is either handled above (-n/-z/i?/p?/g?/0?)
         // or is a file test below, except -v/-o/-R/-t which validate rejects
         // (SB5028, unsupported_unary_test_hint). A None here means a
         // parser/codegen drift, not user input.
@@ -265,7 +266,7 @@ fn lower_test_unary(
 }
 
 /// DD#93 Part C: call a runtime content-shape validator — `sash_is_int` /
-/// `sash_is_print` / `sash_is_graph`, all `(ptr, len) -> 0/1`.
+/// `sash_is_print` / `sash_is_graph` / `sash_has_nul`, all `(ptr, len) -> 0/1`.
 fn emit_shape_test(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,

@@ -1,13 +1,13 @@
 #!/bin/bash
-# spec/filetest.sh — [[ ]] file tests and binary comparisons. Bash-compatible
-# semantics for the whole operator set. Section A pins -N, which compares
+# spec/filetest.sh — [[ ]] file tests, NUL predicates and binary comparisons.
+# NUL-free paths retain their existing semantics. Section A pins -N, which compares
 # WHOLE SECONDS with `>=` and ignores nanoseconds entirely (bash test.c);
 # sash previously used a strict `>` plus a nanosecond tiebreak and answered
 # "no" to the two cases -N exists to report.
 set -eu
 . common.sh
 setup filetest
-plan=47
+plan=57
 echo "1..$plan" >&3
 
 set +e
@@ -209,5 +209,101 @@ run_sash 'if [[ b_ns2 -nt b_ns1 ]]; then echo yes; else echo no; fi'
 # accidental symmetry from a truncating compare).
 run_sash 'if [[ b_ns1 -nt b_ns2 ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.46
+
+# DD135: counted NUL is distinct from the string's storage terminator.
+run_sash $'array samples=("" abc $\'\\u00e9\' $\'\\x00abc\' $\'ab\\x00cd\' $\'abc\\x00\' $\'\\x00\')
+for s in @samples {
+    if [[ 0? $s ]] { echo nul } else { echo free }
+}
+echo "0?"'
+[[ $rc = 0 && $out = $'free\nfree\nfree\nnul\nnul\nnul\nnul\n0?' && -z $err && -z $rerr ]]; chk nulcheck.1
+
+run_sash $'str empty="" plain=abc nul=$\'a\\x00b\'
+if [[ ! 0? $empty && ! 0? $plain ]] { echo free }
+if [[ 0? $nul || -n ${empty:?should-not-run} ]] { echo contains }
+if [[ ! 0? $nul ]] { echo wrong } else { echo negated }'
+[[ $rc = 0 && $out = $'free\ncontains\nnegated' && -z $err && -z $rerr ]]; chk nulcheck.2
+
+printf 'a\0b\n' > nul-line
+run_sash 'str s; readline s <nul-line; attest s 0?; echo "$(strlen $s)"
+str t; readline t <plain; attest t [[ ! 0? $t ]]; echo "$t"'
+[[ $rc = 0 && $out = $'3\nx' && -z $err && -z $rerr ]]; chk nulcheck.3
+
+run_sash $'array a=($\'a\\x00\' $\'\\x00b\')
+attest item in a 0?
+str k=$\'k\\x00\'
+map m
+m[$k]=$\'v\\x00\'
+attest key value in m 0?
+echo checked'
+[[ $rc = 0 && $out = checked && -z $err && -z $rerr ]]; chk nulcheck.4
+
+run_sash $'int calls=0
+fn sample { (( calls += 1 )); echo $\'a\\x00b\' }
+if [[ 0? $(sample) ]] { echo "$calls" }'
+[[ $rc = 0 && $out = 1 && -z $err && -z $rerr ]]; chk nulcheck.5
+
+# False answers alone cannot prove that no truncated pathname was looked up.
+run_sash_under $'array paths=($\'\\x00plain\' $\'plain\\x00tail\' $\'plain\\x00\')
+for p in @paths {
+    if [[ -e $p ]] { echo wrong }
+    if [[ -a $p ]] { echo wrong }
+    if [[ -f $p ]] { echo wrong }
+    if [[ -d $p ]] { echo wrong }
+    if [[ -r $p ]] { echo wrong }
+    if [[ -w $p ]] { echo wrong }
+    if [[ -x $p ]] { echo wrong }
+    if [[ -s $p ]] { echo wrong }
+    if [[ -L $p ]] { echo wrong }
+    if [[ -h $p ]] { echo wrong }
+    if [[ -c $p ]] { echo wrong }
+    if [[ -p $p ]] { echo wrong }
+    if [[ -k $p ]] { echo wrong }
+    if [[ -b $p ]] { echo wrong }
+    if [[ -g $p ]] { echo wrong }
+    if [[ -u $p ]] { echo wrong }
+    if [[ -G $p ]] { echo wrong }
+    if [[ -O $p ]] { echo wrong }
+    if [[ -S $p ]] { echo wrong }
+    if [[ -N $p ]] { echo wrong }
+}
+echo checked' strace -qq -e trace=%file -o nul-unary.trace
+[[ $rc = 0 && $out = checked && -z $err && -z $rerr ]] &&
+    ! grep -Eq '^(newfstatat|statx|stat|lstat|access|faccessat|faccessat2)\(' nul-unary.trace
+chk nulcheck.6
+
+run_sash_under $'array paths=($\'\\x00b_old\' $\'b_old\\x00tail\' $\'b_old\\x00\' $\'missing\\x00tail\')
+for p in @paths {
+    if [[ $p -nt b_old ]] { echo wrong }
+    if [[ b_new -nt $p ]] { echo wrong }
+    if [[ $p -ot b_new ]] { echo wrong }
+    if [[ b_old -ot $p ]] { echo wrong }
+    if [[ $p -ef b_link ]] { echo wrong }
+    if [[ b_link -ef $p ]] { echo wrong }
+}
+echo checked' strace -qq -e trace=%file -o nul-binary.trace
+[[ $rc = 0 && $out = checked && -z $err && -z $rerr ]] &&
+    ! grep -Eq '^(newfstatat|statx|stat|lstat|access|faccessat|faccessat2)\(' nul-binary.trace
+chk nulcheck.7
+
+# Positive syscall control, ordinary missing-file semantics, and single evaluation.
+run_sash_under 'int calls=0
+fn oldpath { (( calls += 1 )); echo b_old }
+fn newpath { (( calls += 1 )); echo b_new }
+if [[ $(newpath) -nt $(oldpath) ]] { echo "calls=$calls" }
+if [[ b_new -nt missing ]] { echo newer }
+if [[ missing -ot b_new ]] { echo older }
+if [[ b_old -ef b_link ]] { echo same }
+if [[ -e plain ]] { echo exists }' strace -qq -e trace=%file -o nul-positive.trace
+[[ $rc = 0 && $out = $'calls=2\nnewer\nolder\nsame\nexists' && -z $err && -z $rerr ]] &&
+    grep -E '^(newfstatat|statx|stat|lstat|access|faccessat|faccessat2)\(' nul-positive.trace
+chk nulcheck.8
+
+run_sash 'str s; readline s <plain
+if [[ ! 0? ${s:!} ]] { echo "$s" }'
+[[ $rc != 0 && $err == *:2:29:*SB5020* ]]; chk nulcheck.9
+
+run_sash 'int n=0; if [[ 0? $n ]] { echo wrong }'
+[[ $rc != 0 && $err == *SB4030* && $err == *quote* ]]; chk nulcheck.10
 
 tally

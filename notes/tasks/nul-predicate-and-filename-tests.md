@@ -1,5 +1,5 @@
 title: Add 0? and reject interior NUL in filename predicates
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -30,9 +30,10 @@ The ordinary `/tmp` control also printed `directory`. Existing evidence is
 in the session's `files/tour-cleanup-directory-proof-20261114.json`; this
 recording did not rerun it or measure C.
 
-`sash_file_test`, `sash_file_newer` and `sash_file_same_dev` in
-`sash-rt/src/lib.rs` copy counted bytes and construct C strings without
-rejecting interior NUL. In `sash_file_newer`, first-present/second-missing
+Before this repair, `sash_file_test`, `sash_file_newer` and
+`sash_file_same_dev` in `sash-rt/src/lib.rs` copied counted bytes and
+constructed C strings without rejecting interior NUL.
+In `sash_file_newer`, first-present/second-missing
 is true. Rejecting NUL only inside a lookup helper as "missing" therefore
 fails to repair `-nt`; reject either invalid operand at the predicate boundary.
 `-ot` swaps the arguments to the same runtime operation.
@@ -56,3 +57,18 @@ The dependent [ERR proof task](err-readonly-inputs-and-nul-proofs.md) must not
 trust a true filename result until this runtime contract is enforced.
 This task does not globally clear `may_nul`, resolve inherited taint, change
 the external argv guard or expand filesystem failure handling.
+
+## Delivered 2026-11-16
+
+`0?` uses the existing unary AST/shorthand machinery and one counted-byte
+runtime helper in both backends. All three filename entry points reject
+NUL before either lookup. `nulcheck.1`-`.10` cover the byte boundaries,
+ordinary predicate/attest rules, every filename spelling, both binary
+operands, retained values, taint independence and integer typing.
+
+Nine new cases fail per mode against the original compiler/runtime; all
+57 file-test cases pass after the repair. Four independent runtime reversions
+produce their predicted failures in both modes. The full ordinary gate
+passes with 20 first-ever mode IDs, no flips or retirements, and 11407
+checks. [Journal 639](../journal/639-counted-nul-and-filename-guards.md)
+records the evidence and the still-pending DD135 units.

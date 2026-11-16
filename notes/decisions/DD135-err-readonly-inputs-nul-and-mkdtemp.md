@@ -36,9 +36,10 @@ variables crossing into ERR, rather than changing every global declaration
 to `const`. DG then selected `0?`'s polarity: **"Contains a NUL byte; false
 for an empty string"**.
 
-The implementation is pending. This decision does not claim that the current
-compiler accepts the new predicate, constructor or predicate-derived ERR
-proofs.
+The counted-NUL predicate and filename guards are implemented in both
+backends ([journal 639](../journal/639-counted-nul-and-filename-guards.md)).
+Readonly ERR imports, predicate-derived ERR proofs and `mkdtemp` remain
+implementation work.
 
 ## Readonly at the ERR boundary
 
@@ -186,7 +187,8 @@ predicate-derived NUL proof.
 ## Implementation owners
 
 - [NUL predicate and filename tests](../tasks/nul-predicate-and-filename-tests.md):
-  implement the predicate and repair filename truncation in both backends.
+  complete; the predicate and all three shared filename boundaries enforce
+  the counted-byte contract in both backends.
 - [Readonly ERR inputs and NUL proofs](../tasks/err-readonly-inputs-and-nul-proofs.md):
   identify imports, enforce write restrictions and extend the localized
   SB5101 proof query after the runtime predicate contracts hold.
