@@ -145,7 +145,8 @@ NUL-freedom at a specific ERR use. An ordinary predicate never implicitly
 attests its input; inherited taint still requires trusted reads. The predicate
 and runtime guards are implemented
 ([journal 639](../journal/639-counted-nul-and-filename-guards.md)); the
-dependent ERR proof remains implementation work.
+dependent ERR proof is also implemented
+([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
 
 #### Provisional addition: `r?` (DG, 2026-11-09)
 

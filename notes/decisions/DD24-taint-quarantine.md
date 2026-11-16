@@ -83,8 +83,8 @@ tainted live binding outside the failed-attest permission above.
 DD135 adds the direct `$(mkdtemp)` constructor: its generated fixed-`/tmp`
 pathname is clean and independently NUL-free, not output acquired through
 a kernel capture. Creation still has a checked/handled operational status;
-a handled recoverable error gives empty text and failure. This addition is
-unimplemented in [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
+a handled recoverable error gives empty text and failure. Delivery is recorded
+in [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 The live-binding resolution rule above applies to its assignments too.
 
 (`$LINENO` was removed from this list — DG 2026-08-19 rejected it as a

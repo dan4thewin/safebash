@@ -1222,11 +1222,10 @@ pub enum SsaValue {
         args: Vec<SsaValue>,
         colls: Vec<String>,
     },
-    /// Runtime command substitution: fork/exec, capture stdout.
-    /// Carries the command name and arguments as expressions. `suppressed` is
-    /// set for `$(- cmd)` (DD#55): the captured command's exit status is
-    /// discarded and a nonzero exit does NOT abort (mirrors statement-position
-    /// `- cmd`). Captures in its arguments are not covered (DD#55 2026-10-30).
+    /// Command-value carrier: externals are lifted to pipelines; intrinsics
+    /// return their values directly. `suppressed` disables the producer's
+    /// implicit status check for a handler or source `-` (DD#55).
+    /// Captures in its arguments are not covered.
     ///
     /// Carries **no redirects**: a `$(cmd > f)` is routed to `CmdSubstBody`
     /// by `single_command_subst`, so every redirected capture is lowered by
@@ -2307,7 +2306,7 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
         // it — `$(getcpid x)` then reached the int-context lowering and hit
         // its `unreachable!()`.
         "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "argc" | "signum"
-        | "random" | "waitstatus" | "getcpid" => Some(0..=0),
+        | "random" | "waitstatus" | "getcpid" | "mkdtemp" => Some(0..=0),
         // DD#126: `wait` reaps any child, `wait PID` reaps that one.
         "wait" => Some(0..=1),
         "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => {

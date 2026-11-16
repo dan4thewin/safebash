@@ -33,7 +33,8 @@ owns it.
 DD101's symmetric lookup decision (DG, 2026-11-13; journal 631) admits bare
 `arg` alongside bare `getenv`, but not their value-only literal-default forms.
 That extension is **unimplemented** in `require-getenv-status-handling`.
-DD135 adds direct `$(mkdtemp)` creation, also **unimplemented** in
+DD135's direct `$(mkdtemp)` creation is implemented in both backends;
+delivery is recorded in
 [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 
 These are scoped forms, not general multi-value binding. The general

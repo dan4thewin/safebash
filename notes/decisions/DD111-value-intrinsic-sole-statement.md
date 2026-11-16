@@ -64,7 +64,7 @@ lookup presence. Ordinary unhandled creation failure aborts before
 assignment. A legal untyped capture-condition consumes the status; an inner
 `-` explicitly discards it. Handled recoverable failure supplies empty
 text and failure, never an old pathname. The sole-producer and result-use
-rules still apply. Implementation is pending in
+rules still apply. Native/C delivery is recorded in
 [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 
 DD132's 2026-11-09 **provisional** trial gives `sub`/`gsub` a real

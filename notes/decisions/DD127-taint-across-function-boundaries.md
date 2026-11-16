@@ -148,9 +148,10 @@ the ordinary use-site rules require attest or explicit `:!` first.
 DD135's `$(mkdtemp)` returns generated pathname bytes directly. Creating a
 directory is not reading its name from a kernel-backed stdout capture;
 the value is clean and NUL-free, with a separate operational creation status.
-This constructor is unimplemented. Subsequent fd reads still introduce
-taint, and assigning its clean result does not resolve an already-tainted
-live binding.
+The constructor is implemented
+([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)). Subsequent fd
+reads still introduce taint, and assigning its clean result does not resolve
+an already-tainted live binding.
 
 DG proposed this boundary on 2026-11-02 and chose to implement it using the
 **existing buffer paths first**, without extending buffer eligibility in

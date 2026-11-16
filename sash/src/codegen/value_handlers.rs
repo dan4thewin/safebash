@@ -236,6 +236,7 @@ pub(crate) fn emit_case_conversion(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_cmdsub(
     argv_values: &[SsaValue],
+    suppressed: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
@@ -246,6 +247,10 @@ pub(super) fn handle_cmdsub(
     let Some(SsaValue::Literal(name)) = argv_values.first() else {
         panic!("ICE: command substitution with a non-literal head reached codegen")
     };
+    if name == "mkdtemp" {
+        assert_eq!(argv_values.len(), 1, "ICE: mkdtemp expects no arguments");
+        return emit_mkdtemp(suppressed, builder, module, externs, exit_status_var);
+    }
     try_native_intrinsic(
         name,
         argv_values,
@@ -257,6 +262,27 @@ pub(super) fn handle_cmdsub(
         exit_status_var,
     )
     .expect("ICE: non-intrinsic command substitution must be lifted to a pipeline")
+}
+
+fn emit_mkdtemp(
+    suppressed: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    exit_status_var: Variable,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let out =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
+    let len_addr = builder.ins().stack_addr(I64, out, 0);
+    let status_addr = builder.ins().stack_addr(I64, out, 8);
+    let checked = builder.ins().iconst(I64, i64::from(!suppressed));
+    let func = module.declare_func_in_func(externs.mkdtemp, builder.func);
+    let call = builder.ins().call(func, &[checked, len_addr, status_addr]);
+    let ptr = builder.inst_results(call)[0];
+    let len = builder.ins().stack_load(I64, out, 0);
+    let status = builder.ins().stack_load(I64, out, 8);
+    builder.def_var(exit_status_var, status);
+    (ptr, len)
 }
 
 /// DD#60: `$(arg N)` (abort on OOB) and the addendum `$(arg N DEFAULT)` (default

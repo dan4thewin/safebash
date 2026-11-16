@@ -66,7 +66,10 @@ unrelated I/O classifications.
 
 DD135's [mkdtemp constructor](mkdtemp-value-intrinsic.md) is another
 independent consumer: preserve actual creation causes, collision retries,
-empty text plus handled failure and fatal faults. Its
+empty text plus handled failure and fatal faults. Its constructor-local
+classification is delivered in
+[journal 641](../journal/641-mkdtemp-and-tour-cleanup.md); it does not settle
+the same errnos for other operations. Its
 [ERR-local NUL proof](err-readonly-inputs-and-nul-proofs.md) can establish
 that an argv guard cannot fail, without making that failure catchable or
 relabeling the other currently uncatchable operations.

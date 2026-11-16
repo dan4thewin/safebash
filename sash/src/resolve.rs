@@ -59,6 +59,7 @@ pub(crate) enum ArithDenotation {
 /// disagree about. All five are classified once, on the `BuiltinCmd` side.
 const INTRINSICS: &[(&str, ArithDenotation)] = &[
     ("getenv", ArithDenotation::Str),
+    ("mkdtemp", ArithDenotation::Str),
     ("arg", ArithDenotation::Str),
     ("argc", ArithDenotation::Int),
     ("status", ArithDenotation::Int),

@@ -1005,6 +1005,68 @@ pub extern "C" fn sash_getenv(name: *const u8, name_len: i64, out_len: *mut i64)
     core::ptr::null()
 }
 
+/// DD135: a direct pathname and creation status, never captured stdout.
+#[no_mangle]
+pub extern "C" fn sash_mkdtemp(checked: i64, out_len: *mut i64, out_status: *mut i64) -> *const u8 {
+    let mut path = *b"/tmp/sash.00000000000000000000000000000000\0";
+    let len = path.len() - 1;
+    // Reserve the returned string before publishing a directory in the filesystem.
+    let result = unsafe { alloc_cstr(len) };
+    match create_temp_directory(&mut path) {
+        Ok(()) => unsafe {
+            core::ptr::copy_nonoverlapping(path.as_ptr(), result, path.len());
+            *out_len = len as i64;
+            *out_status = 0;
+            result
+        },
+        Err(error) => {
+            unsafe {
+                sash_free_ptr(result);
+                *out_len = 0;
+                *out_status = 1;
+            }
+            set_last_errno(error);
+            if checked != 0 {
+                sash_emsg(b"mkdtemp".as_ptr(), 7, b"/tmp".as_ptr(), 4);
+                sash_abort(1);
+            }
+            b"\0".as_ptr()
+        }
+    }
+}
+
+fn create_temp_directory(path: &mut [u8; 43]) -> Result<(), rustix::io::Errno> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for _ in 0..128 {
+        let mut random = [0u8; 16];
+        fill_random(&mut random)?;
+        for (pair, byte) in path[10..42].chunks_exact_mut(2).zip(random) {
+            pair[0] = HEX[usize::from(byte >> 4)];
+            pair[1] = HEX[usize::from(byte & 15)];
+        }
+        let name = core::ffi::CStr::from_bytes_with_nul(path)
+            .expect("generated temporary-directory name is a C string");
+        match rustix::fs::mkdirat(rustix::fs::CWD, name, rustix::fs::Mode::RWXU) {
+            Err(rustix::io::Errno::EXIST) => continue,
+            result => return result,
+        }
+    }
+    Err(rustix::io::Errno::EXIST)
+}
+
+fn fill_random(bytes: &mut [u8]) -> Result<(), rustix::io::Errno> {
+    let mut filled = 0;
+    while filled < bytes.len() {
+        match rustix::rand::getrandom(&mut bytes[filled..], rustix::rand::GetRandomFlags::empty()) {
+            Ok(0) => return Err(rustix::io::Errno::IO),
+            Ok(n) => filled += n,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════
 // sash_argv_get
 // ═══════════════════════════════════════════════════════════════

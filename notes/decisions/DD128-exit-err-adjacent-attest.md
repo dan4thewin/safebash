@@ -512,7 +512,7 @@ main-path test dominate an independent handler entry. Its `mkdtemp`
 constructor separately supplies a clean, NUL-free generated pathname,
 with a real checked/handled creation result.
 
-These additions are accepted but unimplemented:
+These additions are implemented:
 [err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md),
 its [predicate prerequisite](../tasks/nul-predicate-and-filename-tests.md),
 and [mkdtemp](../tasks/mkdtemp-value-intrinsic.md).
@@ -688,11 +688,11 @@ failures even where an enclosing status is caught. Compiler-bounded argv
 iteration, known nonempty dispositions, even-length map conversion and
 valid static regexes need no fictitious extra failure handling.
 
-That is the implemented value-fact baseline, not DD135's pending
-predicate-derived proof or readonly-import enforcement. Handler inputs are
-currently seeded for all globals; that metadata is not an ERR import census.
-The filename runtime must first stop truncating NUL-bearing operands before
-a successful filename predicate can safely justify a NUL-free argument.
+DD135 extends that baseline with predicate-derived proof and readonly-import
+enforcement ([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
+Handler inputs remain seeded for all globals; a separate bound-source census
+identifies ERR imports. Filename predicates now reject NUL-bearing operands
+before lookup, making their successful outcomes valid byte-proof witnesses.
 
 Artifact schema 2 has optional `:exit-block` and `:err-block` fields and no
 `:end-block`; empty handlers remain distinguishable from absent handlers.

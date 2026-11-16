@@ -129,8 +129,8 @@ DD135's `mkdtemp` similarly has a real operational creation status beside
 its direct generated value. An untyped capture-condition handles it; an
 inner `-` may explicitly discard it. Handled recoverable creation failure
 binds empty text and failure, never stale path data. The successful path is
-clean and NUL-free, without a kernel stdout capture. Implementation is
-pending in [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
+clean and NUL-free, without a kernel stdout capture. Native/C delivery is
+recorded in [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 
 ### Builtin output is one write request (DG, 2026-11-09)
 

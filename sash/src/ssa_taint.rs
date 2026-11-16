@@ -1066,7 +1066,9 @@ fn cmd_subst_taint(argv: &[SsaValue], user_functions: &std::collections::HashSet
         // DD#126: `wait` yields a pid the kernel assigned to a process this
         // program forked — compiler-managed, like `getpid`, not input.
         "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
-        | "waitstatus" | "getcpid" | "getcwd" | "status" | "signum" | "wait" => Taint::Clean,
+        | "waitstatus" | "getcpid" | "getcwd" | "status" | "signum" | "wait" | "mkdtemp" => {
+            Taint::Clean
+        }
         _ => {
             // Only a BARE name can be a user function: DD#23 resolution
             // rewrites an external head to an absolute path and nothing else

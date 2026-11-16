@@ -300,7 +300,9 @@ this otherwise-uncatchable guard. It retains the runtime guard, does not
 globally reject every possibly NUL-bearing argument, and does not equate
 taint cleanliness with NUL-freedom. `0?` is true for counted NUL presence;
 false `0?` or a true NUL-rejecting filename test can prove absence locally.
-Those additions are unimplemented, not a new catch/suppress form.
+Those additions are implemented
+([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)),
+not a new catch/suppress form.
 
 ### Migration: convert mechanically
 

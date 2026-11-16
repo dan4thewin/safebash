@@ -1,5 +1,5 @@
 title: Add a clean fixed-/tmp mkdtemp value intrinsic
-status: open
+status: done
 priority: P2
 kind: work
 depends: []
@@ -22,10 +22,10 @@ stdout capture. Use fixed `/tmp`, a fixed prefix and a generated
 restricted-alphabet suffix. No prefix/template operand or `TMPDIR` fallback.
 
 Creation is atomic and exclusive, with owner-only directory access; retry
-collisions rather than accepting an existing object. Select the randomness,
-suffix, syscall interface and runtime representation when implementing,
-using DD129's public-rustix/shared-Linux-shim boundary. This recording
-selects none of those mechanisms.
+collisions rather than accepting an existing object. Randomness, suffix,
+syscall interface and runtime representation are implementation choices
+under DD129's public-rustix/shared-Linux-shim boundary, not additional
+language requirements.
 
 An ordinary `work=$(mkdtemp)` aborts on unhandled creation failure before
 assignment. `if work=$(mkdtemp) { ... }` uses DD88's existing untyped
@@ -40,7 +40,7 @@ cannot become empty results. Keep failures visible under the existing
 diagnostic/handling convention, including after collisions and failed use
 of `/tmp`.
 
-## Implementation and acceptance
+## Acceptance requirements
 
 Wire the builtin through canonical recognition, arity/type/result
 classification, direct value lowering, native/C runtime calls and artifacts.
@@ -65,5 +65,27 @@ import restrictions. This constructor does not require its new backward
 predicate query for a statically NUL-free result. It can land independently
 of the full [recoverable-file-failures](recoverable-file-failures.md) inventory,
 while coordinating the shared classification and actual ERR failure model.
-Update the tour checker's acquisition/cleanup when this builtin is delivered,
-not by making today's checker rely on pending syntax.
+The delivered tour checker uses this constructor and direct guarded cleanup
+argv, while retaining sibling-file staging and atomic publication.
+
+## Delivered 2026-11-16
+
+Both backends reuse `SsaValue::CmdSubst`; there is no IR schema change.
+The runtime uses public rustix `getrandom` and `mkdirat`, completing short
+entropy reads and retrying EINTR. A 128-bit hexadecimal suffix and 128-attempt
+collision bound are implementation choices. Result allocation precedes
+creation; ordinary checks precede source assignment. Handled syscall errors
+free that reservation and return a nonnull empty string with status 1.
+Heap failure remains fatal before entropy or filesystem creation.
+
+Forty dual-mode specs (`mkd.1`-`.40`) pass. The final before-compiler control
+has 39 failures and one preservation per mode. Fourteen independent
+reversions and native/C malformed-carrier controls pin the implementation;
+all stubs are restored. The ordinary gate passes with 80 first-ever mode
+IDs, 11585 total, no flips or retirements. The actual tour still checks
+56 snippets, and injected creation/draft-write failures preserve the
+published file while cleaning owned scratch paths.
+
+[Journal 641](../journal/641-mkdtemp-and-tour-cleanup.md) records the exact
+reversion sets, control corrections, failure classification and gate.
+This completes DD135, not the broader file-failure or lookup-policy work.

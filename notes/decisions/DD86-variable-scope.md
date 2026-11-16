@@ -213,7 +213,7 @@ ERR establish exclusive ownership if ordinary execution uses it through
 a helper. Main/EXIT retain ordinary mutability. Readonly supplies stability,
 not NUL-freedom, taint clearance or permission to attest inherited input.
 No public `readonly` operation or general collection-const syntax is adopted.
-Implementation is pending in
+SB5102 enforces this restriction; delivery is recorded in
 [err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md).
 
 ## Use-before-**and**-after: reject unused variables

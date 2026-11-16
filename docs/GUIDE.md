@@ -250,6 +250,16 @@ The native and C backends share its runtime helper and the filename guards:
 every filename predicate rejects NUL before lookup, in either binary operand.
 These are byte properties, not implicit taint validation.
 
+`$(mkdtemp)` returns a generated pathname directly, using the existing
+command-value SSA carrier rather than a stdout capture or new IR form.
+Both backends call the same runtime constructor: reserve the terminated
+result, complete kernel entropy, and create an exclusive owner-only directory
+under fixed `/tmp`, retrying collisions. Its clean provenance and NUL-free
+byte bound are independent facts. Ordinary failure aborts before assignment;
+handled recoverable failure binds empty text with failure, while an inner
+`-` explicitly discards the status. Heap exhaustion stays fatal and precedes
+creation.
+
 The heap is an mmap-backed region managed by
 [`heap4.c`](../sash-rt/csrc/heap4.c), a first-fit/coalescing allocator, not a
 bump allocator. `--heap-size` supplies a compiled-in reservation limit.

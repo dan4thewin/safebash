@@ -258,6 +258,11 @@ fn emit_prologue(out: &mut String) {
         "extern char* sash_getenv(const char* np, i64 nl, i64* out_len);"
     )
     .unwrap();
+    writeln!(
+        out,
+        "extern const char* sash_mkdtemp(i64 checked, i64* out_len, i64* out_status);"
+    )
+    .unwrap();
     // DD#60: program-argument access.
     writeln!(out, "extern i64 sash_argc;").unwrap();
     writeln!(out, "extern char* sash_argv_get(i64 idx, i64* out_len);").unwrap();
@@ -1420,7 +1425,7 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             operator,
             operand,
         } => emit_param_expansion(e, var, operator, operand, types),
-        SsaValue::CmdSubst { argv, .. } => emit_cmdsub(e, argv, types),
+        SsaValue::CmdSubst { argv, suppressed } => emit_cmdsub(e, argv, *suppressed, types),
         // Concat in value position (assignment RHS, subscript-assign value):
         // left-fold the parts through sash_concat, mirroring native
         // lower_concat_value (codegen/values.rs:314).
@@ -3423,10 +3428,18 @@ mod capture_invariant_tests {
                 vec![SsaValue::Literal("unknown-intrinsic".into())],
                 "must be lifted to a pipeline",
             ),
+            (
+                vec![
+                    SsaValue::Literal("mkdtemp".into()),
+                    SsaValue::Literal("extra".into()),
+                ],
+                "mkdtemp expects no arguments",
+            ),
         ] {
-            let payload =
-                std::panic::catch_unwind(|| emit_cmdsub(&mut Emit::new(), &argv, &VarTypes::new()))
-                    .expect_err("malformed SSA must not emit C");
+            let payload = std::panic::catch_unwind(|| {
+                emit_cmdsub(&mut Emit::new(), &argv, false, &VarTypes::new())
+            })
+            .expect_err("malformed SSA must not emit C");
             let message = payload
                 .downcast_ref::<String>()
                 .map(String::as_str)
@@ -3501,10 +3514,22 @@ mod capture_invariant_tests {
 }
 
 /// Only intrinsic carriers remain here; external captures are Pipeline effects.
-fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> CStr {
+fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], suppressed: bool, types: &VarTypes) -> CStr {
     let Some(SsaValue::Literal(name)) = argv.first() else {
         panic!("ICE: command substitution with a non-literal head reached codegen")
     };
+    if name == "mkdtemp" {
+        assert_eq!(argv.len(), 1, "ICE: mkdtemp expects no arguments");
+        let t = e.fresh();
+        let checked = i64::from(!suppressed);
+        writeln!(
+            e.out,
+            "    i64 {t}_l, {t}_s; const char* {t}_p = sash_mkdtemp({checked}, &{t}_l, &{t}_s);\n\
+             __exit_status = {t}_s;"
+        )
+        .unwrap();
+        return (format!("{t}_p"), format!("{t}_l"));
+    }
     try_native_intrinsic_c(e, name, argv, types)
         .expect("ICE: non-intrinsic command substitution must be lifted to a pipeline")
 }

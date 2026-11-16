@@ -1,5 +1,5 @@
 title: DD#135 - Readonly ERR inputs, NUL proofs and mkdtemp
-status: accepted
+status: implemented
 
 1. Bindings inherited by ERR are implicitly readonly during its execution,
    including through same-process helpers, captures and collection aliases.
@@ -40,7 +40,8 @@ The counted-NUL predicate and filename guards are implemented in both
 backends ([journal 639](../journal/639-counted-nul-and-filename-guards.md)).
 Readonly ERR imports and predicate-derived ERR proofs are also implemented
 ([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
-`mkdtemp` remains implementation work.
+The direct `mkdtemp` constructor and tour cleanup migration complete the
+package ([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)).
 
 ## Readonly at the ERR boundary
 
@@ -194,7 +195,8 @@ predicate-derived NUL proof.
   complete; SB5102 rejects inherited logical writes, and the localized
   SB5101 query checks the actual value and every reaching path.
 - [mkdtemp value intrinsic](../tasks/mkdtemp-value-intrinsic.md):
-  implement creation, direct result/status handling and both byte/taint facts.
+  complete; native and C share exclusive creation and direct value/status
+  handling, with independent clean provenance and NUL-free byte facts.
 
 `HandlerEntry.inputs` currently contains every global, not an already-minimal
 ERR import set. It cannot simply be relabeled readonly. Existing const-write
@@ -203,4 +205,5 @@ These are implementation cautions, not new source scopes or chosen metadata.
 
 The broader [failure classification](../tasks/runtime-failure-classification.md)
 and [recoverable file handling](../tasks/recoverable-file-failures.md) remain
-separate. The tour checker is not rewritten as part of this recording.
+separate. The tour checker now uses the constructor and direct guarded
+cleanup argv. Its sibling-file staging and atomic publication rename remain.

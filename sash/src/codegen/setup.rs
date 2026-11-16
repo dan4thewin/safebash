@@ -154,6 +154,13 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_getenv", Linkage::Import, &getenv_sig)
         .expect("declare sash_getenv");
 
+    let mut mkdtemp_sig = module.make_signature();
+    mkdtemp_sig.params.extend([AbiParam::new(I64); 3]);
+    mkdtemp_sig.returns.push(AbiParam::new(I64));
+    let mkdtemp_func = module
+        .declare_function("sash_mkdtemp", Linkage::Import, &mkdtemp_sig)
+        .expect("declare sash_mkdtemp");
+
     // sash_argv_get(idx, &out_len) -> ptr  (aborts if out of range)
     let mut argv_get_sig = Signature::new(CallConv::SystemV);
     argv_get_sig.params.push(AbiParam::new(I64)); // idx (1-based)
@@ -874,6 +881,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         arith_negshift: arith_negshift_func,
         run: run_func,
         getenv: getenv_func,
+        mkdtemp: mkdtemp_func,
         capture_drain: capture_drain_func,
         strlen: strlen_func,
         default_value: default_value_func,

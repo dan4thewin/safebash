@@ -599,7 +599,7 @@ fn intrinsic_proof(argv: &[SsaValue], facts: &Facts<'_>) -> Proof {
             }
             proof
         }
-        "getenv" | "getcwd" | "argv" => Proof::c_string(),
+        "getenv" | "getcwd" | "argv" | "mkdtemp" => Proof::c_string(),
         "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
         | "waitstatus" | "getcpid" | "status" | "signum" | "wait" => Proof::default(),
         _ => Proof::unknown(),
@@ -852,8 +852,8 @@ fn value_failures(value: &SsaValue, facts: &Facts<'_>, errors: &mut Vec<String>)
                     .then(|| "an unhandled empty-splat `:?` failure".to_string()),
             );
         }
-        SsaValue::CmdSubst { argv, .. } => {
-            errors.extend(argv_bounds_failure(argv));
+        SsaValue::CmdSubst { argv, suppressed } => {
+            errors.extend(intrinsic_failure(argv, *suppressed));
         }
         SsaValue::ParamExpansion { operator, .. } if operator == "glob" => {
             errors.push("a glob's uncatchable getcwd failure".to_string());
@@ -877,10 +877,15 @@ fn empty_branch_failures(
     }
 }
 
-fn argv_bounds_failure(argv: &[SsaValue]) -> Option<String> {
-    (argv.len() == 2
-        && matches!(argv.first(), Some(SsaValue::Literal(name)) if matches!(name.as_str(), "argv" | "arg")))
-        .then(|| "an uncatchable argv-bounds failure".to_string())
+fn intrinsic_failure(argv: &[SsaValue], suppressed: bool) -> Option<String> {
+    let Some(SsaValue::Literal(name)) = argv.first() else {
+        return None;
+    };
+    match name.as_str() {
+        "argv" | "arg" if argv.len() == 2 => Some("an uncatchable argv-bounds failure".to_string()),
+        "mkdtemp" if !suppressed => Some("an unhandled mkdtemp creation failure".to_string()),
+        _ => None,
+    }
 }
 
 fn test_failures(test: &SsaTest, facts: &Facts<'_>, errors: &mut Vec<String>) {

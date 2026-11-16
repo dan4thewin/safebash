@@ -276,9 +276,11 @@ pub(super) fn lower_value(
             emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::CmdSubst {
-            argv: argv_values, ..
+            argv: argv_values,
+            suppressed,
         } => handle_cmdsub(
             argv_values,
+            *suppressed,
             builder,
             module,
             vars,
@@ -1806,6 +1808,13 @@ mod invariant_tests {
             (
                 vec![SsaValue::Literal("unknown-intrinsic".into())],
                 "must be lifted to a pipeline",
+            ),
+            (
+                vec![
+                    SsaValue::Literal("mkdtemp".into()),
+                    SsaValue::Literal("extra".into()),
+                ],
+                "mkdtemp expects no arguments",
             ),
         ] {
             let message = native_value_ice(

@@ -1,11 +1,10 @@
 # Compile to target/tour/check. --render publishes the GitHub edition.
 fn cleanup {
-    if [[ -n $work:! ]] {
-        # NUL-delimited data avoids ERR's uncatchable external-argv guard.
-        if write $work:!$'\x00' | xargs -0 -r /usr/bin/rm -rf -- { : }
+    if [[ -n $work ]] {
+        if /usr/bin/rm -rf -- $work { : }
     }
-    if [[ -n $draft:! ]] {
-        if write $draft:!$'\x00' | xargs -0 -r /usr/bin/rm -f -- { : }
+    if [[ -n ${draft:!} && ! 0? ${draft:!} ]] {
+        if /usr/bin/rm -f -- ${draft:!} { : }
     }
 }
 fn usage {
@@ -94,8 +93,7 @@ if (( argument_count == 2 )) {
     }
 }
 
-work=$(mktemp -d -t sash-tour.XXXXXXXXXX)
-attest work -d
+work=$(mkdtemp)
 array demo_env
 str draft
 if (( render == 1 )) {

@@ -198,8 +198,9 @@ collections in place.
 DD135's accepted ERR boundary makes inherited actuals readonly during
 same-process handler execution, including through helper/slot forwarding.
 This covers contents, fills, append and unset, not just rebinding a name.
-It is not general `const array`/`const map` syntax; implementation is pending
-in [err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md).
+It is not general `const array`/`const map` syntax. The implemented restriction
+is recorded in
+[err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md).
 
 DD131's provisional immutable-scratch trial preserves this identity
 and the actual collection's immutability. A read-only helper may accept

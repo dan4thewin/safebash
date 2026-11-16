@@ -110,10 +110,10 @@ capture control; it is not proof of C behavior or mid-read publication.
 
 ## Related accepted work
 
-DD135 separately owns [mkdtemp creation](mkdtemp-value-intrinsic.md), with
+DD135 separately delivered [mkdtemp creation](mkdtemp-value-intrinsic.md), with
 direct clean/NUL-free output and empty-text-plus-failure on handled
-recoverable creation errors. It need not wait for this whole file-API
-inventory, but its cause/state classification and ERR handling must agree.
+recoverable creation errors. Its constructor-local cause/state classification
+and ERR handling do not complete this whole file-API inventory.
 [Readonly ERR inputs and local NUL proofs](err-readonly-inputs-and-nul-proofs.md)
 can rule out particular argv failures; they do not catch those guards or
 complete the remaining operational-failure repairs here.

@@ -1284,13 +1284,10 @@ fn validate_assignment_stmt(
 /// condition and its stdout is captured into the target.
 ///
 /// Qualifying shapes: a single external `$(cmd)`, an all-external pipeline
-/// `$(a | b)`, or — the **DD#101 carve-out** — `$(getenv NAME)`, the one
-/// intrinsic that can *fail*, not by malfunctioning but by looking up a name
-/// the environment does not contain, so `home=$(getenv HOME) || home=/root` is
-/// a real condition. The carve-out is `getenv` specifically, not intrinsics
-/// generally: `$(len a)` and friends are pure functions of their arguments and
-/// stay in the can't-fail set. Excluded: a concatenation, a multi-statement
-/// `$(a; b)`, and any literal RHS.
+/// `$(a | b)`, `$(getenv NAME)` (DD101 lookup status), or `$(mkdtemp)`
+/// (DD135 creation status). This does not make every value intrinsic a
+/// condition. Excluded: a concatenation, a multi-statement `$(a; b)`, and
+/// any literal RHS.
 ///
 /// Redirects are peeled and not judged here. Whether a redirect leaves the
 /// capture with a writer is a property of **every** capture, not of this one
@@ -1307,7 +1304,9 @@ fn is_capture_condition_rhs(value: &Expr) -> bool {
         return false;
     };
     match peel_capture_wrappers(&stmt.kind).0 {
-        StmtKind::Command(c) => is_external_command_head(c) || is_getenv_lookup(c),
+        StmtKind::Command(c) => {
+            is_external_command_head(c) || is_intrinsic_capture_condition(stmt, c)
+        }
         // `$(a | b)` — every stage must be an external command.
         StmtKind::Pipeline(p) => {
             p.commands.len() > 1 && p.commands.iter().all(stmt_is_external_command)
@@ -1341,12 +1340,18 @@ fn peel_capture_wrappers(kind: &StmtKind) -> (&StmtKind, Vec<&Vec<crate::ir::Red
     (kind, layers)
 }
 
-/// DD#101: `$(getenv NAME)` — the one intrinsic whose status is a real
-/// condition. Arity is pinned at exactly one operand here as well as in
-/// `ssa::value_intrinsic_arity`, so a malformed `$(getenv)` / `$(getenv A B)`
-/// keeps its SB4045 rather than being silently admitted as a condition.
-fn is_getenv_lookup(c: &crate::ir::Command) -> bool {
-    matches!(&c.name.kind, ExprKind::Literal(n) if n == "getenv") && c.args.len() == 1
+fn is_intrinsic_capture_condition(stmt: &Statement, c: &crate::ir::Command) -> bool {
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return false;
+    };
+    let has_status = match name.as_str() {
+        "getenv" => true,
+        "mkdtemp" => !matches!(stmt.kind, StmtKind::Suppressed(_)),
+        _ => false,
+    };
+    has_status
+        && crate::ssa::value_intrinsic_arity(name)
+            .is_some_and(|arity| arity.contains(&c.args.len()))
 }
 
 /// A command whose head is (or resolves to) an external program. `validate`
@@ -1378,16 +1383,11 @@ fn stmt_is_external_command(stmt: &Statement) -> bool {
 /// capture-specific guidance instead.
 fn nonstatus_in_condition_diag(span: Span, what: &str, is_capture: bool) -> Diagnostic {
     let advice = if is_capture {
-        // DD#88: a capture-condition IS supported, but only for a single
-        // EXTERNAL `$(cmd)` / pipeline. This RHS captures something else — an
-        // intrinsic/builtin (which can't fail) or a concatenation — so there is
-        // no single external status to branch on.
         format!(
             "{what} captures a value, but a capture-condition branches on an exit status — a \
-             single external command (`if x=$(cmd) {{ … }}`) or `$(getenv NAME)`, whose status \
-             is the lookup result (DD#101). This RHS isn't one — it captures a sash \
-             intrinsic/builtin whose result is a pure function of its arguments and so cannot \
-             fail, or concatenates `$(…)` with other text. Bind it, then test: \
+             single external command (`if x=$(cmd) {{ … }}`), `$(getenv NAME)` or `$(mkdtemp)`. \
+             Use a direct untyped binding with an available status, not a typed declaration, \
+             discarded status, value-only intrinsic or concatenation. Bind it, then test: \
              `x=…; if [[ … ]]`."
         )
     } else {
@@ -3775,6 +3775,7 @@ const BUILTINS: &[&str] = &[
     // Filesystem
     "cd",
     "close",
+    "mkdtemp",
     // Introspection
     "status",
     "getpid",
@@ -3834,6 +3835,7 @@ const BUILTINS: &[&str] = &[
 /// was installed. They are now in both lists.
 const VALUE_ONLY_INTRINSICS: &[&str] = &[
     "getenv",
+    "mkdtemp",
     "status",
     "getpid",
     "getppid",

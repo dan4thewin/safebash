@@ -508,7 +508,9 @@ standalone failure count is not a finding until it survives that.**
 
 **Fault/resource specs use `run_sash_under SOURCE PREFIX...`.** It restricts
 or traces only the compiled binary, not sash or gcc. The suite requires
-`strace` and util-linux `prlimit`; on this x86_64 runtime fork is `clone`,
+`strace` with syscall injection and `poke_exit` support, plus util-linux
+`prlimit`. `mkdtemp.sh` checks that capability before its deterministic
+entropy/collision controls. On this x86_64 runtime fork is `clone`,
 pipe creation is `pipe2`, and wait is `wait4`. Verify the actual syscall
 before injecting it. Low-fd probes must account for the harness's inherited
 fd 3 (TAP output) and, during sweeps, fd 4 (TSV): trace the intended allocation
