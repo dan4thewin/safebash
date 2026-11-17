@@ -1476,6 +1476,94 @@ pub struct ArraySplatDisposition {
 }
 
 impl SsaValue {
+    /// Visit the lowered storage references, including those in nested values.
+    /// Total over `SsaValue`; do not add a wildcard.
+    pub(crate) fn map_variables(&mut self, f: &mut impl FnMut(&mut VarRef)) {
+        match self {
+            Self::Var(var)
+            | Self::ArgvIndex(var)
+            | Self::ArithExpr { var, .. }
+            | Self::ParamExpansion { var, .. }
+            | Self::Subscript { array: var, .. }
+            | Self::ArraySplat { array: var, .. } => f(var),
+            Self::TableValue { array, index } | Self::TableKey { array, index } => {
+                f(array);
+                f(index);
+            }
+            Self::Literal(_)
+            | Self::Expr(_)
+            | Self::FuncCall { .. }
+            | Self::IntFuncCall { .. }
+            | Self::CmdSubst { .. }
+            | Self::CmdSubstBody { .. }
+            | Self::SlurpFile(_)
+            | Self::Concat(_)
+            | Self::ArithBinOp { .. }
+            | Self::RegexReplace { .. }
+            | Self::RegexMatch { .. }
+            | Self::CaseConvert { .. }
+            | Self::StrLen { .. }
+            | Self::DefaultValue { .. }
+            | Self::RequireValue { .. }
+            | Self::ElideEmpty { .. }
+            | Self::Trusted { .. }
+            | Self::Substring { .. }
+            | Self::AssocArray(_)
+            | Self::IndexedArray(_)
+            | Self::IntCell(_)
+            | Self::Ternary { .. } => {}
+        }
+        for value in self.child_values_mut() {
+            value.map_variables(f);
+        }
+    }
+
+    /// Mutable twin of `child_values`. Total; do not add a wildcard.
+    pub(crate) fn child_values_mut(&mut self) -> Vec<&mut SsaValue> {
+        match self {
+            Self::Literal(_)
+            | Self::Var(_)
+            | Self::Expr(_)
+            | Self::CmdSubstBody { .. }
+            | Self::ArithExpr { .. }
+            | Self::ParamExpansion { .. }
+            | Self::ArgvIndex(_)
+            | Self::TableValue { .. }
+            | Self::TableKey { .. } => Vec::new(),
+            Self::Concat(parts) | Self::IndexedArray(parts) => parts.iter_mut().collect(),
+            Self::CmdSubst { argv, .. } => argv.iter_mut().collect(),
+            Self::FuncCall { args, .. } | Self::IntFuncCall { args, .. } => {
+                args.iter_mut().collect()
+            }
+            Self::AssocArray(pairs) => pairs.iter_mut().map(|(_, value)| value).collect(),
+            Self::Subscript { index, .. } => vec![index],
+            Self::CaseConvert { subject, .. } | Self::StrLen { subject } => vec![subject],
+            Self::ElideEmpty { source, .. }
+            | Self::Trusted { source }
+            | Self::Substring { source, .. } => vec![source],
+            Self::IntCell(inner) | Self::SlurpFile(inner) => vec![inner],
+            Self::RegexReplace {
+                subject,
+                pattern,
+                replacement,
+                ..
+            } => vec![subject, pattern, replacement],
+            Self::RegexMatch { subject, pattern } => vec![subject, pattern],
+            Self::DefaultValue { source, default } => vec![source, default],
+            Self::RequireValue { source, message } => vec![source, message],
+            Self::ArithBinOp { left, right, .. } => vec![left, right],
+            Self::Ternary {
+                cond,
+                true_val,
+                false_val,
+            } => vec![cond, true_val, false_val],
+            Self::ArraySplat { disposition, .. } => disposition
+                .as_mut()
+                .map(|d| vec![&mut *d.word])
+                .unwrap_or_default(),
+        }
+    }
+
     /// The nested `SsaValue` operands directly owned by this value, for passes
     /// that recurse uniformly into sub-values (literal interning, capture
     /// detection, positional scanning). Mirrors the `Statement::child_bodies`
@@ -1695,7 +1783,7 @@ pub(crate) fn condition_operand_index(insts: &[SsaInst]) -> Option<usize> {
 /// **Total over `SsaInst` on purpose — do not add a wildcard.** The two scans
 /// this replaced each ended in one, which is how both came to skip the
 /// `[[ … ]]` they were looking for.
-fn sets_condition_status(inst: &SsaInst) -> bool {
+pub(crate) fn sets_condition_status(inst: &SsaInst) -> bool {
     match inst {
         // DD#70: the `!` sigil follows the operand it negates and only
         // rewrites that operand's status; the operand is in condition position.
@@ -1769,6 +1857,9 @@ pub(crate) struct HandlerEntry {
 pub struct SsaProgram {
     pub(crate) source_names: crate::bindings::SourceNames,
     pub(crate) globals: BTreeMap<String, GlobalType>,
+    pub(crate) source_bindings: std::collections::HashSet<String>,
+    pub(crate) immutable_bindings: std::collections::HashSet<String>,
+    pub(crate) caught_scratch: HashMap<usize, String>,
     pub(crate) taint_predecessors: HashMap<VarRef, VarRef>,
     pub(crate) resolutions: std::collections::HashSet<VarRef>,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
@@ -1796,6 +1887,28 @@ pub struct SsaProgram {
 }
 
 impl Terminator {
+    pub(crate) fn edge_outcomes(&self, next: BlockId) -> Vec<Option<bool>> {
+        let (yes, no) = match self {
+            Self::Branch {
+                true_block,
+                false_block,
+                ..
+            } => (*true_block, *false_block),
+            Self::Loop {
+                body_block,
+                exit_block,
+                ..
+            } => (*body_block, *exit_block),
+            Self::Goto(_) | Self::Fork { .. } => return vec![None],
+            Self::Return | Self::ChildExit => return Vec::new(),
+        };
+        [(yes, true), (no, false)]
+            .into_iter()
+            .filter(|(block, _)| *block == next)
+            .map(|(_, truth)| Some(truth))
+            .collect()
+    }
+
     /// The blocks control can transfer to from this terminator, within the
     /// same process. A fork's child is deliberately absent: it runs in
     /// another process and never returns here (see [`Self::forked_child`]).
@@ -1893,6 +2006,9 @@ impl SsaProgram {
         Self {
             source_names: crate::bindings::SourceNames::default(),
             globals: BTreeMap::new(),
+            source_bindings: std::collections::HashSet::new(),
+            immutable_bindings: std::collections::HashSet::new(),
+            caught_scratch: HashMap::new(),
             taint_predecessors: HashMap::new(),
             resolutions: std::collections::HashSet::new(),
             blocks: BTreeMap::new(),
@@ -3062,5 +3178,211 @@ mod condition_operand_tests {
             Some(1)
         );
         assert_eq!(condition_operand_index(&[cmd, assign("n")]), Some(0));
+    }
+}
+
+#[cfg(test)]
+mod value_walk_tests {
+    use super::*;
+
+    #[test]
+    fn mutable_children_match_readonly_children_and_update_their_storage() {
+        let word = || Box::new(SsaValue::Literal("word".into()));
+        let var = || VarRef::new("binding", 7);
+        let mut values = vec![
+            SsaValue::Literal("literal".into()),
+            SsaValue::Var(var()),
+            SsaValue::Expr("expression".into()),
+            SsaValue::FuncCall {
+                name: "f".into(),
+                args: vec![*word()],
+                colls: vec![],
+            },
+            SsaValue::IntFuncCall {
+                name: "f".into(),
+                args: vec![*word()],
+                colls: vec![],
+            },
+            SsaValue::CmdSubst {
+                argv: vec![*word()],
+                suppressed: false,
+            },
+            SsaValue::CmdSubstBody { body: vec![] },
+            SsaValue::SlurpFile(word()),
+            SsaValue::Concat(vec![*word(), *word()]),
+            SsaValue::ArithExpr {
+                var: var(),
+                op: ArithOp::Add,
+                operand: 1,
+            },
+            SsaValue::ArithBinOp {
+                left: word(),
+                op: ArithOp::Add,
+                right: word(),
+            },
+            SsaValue::ParamExpansion {
+                var: var(),
+                operator: "#".into(),
+                operand: "x".into(),
+            },
+            SsaValue::RegexReplace {
+                subject: word(),
+                pattern: word(),
+                replacement: word(),
+                global: false,
+            },
+            SsaValue::RegexMatch {
+                subject: word(),
+                pattern: word(),
+            },
+            SsaValue::CaseConvert {
+                subject: word(),
+                upper: false,
+            },
+            SsaValue::StrLen { subject: word() },
+            SsaValue::DefaultValue {
+                source: word(),
+                default: word(),
+            },
+            SsaValue::RequireValue {
+                source: word(),
+                message: word(),
+            },
+            SsaValue::ElideEmpty {
+                source: word(),
+                taint_off: false,
+            },
+            SsaValue::Trusted { source: word() },
+            SsaValue::Substring {
+                source: word(),
+                spec: "1".into(),
+            },
+            SsaValue::AssocArray(vec![("key".into(), *word())]),
+            SsaValue::Subscript {
+                array: var(),
+                index: word(),
+                is_integer_key: false,
+                is_integer_value: false,
+            },
+            SsaValue::ArgvIndex(var()),
+            SsaValue::IndexedArray(vec![*word()]),
+            SsaValue::IntCell(word()),
+            SsaValue::Ternary {
+                cond: word(),
+                true_val: word(),
+                false_val: word(),
+            },
+            SsaValue::TableValue {
+                array: var(),
+                index: var(),
+            },
+            SsaValue::TableKey {
+                array: var(),
+                index: var(),
+            },
+            SsaValue::ArraySplat {
+                array: var(),
+                disposition: None,
+            },
+            SsaValue::ArraySplat {
+                array: var(),
+                disposition: Some(ArraySplatDisposition {
+                    word: word(),
+                    has_word: true,
+                    abort: false,
+                    taint_off: false,
+                }),
+            },
+        ];
+        for value in &mut values {
+            let before: Vec<_> = value.child_values().into_iter().cloned().collect();
+            let mutable: Vec<_> = value
+                .child_values_mut()
+                .into_iter()
+                .map(|v| v.clone())
+                .collect();
+            assert_eq!(mutable, before, "{value:?}");
+            let expected: Vec<_> = (0..before.len())
+                .map(|i| SsaValue::Expr(i.to_string()))
+                .collect();
+            for (child, replacement) in value.child_values_mut().into_iter().zip(&expected) {
+                *child = replacement.clone();
+            }
+            assert_eq!(
+                value
+                    .child_values()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn variable_mapping_reaches_direct_and_nested_storage_references() {
+        let var = |name| VarRef::new_typed(name, 7, crate::ir::VarType::Int);
+        let mut value = SsaValue::Concat(vec![
+            SsaValue::Var(var("plain")),
+            SsaValue::ArgvIndex(var("position")),
+            SsaValue::ArithExpr {
+                var: var("counter"),
+                op: ArithOp::Add,
+                operand: 1,
+            },
+            SsaValue::ParamExpansion {
+                var: var("parameter"),
+                operator: "#".into(),
+                operand: "literal".into(),
+            },
+            SsaValue::Subscript {
+                array: var("cells"),
+                index: Box::new(SsaValue::Var(var("key"))),
+                is_integer_key: false,
+                is_integer_value: false,
+            },
+            SsaValue::ArraySplat {
+                array: var("array"),
+                disposition: Some(ArraySplatDisposition {
+                    word: Box::new(SsaValue::Var(var("fallback"))),
+                    has_word: true,
+                    abort: false,
+                    taint_off: false,
+                }),
+            },
+            SsaValue::TableValue {
+                array: var("values"),
+                index: var("value_index"),
+            },
+            SsaValue::TableKey {
+                array: var("keys"),
+                index: var("key_index"),
+            },
+        ]);
+        let mut visited = Vec::new();
+        value.map_variables(&mut |v| {
+            visited.push(v.name.clone());
+            assert_eq!(v.version, 7);
+            assert_eq!(v.var_type, crate::ir::VarType::Int);
+            v.version = 0;
+        });
+        assert_eq!(
+            visited,
+            [
+                "plain",
+                "position",
+                "counter",
+                "parameter",
+                "cells",
+                "key",
+                "array",
+                "fallback",
+                "values",
+                "value_index",
+                "keys",
+                "key_index",
+            ]
+        );
+        value.map_variables(&mut |v| assert_eq!(v.version, 0));
     }
 }

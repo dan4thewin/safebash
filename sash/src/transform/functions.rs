@@ -30,6 +30,7 @@ pub(super) fn setup_callee_args(
         value: SsaValue::IndexedArray(arg_values.to_vec()),
     });
     state.collections.insert(name.clone());
+    ssa.immutable_bindings.insert(name.clone());
     state.current_args_name = name;
 }
 

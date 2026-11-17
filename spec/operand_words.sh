@@ -3,11 +3,11 @@
 # operand word: regex metacharacters are literal, quotes/`$` are honoured,
 # and the word runs to the next unquoted whitespace / `]]`. Bare regexes
 # work, quoted spaces work, an unquoted space is NOT a silent concat, and an
-# interpolated (dynamic) pattern is built at runtime and handed to regcomp.
+# interpolated pattern must be constructed immutably and validated (DD132).
 set -eu
 . common.sh
 setup operand_words
-plan=59
+plan=60
 echo "1..$plan" >&3
 
 set +e
@@ -43,23 +43,29 @@ run_sash 'x=foobar; [[ $x =~ foo bar ]]'
 [[ $rc != 0 && -z $out && -n $err ]]; chk ow.7
 
 # ── dynamic (interpolated) patterns are supported ────────────────────
-# ow.8 a `$var` pattern is built at runtime and handed to regcomp
-run_sash 'pat=^a; x=abc; if [[ $x =~ $pat ]] { echo Y } else { echo N }'
-[[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.8
-# ow.9 dynamic non-match
-run_sash 'pat=^z; x=abc; if [[ $x =~ $pat ]] { echo Y } else { echo N }'
-[[ $rc = 0 && $out = "N" && -z $err ]]; chk ow.9
-# ow.10 an interpolated group pattern
-run_sash 'pat="^(cat|dog)$"; x=dog; if [[ $x =~ $pat ]] { echo Y } else { echo N }'
-[[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.10
+# Validated immutable operands preserve the old ow.8-.10 matching claims.
+run_sash 'const pat=^a; attest pat r?; x=abc
+if [[ $x =~ $pat ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk regexproof.83
+run_sash 'const pat=^z; attest pat r?; x=abc
+if [[ $x =~ $pat ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "N" && -z $err ]]; chk regexproof.84
+run_sash 'const pat="^(cat|dog)$"; attest pat r?; x=dog
+if [[ $x =~ $pat ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk regexproof.85
 # ow.11 a spliced literal+variable operand (`run$suf`) concatenates in the
 # `==` RHS: run+ing = runing (NOT running — a mis-stated bug repro; matches
 # bash). See bug-test-operand-concat-splice (not-a-bug).
 run_sash 'suf=ing; x=runing; if [[ $x == run$suf ]] { echo Y } else { echo N }'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.11
-# ow.12 the same splice in the `=~` RHS
-run_sash 'suf=ing; x=runing; if [[ $x =~ run$suf ]] { echo Y } else { echo N }'
-[[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.12
+# A spliced regex needs its own check; the suffix's proof is insufficient
+# (replaces ow.12). Dropping the literal prefix would incorrectly accept.
+run_sash 'const suf=ing; attest suf r?; x=runing
+if [[ $x =~ run$suf ]] { echo Y } else { echo N }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.86
+run_sash 'suf=ing; str _pattern=run$suf; attest _pattern r?; x=runing
+if [[ $x =~ $_pattern ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk regexproof.87
 # ow.13 spliced operand negative
 run_sash 'suf=xyz; x=running; if [[ $x == run$suf ]] { echo Y } else { echo N }'
 [[ $rc = 0 && $out = "N" && -z $err ]]; chk ow.13

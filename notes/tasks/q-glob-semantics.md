@@ -69,9 +69,12 @@ The quiet actual-engine `r?` predicate is implemented and gated
 (journal 648), with trailing-escape and repetition-count overflow repairs.
 The independent structural refusal of trusted pattern reads is implemented
 and gated with SB5105 (journal 649), including with taint checking disabled.
-`rglob`, caught-scratch permissions and regex proof/result handling remain
-implementation work; this owner stays open through the integrated trial
-and DG's evaluation.
+Mandatory immutable-value proofs now cover every existing consumer with
+SB5106 (journal 650), including collection presence, helper/process flow
+and the lexical boundary of currently caught scratch regex uses.
+`rglob`, general caught-scratch read permissions and failed-path relaxation,
+remaining caught forms and regex result channels remain implementation work;
+this owner stays open through the integrated trial and DG's evaluation.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record
@@ -384,6 +387,12 @@ DD132's implementation boundary from
 `516944b539bcf9cf5a2d4c06a23fa43517f30679`. It enforces the existing
 provisional trust prohibition, without selecting a proof representation.
 
+The immutable-proof unit updates DD39's delivery paragraph and DD132's
+implementation boundary from
+`f5371e631421bb50d5d1dd9babe86dcde86c9f39`. It implements the existing
+pattern contract with a shared SSA analysis; no language rule or runtime
+representation is newly selected.
+
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
@@ -490,8 +499,32 @@ matching the positive snapshot. The gate has 12043 checks: 12030 passing
 and 13 existing skips, 46 first-ever mode IDs, two expected retirements and
 no flips. All 11997 retained predicate-baseline statuses are unchanged.
 No runtime, ABI or retained allocation was added. Exact immutable-value
-proofs, lexical caught permissions, result channels, `rglob` and integrated
-evaluation remain open.
+proofs were the next unit; that delivery follows below.
+
+The immutable-proof unit follows `f5371e631421bb50d5d1dd9babe86dcde86c9f39`;
+[journal 650](../journal/650-immutable-regex-proofs.md) records SB5106,
+all-reaching-path and fresh-instance facts, scoped copies, helper returns,
+collection presence and independent process roots. The original compiler
+fails exactly 55 assertions in the final 262-case regex file per mode.
+Twenty-two independent source reversions and two SSA API reversions are
+restored. A separately preserved, mis-aimed status mutation stayed green;
+the corrected unconditional-edge mutation independently pins helper returns.
+
+The first full gate exposed five older unchecked-pattern fixtures and the
+tour renderer's mutable fence pattern. These are migrated without weakening
+the proof requirement; the six tour publication cases return in both modes,
+and all 56 actual snippets render to the same published bytes. The accepted
+gate has 12211 checks, 12198 passing and 13 existing skips. Relative to the
+accepted trust-guard baseline, all 12003 retained statuses are unchanged,
+with 208 added and 40 deliberately retired mode IDs.
+
+The compiler/runtime/lock identities match the restored positive. This unit
+adds no runtime allocation or ABI, but a mutable builder now needs a fresh
+immutable candidate and validation before regex use, as the tour migration
+demonstrates. General caught ordinary-read permissions, failed fall-through,
+remaining caught forms, result channels, `rglob` and integrated migration/
+memory/time evaluation remain open. No main adoption or fresh coverage run
+is included.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

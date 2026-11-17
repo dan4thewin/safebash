@@ -49,6 +49,7 @@ safebash source (.sb)
     lexical binding resolution
     semantic validation + type checking
     AST -> SSA, once, using CheckedTypes
+    scratch-write + immutable regex-proof checks (trial branch)
     signal planning + terminal/entry checks + dead-variable checks
         +-- --emit-ir / --manifest: inspection output
         `-- SSA taint verification
@@ -151,8 +152,9 @@ The same SSA instructions feed both backends and the taint/handler analyses.
 
 Revisiting one construction site is allowed; skipped sites and zero-trip
 loop binders do not reset storage. This adds neither block scope nor automatic
-destruction at loop exit. Caught-attest permissions, regex proofs and `rglob`
-remain subsequent trial work.
+destruction at loop exit. General caught-attest read permissions and `rglob`
+remain subsequent trial work; the regex-specific proof boundary is described
+below.
 
 Ordinary array fillers now build private batches too. `CollectionPublish`
 carries the previous destination explicitly; the shared runtime prepares a
@@ -197,7 +199,7 @@ elements before later effects. The shared word-concatenation path also
 retains earlier component values, including their string conversion.
 This does not complete the separately tracked general argument-order work.
 Both backends use the same runtime status and publication protocol.
-The regex selector and DD132 proof/result rules are not implemented yet.
+The regex selector and DD132 result-channel rules are not implemented yet.
 
 ## Taint analysis
 
@@ -344,8 +346,23 @@ The shared structural pattern check rejects trusted (`:!`) reads with SB5105
 before its dynamic-pattern early return. It composes the canonical expression
 and statement walkers to cover indices, arithmetic and nested captures;
 trusted subjects, replacements and predicate candidates remain legal.
-Immutable-pattern proofs, caught-scratch permissions and consumer result-kind
-changes are still pending.
+
+[`regex_proof.rs`](../sash/src/regex_proof.rs) checks existing consumers on the
+shared, pre-fold SSA, before terminal analysis or inspection-output exits.
+SB5106 requires an immutable pattern with a successful `r?` witness on every
+reaching path. The worklist converges before reporting diagnostics. It tracks
+logical storage identities, copy equality, indexed-read dependencies, present
+elements and alternative lexical proof scopes. Writes and lifetime starts
+invalidate dependent facts; complete scalar quoting preserves identity, while
+byte-changing composition requires validation of the finished value.
+
+Inlined helper and capture control flow carries these facts without adding
+source-level regex types. Background/pipeline children inherit at their actual
+spawn point; independent handler roots inherit no main-path certificate.
+Caught scratch regex permission is limited to the successful lexical arm,
+including through copies. Ordinary caught-scratch read restrictions and
+failed-path relaxation are still pending, as are consumer result-kind changes
+and `rglob`. The pass adds no runtime storage or compiled-regex cache.
 
 EXIT and ERR are private generated callbacks over real global storage,
 with their own locals and entry status. Selection is by cause:

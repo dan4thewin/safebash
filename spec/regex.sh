@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=179
+plan=262
 echo "1..$plan" >&3
 
 set +e
@@ -39,11 +39,12 @@ run_sash 'echo $(match "hello world" "world")'
 run_sash 'echo $(match "abc123def" "[0-9][0-9][0-9]")'
 [[ $rc = 0 && $out = "123" && -z $err ]]; chk 63.1b
 
-# 63.b1 subject and pattern are ordinary args — interpolation is normal
+# Interpolation preserves a validated immutable pattern (formerly 63.b1).
 run_sash 's=hello
-p=ell
+const p=ell
+attest p r?
 echo $(match "$s" "$p")'
-[[ $rc = 0 && $out = "ell" && -z $err ]]; chk 63.b1
+[[ $rc = 0 && $out = "ell" && -z $err ]]; chk regexproof.41
 
 # 63.f2 no match → empty whole match, no error (assignment doesn't abort)
 run_sash 'x=$(match abc z)
@@ -175,11 +176,12 @@ run_sash 'echo $(sub x x "\a")'
 #      words, so $var in the pattern or replacement is expanded (DD#63). ──
 
 # 63.d7 `v =~ s/RE/SUB/` mutation sugar interpolates the PATTERN
-run_sash 'x=b
+run_sash 'const x=b
+attest x r?
 v=abc
 v =~ s/$x/Y/
 echo $v'
-[[ $rc = 0 && $out = "aYc" && -z $err ]]; chk 63.d7
+[[ $rc = 0 && $out = "aYc" && -z $err ]]; chk regexproof.42
 
 # 63.d8 `${v:s/RE/SUB/}` expression sugar interpolates the REPLACEMENT
 run_sash 'r=Y
@@ -497,15 +499,16 @@ run_sash 's=aaa
 if [[ $s =~ a{32}a{32}a{32}a{32}a{32}a{32}a{32}a{32} ]]; then echo Y; else echo N; fi'
 [[ $rc = 0 && $out = "N" && -z $err ]]; chk 39.26
 
-# 39.27 a RUNTIME pattern with a large bound. This is the one that matters:
+# A validated runtime pattern with a large bound (formerly 39.27).
+#       This is the one that matters:
 #       the pattern is tainted input, and before the fix it silently answered
 #       the wrong question or killed the process.
 export RE='a{1,32}'
-run_sash 'p=$(getenv RE)
-attest p [[ -n $p ]]
+run_sash 'const p=$(getenv RE)
+attest p [[ -n $p && r? $p ]]
 s=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 if [[ $s =~ $p ]]; then echo Y; else echo N; fi'
-[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.27
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk regexproof.43
 unset RE
 
 # ── 39.28-39.31 counted repetition of a group is rejected, not mis-answered ──
@@ -705,12 +708,13 @@ x =~ s/c$/Z/
 echo "$x ${x:s/^a/Q/} ${a[0]:s/^a(b)/Q/}"'
 [[ $rc = 0 && $out = "abZ QbZ Qc" && -z $rerr ]]; chk 39.45
 
-# 39.46 positive: an interpolated (dynamic) regex is left to the runtime
-run_sash 'str p=b
+# A validated dynamic regex works in both forms (formerly 39.46).
+run_sash 'const p=b
+attest p r?
 str x=abcb
 str y=$(sub "$x" "$p" z)
 echo "[$y][${x:s/$p/Q/g}]"'
-[[ $rc = 0 && $out = "[azcb][aQcQ]" && -z $rerr ]]; chk 39.46
+[[ $rc = 0 && $out = "[azcb][aQcQ]" && -z $rerr ]]; chk regexproof.44
 
 # 39.47 a regex dispatch's pattern (DD#66)
 run_sash 'str x=abc
@@ -747,35 +751,31 @@ run_sash 'for x in $(argv 1); do attest x [[ $x =~ a && $x =~ ( ]]; echo "got:$x
 [[ $rc != 0 && -z $out \
    && $err == *':1:24: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.52
 
-# 39.53 a dynamic regex that cannot compile exits 2 (DD#39 2026-05-24) from
-#       `sub`, as it always did from `match`; it used to return the subject
+# Unchecked malformed candidates cannot reach a consumer (formerly 39.53-.56).
 run_sash 'str p="("
 str x=$(sub abc "$p" z)
 echo "[$x]"'
-[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.53
+[[ $rc != 0 && -z $out && $err == *SB5106* ]]; chk regexproof.46
 
-# 39.54 from `gsub`, through the `${x:s/…/g}` sugar
+# Through global substitution sugar too.
 run_sash 'str p="("
 str x=abc
 str y=${x:s/$p/z/g}
 echo "[$y]"'
-[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.54
+[[ $rc != 0 && -z $out && $err == *SB5106* ]]; chk regexproof.47
 
-# 39.55 from the `x =~ s/…` statement
+# Mutation remains subject to the same prerequisite.
 run_sash 'str p="("
 str x=abc
 x =~ s/$p/z/
 echo "[$x]"'
-[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.55
+[[ $rc != 0 && -z $out && $err == *SB5106* ]]; chk regexproof.48
 
-# 39.56 under `-` too, as `- match` with the same pattern always has (and as
-#       e.a70.regcomp pins for `if match`): no lever catches a dynamic regcomp
-#       failure in any regex builtin. DD#70 (A) lists `-`/`if`/`||` as levers
-#       for it; that open question is notes/tasks/q-dynamic-regcomp-levers.md
+# Discarding a result does not supply a pattern proof.
 run_sash 'str p="("
 str x=$(- sub abc "$p" z)
 echo "after [$x]"'
-[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.56
+[[ $rc != 0 && -z $out && $err == *SB5106* ]]; chk regexproof.49
 
 # Whole-subject anchors must not attest just one acceptable line.
 run_sash 'x=$(arg 1)
@@ -811,9 +811,10 @@ if [[ $s =~ ^ab\x0acd$ ]] { echo newline }'
 # A grouped anchor bypasses the engine's first-instruction fast path.
 run_sash 's="ab
 cd"
-p="(^cd)"
+const p="(^cd)"
+attest p r?
 echo "[$(match "$s" "$p")]"'
-[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk 39.60
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk regexproof.45
 
 # Whole-subject anchors still return false, retaining the old destination.
 run_sash 'array g=(stale)
@@ -1119,6 +1120,453 @@ run_sash 'str p=$(arg 1)
 if [[ r? ${p:!} ]] { echo candidate } else { echo invalid }
 echo ${p:!}' a
 [[ $rc = 0 && $out = $'candidate\na' && -z $err && -z $rerr ]]; chk regextrust.21
+
+# DD132 trial: validity is a separate, immutable-value, all-path proof.
+run_sash 'const p=a; if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* && $err == *'immutable value'* ]]; chk regexproof.1
+
+run_sash 'const p=a; if matchall aa "$p" hits { echo "$(len hits)" }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.2
+
+run_sash 'const p=a; echo $(sub aba "$p" X)'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.3
+
+run_sash 'const p=a; echo $(gsub aba "$p" X)'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.4
+
+run_sash 'const p=a; if [[ a =~ "$p" ]] { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.5
+
+run_sash 'const p=a; [[ a =~ "$p" { echo matched } || { echo no } ]]'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.6
+
+run_sash 'str s=aba; const p=a; echo "${s:s/$p/X/}"'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.7
+
+run_sash 'array s=(aba); const p=a; echo "${s[0]:s/$p/X/}"'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.8
+
+run_sash 'str s=aba; const p=b; s =~ s/a/X/,s/$p/Y/; echo $s'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.9
+
+run_sash 'str p=a; attest p r?; if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.10
+
+SASH_CFLAGS=--no-taint run_sash 'const p=$(arg 1)
+if match a "$p" { echo matched }' a
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.11
+
+SASH_CFLAGS=--no-taint-cst run_sash 'const p=a; if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.12
+
+run_sash 'const p=a; attest p r?; str _copy=${p:!}
+if match a "$_copy" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.13
+
+run_sash 'const p=a; attest p r?; if match aa "${p}a" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.14
+
+run_sash 'const p=a; str choice=yes
+if [[ $choice == yes ]] { attest p r? }
+if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.15
+
+run_sash 'int n=0
+for _p in a b {
+    if (( n == 0 )) { attest _p r? }
+    if match ab "$_p" { echo matched }
+    (( n += 1 ))
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.16
+
+run_sash 'str _p=a
+if attest _p r? { : } else { exit 1 }
+if match a "$_p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.17
+
+run_sash 'str _p=a
+if attest _p r? { str _copy=$_p } else { exit 1 }
+if match a "$_copy" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.18
+
+run_sash 'const p=a; attest p r?
+ERR { if match a "$p" { - echo handler } }
+fail 1'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.19
+
+run_sash 'const p=a
+fn select { if match a "$1" { echo matched } }
+select "$p"'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.20
+
+run_sash 'const p=$(arg 1); attest p r?
+if match aba "$p" { echo match }
+if matchall aba "$p" hits { echo "$(len hits)" }
+if [[ aba =~ "$p" ]] { echo test }
+[[ aba =~ "$p" { echo dispatch } || { echo no } ]]
+str s=aba; array a=(aba)
+echo $(sub aba "$p" X) $(gsub aba "$p" X)
+echo "${s:s/$p/X/}" "${a[0]:s/$p/X/}"' a
+[[ $rc = 0 && $out = $'match\n2\ntest\ndispatch\nXba XbX\nXba Xba' \
+   && -z $err && -z $rerr ]]; chk regexproof.21
+
+run_sash 'const p=$(toupper a)
+if [[ r? "$p" && A =~ "$p" ]] { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.22
+
+run_sash 'const p=$(toupper a)
+if ! [[ r? "$p" ]] { exit 1 }
+if match A "$p" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.23
+
+run_sash 'const p=a; attest p r?; const q="$p"
+if match a "$q" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.24
+
+run_sash 'const p=a; attest p r?
+fn select { if match a "$1" { echo matched } }
+fn forward { select "$1" }
+forward "$p"'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.25
+
+run_sash 'str p=a
+fn select { str _p=$1; attest _p r?; if match a "$_p" { echo matched } }
+select "$p"'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.26
+
+run_sash 'array _patterns=(a b)
+attest p in _patterns [[ r? $p ]]
+for _p in @_patterns { if match ab "$_p" { echo $_p } }'
+[[ $rc = 0 && $out = $'a\nb' && -z $err && -z $rerr ]]; chk regexproof.27
+
+run_sash 'array _patterns=(a b)
+attest p in _patterns [[ r? $p ]]
+fn select { for _p in @A { if match ab "$_p" { echo $_p } } }
+fn forward { select =A }
+forward =_patterns'
+[[ $rc = 0 && $out = $'a\nb' && -z $err && -z $rerr ]]; chk regexproof.28
+
+run_sash 'const p=a; str choice=yes
+if [[ $choice == yes ]] { attest p r? } else { attest p r? }
+if match a "$p" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.29
+
+run_sash 'str result=$(str _p=$(toupper a); attest _p r?
+if match A "$_p" { echo matched })
+echo $result'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.30
+
+run_sash 'const p=a; str choice=yes
+if [[ r? "$p" || $choice == yes ]] {
+    if match a "$p" { echo matched }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.31
+
+run_sash 'str _p=a
+fn select { if match a "$1" { echo matched } }
+if attest _p r? { select "$_p" } else { exit 1 }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.32
+
+run_sash 'for _p in a b {
+    attest _p r?
+    if match ab "$_p" { echo $_p }
+}'
+[[ $rc = 0 && $out = $'a\nb' && -z $err && -z $rerr ]]; chk regexproof.33
+
+run_sash 'array _patterns=(a); attest p in _patterns [[ r? $p ]]
+if match a "${_patterns[5]:-a}" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.34
+
+run_sash 'array _patterns=(a); attest p in _patterns [[ r? $p ]]
+if match a "${_patterns[0]:?missing}" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.35
+
+run_sash 'const p=a
+fn select { if match a "$p" { echo matched } }
+select
+attest p r?'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.36
+
+run_sash 'const p=a
+fn select { if match a "$p" { echo matched } }
+select &
+attest p r?
+- wait'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.37
+
+run_sash 'str _p=a; attest _p r?
+if attest _p [[ $_p == no ]] { echo no } else {
+    if match a "$_p" { echo matched }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.38
+
+run_sash 'const p=a; attest p r?
+if attest p [[ $p == no ]] { echo no } else {
+    if match a "$p" { echo matched }
+}'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.39
+
+run_sash 'ERR {
+    str _p=$(toupper a)
+    if attest _p r? { if match A "$_p" { - echo handler } } else { exit 2 }
+}
+fail 1'
+[[ $rc = 1 && $out = handler && -z $err && -z $rerr ]]; chk regexproof.40
+
+run_sash 'fn select { if match a "$1" { echo matched } }; select a'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.51
+
+run_sash 'str p=a
+fn select {
+    if [[ r? "$1" ]] { if match a "$1" { echo matched } } else { exit 1 }
+}
+select "$p"'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.52
+
+run_sash 'str p=a
+fn validate { if ! [[ r? "$1" ]] { exit 1 } }
+fn select { if match a "$1" { echo matched } }
+validate "$p"; select "$p"'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.53
+
+run_sash 'const p=a; attest p r?; str _copy=${p:!}; attest _copy r?
+if match a "$_copy" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.54
+
+run_sash 'const p=a; attest p [[ r? $p && a =~ $p ]]
+if match a "$p" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.55
+
+run_sash 'const p=a; attest p [[ -n $p || r? $p ]]
+if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.56
+
+run_sash 'array patterns=(a); attest p in patterns [[ r? $p ]]
+if match a "${patterns[0]}" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.57
+
+run_sash 'for _p in a {
+    if attest _p r? { : } else { continue }
+    if match a "$_p" { echo matched }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.58
+
+run_sash 'const p=a
+fn validate { attest p r? }
+validate &
+- wait
+if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.59
+
+run_sash 'const p=a; attest p r?
+fn select { if match a "$p" { echo matched } }
+select &
+- wait'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.60
+
+run_sash 'const p=a; attest p r?
+fn select { if match a "$p" { echo matched } }
+select | /bin/cat'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.61
+
+run_sash 'const p=a
+fn validate { attest p r?; echo input }
+fn select {
+    if readline _input {
+        attest _input [[ -n $_input ]]
+        if match a "$p" { echo matched }
+    }
+}
+validate | select'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.62
+
+run_sash 'map _patterns=([a]=a [b]=b); str key=a
+if [[ r? "${_patterns[$key]}" ]] {
+    if match a "${_patterns[$key]}" { echo matched }
+}'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.63
+
+run_sash 'map _patterns=([a]=a [b]=b); str key=a
+if [[ r? "${_patterns[$key]}" ]] {
+    key=b
+    if match b "${_patterns[$key]}" { echo matched }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.64
+
+run_sash 'array _patterns=(a b); int i=0
+if [[ r? "${_patterns[$(( i + 0 ))]}" ]] {
+    (( i += 1 ))
+    if match b "${_patterns[$(( i + 0 ))]}" { echo matched }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.65
+
+run_sash 'map _patterns=([a]=a [b]=b)
+attest key value in _patterns [[ r? $key && r? $value ]]
+for _key in $(keys _patterns) {
+    if match ab "$_key" { echo $_key }
+    if match ab "${_patterns[$_key]}" { echo value }
+}'
+[[ $rc = 0 && $out = $'a\nvalue\nb\nvalue' && -z $err && -z $rerr ]]; chk regexproof.66
+
+run_sash 'map _patterns=([a]=a [b]=b)
+if [[ r? "${_patterns[a]}" ]] {
+    if match b "${_patterns[b]}" { echo matched }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.67
+
+run_sash 'const p=a
+fn validate { const q=a; attest q r? }
+validate
+if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.68
+
+run_sash 'const p=a; array _patterns=()
+attest item in _patterns [[ -n $item && r? $p ]]
+if match a "$p" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.69
+
+run_sash 'const p=a
+fn validate { const q=$1; attest q r? }
+validate "$p"
+if match a "$p" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.70
+
+printf '%s\n' 'const p=a; if match a "$p" { echo matched }' > proof.sb
+timeout "$SPEC_TIMEOUT" "${SASH:-sash}" --emit-ir proof.sb > proof.ir 2> proof.err
+rc=$?; err=$(<proof.err)
+[[ $rc != 0 && $err == *SB5106* && ! -s proof.ir ]]; chk regexproof.71
+
+timeout "$SPEC_TIMEOUT" "${SASH:-sash}" --manifest proof.sb > proof.manifest 2> proof.err
+rc=$?; err=$(<proof.err)
+[[ $rc != 0 && $err == *SB5106* && ! -s proof.manifest ]]; chk regexproof.72
+
+run_sash 'const p=a
+fn valid { return [[ r? "$1" ]] }
+if valid "$p" { if match a "$p" { echo matched } }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.73
+
+run_sash 'const p=a
+fn valid { return [[ r? "$1" ]] }
+fn relay { return valid "$1" 2>/dev/null }
+if relay "$p" { if match a "$p" { echo matched } }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.74
+
+run_sash 'const p="("
+fn invalid { if [[ r? "$1" ]] { return 1 }; return 0 }
+if invalid "$p" { if match a "$p" { echo matched } }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.75
+
+run_sash 'const p=a; const copy=$p; attest p r?
+if match a "$copy" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.76
+
+run_sash 'array _patterns=(a b); attest p in _patterns [[ r? $p ]]
+array _copy=(@_patterns)
+if match b "${_copy[1]}" { echo matched }'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.77
+
+run_sash 'const p=a; attest p r?
+EXIT { if match a "$p" { echo matched } }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.78
+
+run_sash 'const p=a
+EXIT { if [[ r? $p ]] { if match a "$p" { echo matched } } }
+exit 0'
+[[ $rc = 0 && $out = matched && -z $err && -z $rerr ]]; chk regexproof.79
+
+run_sash 'const p=a; str copy=$p; attest p r?
+if match a "$copy" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.80
+
+run_sash 'const p="("
+if [[ r? $p ]]; _directory=$(mkdtemp) {
+    /bin/rmdir "$_directory"
+    if match a "$p" { echo matched }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.81
+
+run_sash 'array _patterns=("(" a)
+if /bin/false { exit 1 } else {
+    if [[ r? "${_patterns[$?]}" ]] {
+        if match a "${_patterns[$?]}" { echo matched }
+    }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.88
+
+run_sash 'array _patterns=("(" a)
+if /bin/false { exit 1 } else {
+    const first="${_patterns[$?]}"
+    if [[ r? $first ]] {
+        const second="${_patterns[$?]}"
+        if [[ r? $first ]] {
+            if match a "$second" { echo matched }
+        }
+    }
+}'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.89
+
+run_sash 'array _patterns=("(" a)
+if /bin/false { exit 1 } else {
+    int _index=$(status)
+    if [[ r? "${_patterns[$_index]}" ]] {
+        if match a "${_patterns[$_index]}" { echo matched }
+    }
+}'
+[[ $rc == 0 && $out == matched ]]; chk regexproof.90
+
+run_sash 'array _patterns=(a b)
+attest p in _patterns r?
+if /bin/false { exit 1 } else {
+    if match b "${_patterns[$?]:?missing}" { echo matched }
+}'
+[[ $rc == 0 && $out == matched ]]; chk regexproof.91
+
+run_sash 'fn select {
+    const p=$1
+    if match a "$p" { echo matched }
+}
+select a
+select "("'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.92
+
+run_sash 'fn select {
+    const p=$1
+    if [[ "$2" == again ]] { return select "(" done }
+    if match a "$p" { echo matched }
+    return 0
+}
+if select a again { : }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.93
+
+run_sash 'fn emit { echo payload }
+map paths=([Xba]=filename); const p=a
+emit > "${paths[$(sub aba "$p" X)]:?missing}"'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.94
+
+run_sash 'fn emit { echo payload }
+map paths=([Xba]=filename); const p=a; attest p r?
+emit > "${paths[$(sub aba "$p" X)]:?missing}"
+/bin/cat filename'
+[[ $rc == 0 && $out == payload && -z $err && -z $rerr ]]; chk regexproof.95
+
+run_sash 'str _p=a
+if ! attest _p r? { exit 1 } else { : }
+if match a "$_p" { echo escaped }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.96
+
+run_sash 'str _p=a
+if ! attest _p r? { exit 1 } else {
+    if match a "$_p" { echo matched }
+}'
+[[ $rc == 0 && $out == matched && -z $err && -z $rerr ]]; chk regexproof.97
+
+run_sash 'str _p=a; attest _p r? || exit 1
+if match a "$_p" { echo escaped }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.98
+
+run_sash 'array _patterns=(a); attest p in _patterns [[ r? $p ]]
+if match b "${_patterns[5]}" { echo matched }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.99
 
 set -e
 tally

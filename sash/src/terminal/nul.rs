@@ -737,32 +737,12 @@ fn predecessor_edges(block: &BasicBlock) -> Vec<(BlockId, Option<bool>)> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .flat_map(|next| {
-            edge_outcomes(&block.terminator, next)
+            block
+                .terminator
+                .edge_outcomes(next)
                 .into_iter()
                 .map(move |truth| (next, truth))
         })
-        .collect()
-}
-
-fn edge_outcomes(terminator: &Terminator, next: BlockId) -> Vec<Option<bool>> {
-    let (then_block, else_block) = match terminator {
-        Terminator::Branch {
-            true_block: then_block,
-            false_block: else_block,
-            ..
-        }
-        | Terminator::Loop {
-            body_block: then_block,
-            exit_block: else_block,
-            ..
-        } => (*then_block, *else_block),
-        Terminator::Goto(_) | Terminator::Fork { .. } => return vec![None],
-        Terminator::Return | Terminator::ChildExit => return Vec::new(),
-    };
-    [(then_block, true), (else_block, false)]
-        .into_iter()
-        .filter(|(block, _)| *block == next)
-        .map(|(_, truth)| Some(truth))
         .collect()
 }
 

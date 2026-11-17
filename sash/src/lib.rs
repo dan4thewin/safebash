@@ -12,6 +12,7 @@ pub(crate) mod diagnostic;
 #[path = "../../sash-rt/src/glob_pattern.rs"]
 pub(crate) mod glob_pattern;
 pub(crate) mod output_taint;
+pub(crate) mod regex_proof;
 pub(crate) mod regex_validate;
 pub(crate) mod resolve;
 pub(crate) mod scratch;
@@ -445,6 +446,7 @@ pub fn cli_main(args: Vec<String>) {
     let mut ssa = transform_or_exit(input, &bound, &names, type_map, &scratch);
     ssa.source_names = names.clone();
     reject_bound_diagnostics(input, &names, scratch::check_writes(&ssa, &scratch));
+    reject_bound_diagnostics(input, &names, regex_proof::check(&ssa));
     signals::prepare(&mut ssa, &taint_analysis.signal_pairs);
     check_terminal_or_exit(input, &bound, &ssa, &taint_analysis, &parsed.flags, &names);
 

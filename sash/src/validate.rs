@@ -143,7 +143,7 @@ pub fn check_const_writes(program: &Program) -> Vec<Diagnostic> {
     diags
 }
 
-fn collect_const_names(stmt: &Statement, consts: &mut HashSet<String>) {
+pub(crate) fn collect_const_names(stmt: &Statement, consts: &mut HashSet<String>) {
     if let StmtKind::Declaration(d) = &stmt.kind {
         if d.keyword == DeclKeyword::Readonly {
             consts.extend(d.assignments.iter().map(|a| a.name.clone()));

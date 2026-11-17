@@ -616,12 +616,6 @@ impl<'a> Facts<'a> {
             ..Proof::c_string()
         }
     }
-
-    fn regex_safe(&self, pattern: &SsaValue) -> bool {
-        self.value(pattern)
-            .text
-            .is_some_and(|text| crate::regex_validate::validate_regex(&text).is_ok())
-    }
 }
 
 fn intrinsic_proof(argv: &[SsaValue], facts: &Facts<'_>) -> Proof {
@@ -658,9 +652,7 @@ fn instruction_failures(
             redirects,
             checked,
         } => {
-            errors.extend(command_failures(
-                name, *kind, args, *checked, facts, argv_safe,
-            ));
+            errors.extend(command_failures(name, *kind, args, *checked, argv_safe));
             redirect_failure(redirects, &mut errors);
             values_failures(args, facts, &mut errors);
         }
@@ -716,7 +708,6 @@ fn instruction_failures(
         SsaInst::MatchInto {
             subject, pattern, ..
         } => {
-            regex_failure(pattern, facts, &mut errors);
             values_failures([subject, pattern], facts, &mut errors);
         }
         SsaInst::GlobFill {
@@ -791,7 +782,6 @@ fn command_failures(
     kind: BuiltinCmd,
     args: &[SsaValue],
     checked: bool,
-    facts: &Facts<'_>,
     argv_safe: &impl Fn(&SsaValue) -> bool,
 ) -> Vec<String> {
     let mut errors = Vec::new();
@@ -808,11 +798,8 @@ fn command_failures(
                 (!args.is_empty()).then(|| "an uncatchable replacing-exec failure".to_string()),
             );
         }
-        BuiltinCmd::Match => {
-            let [_, pattern] = BuiltinCmd::Match.expect_ssa_args(args);
-            regex_failure(pattern, facts, &mut errors);
-        }
-        BuiltinCmd::Noop
+        BuiltinCmd::Match
+        | BuiltinCmd::Noop
         | BuiltinCmd::Exit
         | BuiltinCmd::Fail
         | BuiltinCmd::NegateTestResult
@@ -869,12 +856,6 @@ fn redirect_failure(redirects: &[crate::ir::Redirect], errors: &mut Vec<String>)
     }
 }
 
-fn regex_failure(pattern: &SsaValue, facts: &Facts<'_>, errors: &mut Vec<String>) {
-    if !facts.regex_safe(pattern) {
-        errors.push("an uncatchable dynamic-regex compilation failure".to_string());
-    }
-}
-
 fn values_failures<'a>(
     values: impl IntoIterator<Item = &'a SsaValue>,
     facts: &Facts<'_>,
@@ -897,9 +878,6 @@ fn value_failures(value: &SsaValue, facts: &Facts<'_>, errors: &mut Vec<String>)
         }
         SsaValue::SlurpFile(_) => {
             errors.push("a slurp's uncatchable open/read failure".to_string())
-        }
-        SsaValue::RegexMatch { pattern, .. } | SsaValue::RegexReplace { pattern, .. } => {
-            regex_failure(pattern, facts, errors)
         }
         SsaValue::ArraySplat { array, disposition } => {
             errors.extend(

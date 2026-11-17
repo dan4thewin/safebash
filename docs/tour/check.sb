@@ -33,7 +33,12 @@ fn render_output {
             rendered='hostname: <hostname>'
             (( normalized++ ))
         }
-        while match $rendered $fence { fence+='`' }
+        while : {
+            str _fence=$fence
+            attest _fence r?
+            if ! match $rendered $_fence { break }
+            fence+='`'
+        }
         echo $rendered >> ${work:?}/output.txt
     }
     if [[ $title == Globs || $title == "Background jobs" ||

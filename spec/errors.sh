@@ -837,13 +837,11 @@ echo done'
 run_sash 'if /bin/false; then echo y; else echo n; fi'
 [[ $rc = 0 && $out = "n" && -z $rerr ]]; chk e.a70.silent
 
-# (A) dynamic (interpolated) bad regex → runtime regcomp abort with the
-# `regexp error: …` diagnostic (compile-time validation only covers a
-# static pattern). Runtime diagnostics are captured into $rerr.
-# e.a70.regcomp
+# Unchecked runtime patterns refuse before the consumer, even in a condition
+# (DD132; replaces e.a70.regcomp's old runtime-error contract).
 run_sash 'p="[bad"
 if match hello "$p"; then echo y; else echo n; fi'
-[[ $rc != 0 && $rerr == *"regexp error"* ]]; chk e.a70.regcomp
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.82
 
 # 55.41 an external command in a `while` condition is CAUGHT (a nonzero exit
 #       ends the loop), like `if` — it must not abort. bash: `done`, rc 0.

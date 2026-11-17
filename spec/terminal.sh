@@ -613,7 +613,7 @@ ERR { - match x "${pattern:!}" }'
 run_sash 'pattern=$(getenv DD128_PATTERN)
 fail 1
 ERR { str candidate=${pattern:!}; - match x "$candidate" }'
-[[ $err == *SB5101* && $err == *"dynamic-regex"* ]]; chk regextrust.23
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.50
 
 run_sash 'fail 1; ERR {
     v=$(arg 999)

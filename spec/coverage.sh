@@ -1102,25 +1102,27 @@ run_sash '/bin/echo a | read ARR
 array b=("${ARR[0]}")
 echo "${b[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.222
-# cov.223-cov.225 reach the interpolating-word scanner's identifier arms. They
+# These cases reach the interpolating-word scanner's identifier arms. They
 # used to do it through a `:-` default; that operand is a literal now, so the
 # vehicle moved to `:s/`, which is still a full interpolating word (a pattern is
 # evaluated unconditionally, so the literal rule does not apply to it). Same
 # scanner, same arms.
-# cov.223 a multi-char identifier -- the inner run loop must advance past the
+# A multi-char identifier -- the inner run loop must advance past the
 # first byte, which a 1-char name never makes it do.
 run_sash 'str x=aQb
-str xy=Q
+const xy=Q
+attest xy r?
 str v=${x:s/$xy/Z/}
 echo "[$v]"'
-[[ $rc = 0 && $out = "[aZb]" && -z $err ]]; chk cov.223
-# cov.224 a `_`-led identifier, reaching the scan's second alternative
+[[ $rc = 0 && $out = "[aZb]" && -z $err ]]; chk regexproof.100
+# A `_`-led identifier, reaching the scan's second alternative
 # (`c == b'_'`); an alphabetic lead short-circuits past it.
 run_sash 'str x=aQb
 str _z=Q
+attest _z r?
 str v=${x:s/$_z/Z/}
 echo "[$v]"'
-[[ $rc = 0 && $out = "[aZb]" && -z $err ]]; chk cov.224
+[[ $rc = 0 && $out = "[aZb]" && -z $err ]]; chk regexproof.101
 # cov.225 a single-char SPECIAL (`$#`) in the same position: the scan consumes
 # it before the `#` word-terminator check runs, so the operand is `$#` and not
 # an empty operand plus a comment.

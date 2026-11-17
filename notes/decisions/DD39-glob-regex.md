@@ -98,8 +98,10 @@ runtime regex operands must be immutable and successfully checked with
 actual literal regex use retains static validation, and allocation
 faults remain fatal. The predicate is implemented on `glob-scratch-trial`
 (journal 648), as is the unconditional SB5105 refusal of trusted reads
-within pattern operands (journal 649). Mandatory consumer proofs and the
-remaining integrated trial are not complete.
+within pattern operands (journal 649). SB5106 now requires immutable-value
+proofs at every existing consumer (journal 650), independently of taint
+switches. Caught ordinary-read permissions, regex result channels and
+`rglob` remain part of the unfinished integrated trial.
 
 ## Whole-subject anchors (DG, 2026-11-16)
 

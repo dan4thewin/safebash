@@ -260,9 +260,10 @@ run_sash 'x=a; y=b; [[ $x:$y==a:b { echo hit } || { echo no } ]]'
 run_sash 'x=a; y=b; [[ $x-$y==a-b { echo hit } || { echo no } ]]'
 [[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp9
 
-# MP10 regex side, multi-part pattern
-run_sash 's=ab; x=a; y=b; [[ $s=~$x$y { echo hit } || { echo no } ]]'
-[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp10
+# A multi-part pattern is constructed and checked before unspaced dispatch.
+run_sash 's=ab; x=a; y=b; const pattern=$x$y; attest pattern r?
+[[ $s=~$pattern { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk regexproof.102
 
 # MP11-MP12 boolean [[ ]] parity for both sides
 run_sash 'x=a; y=b; if [[ $x$y==ab ]]; then echo y; else echo n; fi'

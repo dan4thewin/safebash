@@ -185,6 +185,13 @@ fn lower_if_attest(
         // This dispatcher has already selected attest; declining deletes the if.
         unreachable!("a selected if-attest cannot discard its condition or branches");
     };
+    let subject = super::expressions::resolve_args_name(AttestKind::of(&form).subject(), state);
+    if state.scratch.contains(&subject) {
+        let origin = ssa
+            .current_origin
+            .expect("a caught attest has a source origin");
+        ssa.caught_scratch.insert(origin, subject);
+    }
     // DD#93 Part D in the `if` position: the conversion is the condition.
     // The target is *declared* before the branch (so it exists, defaulted, on
     // the else path — DG 2026-09-07) and *assigned* only in the then-branch,

@@ -14,6 +14,13 @@ pub(crate) fn ir_to_ssa_typed(
     let mut ssa = SsaProgram::new();
     ssa.globals = source_globals(program, &types);
     ssa.user_fds = program_referenced_fds(program);
+    ssa.source_bindings = types.vars.keys().cloned().collect();
+    ssa.immutable_bindings.extend(scratch.sites.keys().cloned());
+    for body in program.bodies() {
+        walk_stmt_tree(body, &mut |stmt| {
+            crate::validate::collect_const_names(stmt, &mut ssa.immutable_bindings)
+        });
+    }
     let mut state = VersionState::with_types(types.vars);
     state.scratch = scratch.clone();
     state.checked_collections = types.collections;

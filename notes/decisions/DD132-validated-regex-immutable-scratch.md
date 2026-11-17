@@ -282,7 +282,18 @@ with taint checking disabled (journal 649). Trusted subjects, replacements
 and `r?` candidates remain ordinary data uses; literal `:!` text is not a
 trust modifier. This structural guard does not establish pattern validity.
 
-Mandatory regex proofs, caught-scratch permissions, substitution booleans
-and `rglob` remain implementation work. The predicate retains no compiled
-program; it does not select a cache, proof-pass architecture or later
-consumer representation. The construction spelling is settled in DD131.
+Mandatory immutable-pattern proofs are implemented for the existing
+consumers with SB5106 (journal 650). The shared SSA analysis follows
+successful predicate outcomes, equal immutable values, present collection
+elements, actual writes and fresh instances. Main and handler roots start
+independently; children inherit facts at their spawn point. For currently
+caught scratch forms, regex permission expires at the lexical boundary,
+including on copies and helper arguments. This check is unconditional,
+including inspection modes and taint-disable switches.
+
+The broader caught-scratch ordinary-read restriction and unresolved-failure
+relaxation remain implementation work, as do the remaining caught forms,
+substitution booleans and `rglob`. The proof unit does not claim those
+semantics from its regex-only restrictions. The predicate and consumers
+still compile separately; no compiled handle, retained cache or runtime
+ABI was added. The construction spelling is settled in DD131.

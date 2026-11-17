@@ -50,8 +50,9 @@ run_sash 'echo $(toupper aB3_z)'
 run_sash 'echo $(toupper foo)-$(tolower BAR)'
 [[ $rc = 0 && $out = "FOO-bar" && -z $err ]]; chk vm.tu6
 # vm.tu7 the case-insensitive match idiom (DD#65: regex has no `i` flag)
-run_sash 'x=HeLLo; pat=hello; if match $(tolower $x) $(tolower $pat) { echo same } else { echo diff }'
-[[ $rc = 0 && $out = "same" && -z $err ]]; chk vm.tu7
+run_sash 'x=HeLLo; pat=HELLO; str _pattern=$(tolower $pat); attest _pattern r?
+if match $(tolower $x) $_pattern { echo same } else { echo diff }'
+[[ $rc = 0 && $out = "same" && -z $err ]]; chk regexproof.103
 
 # ── basename / dirname sugar (DD#65 — rewritten to a fixed-pattern sub) ──
 run_sash 'p=/a/b/c.txt; echo $(basename $p)'
@@ -472,12 +473,13 @@ v =~ s/a/1/,
      s/c/3/
 /bin/echo $v'
 [[ $rc = 0 && $out = "123" && -z $err ]]; chk 96.6
-# 96.7 interpolation still works in a chained edit (DD#63)
-run_sash 'p=a
+# A validated pattern still interpolates in a chained edit (DD#63/DD#132).
+run_sash 'const p=a
+attest p r?
 v=ac
 v =~ s/$p/X/, s/c/Y/
 /bin/echo $v'
-[[ $rc = 0 && $out = "XY" && -z $err ]]; chk 96.7
+[[ $rc = 0 && $out = "XY" && -z $err ]]; chk regexproof.104
 # 96.8 a single edit is unchanged (regression guard)
 run_sash 'v=xay
 v =~ s/a/b/
