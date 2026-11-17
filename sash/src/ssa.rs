@@ -834,13 +834,14 @@ pub enum TestOrigin {
 
 /// One operand read by an instruction, as seen by the taint backstop.
 ///
-/// Two shapes, because redirects ride through SSA **unlowered**: a
+/// Redirects ride through SSA **unlowered**: a
 /// [`crate::ir::Redirect`]'s target is still an `ir::Expr` and never becomes
 /// an [`SsaValue`]. That is the structural reason a value-oriented walk could
 /// not see `echo pwned > $h` — there was no SSA value to look at.
 pub(crate) enum TaintRead<'a> {
     Value(&'a SsaValue),
     RedirectTarget(&'a crate::ir::Expr),
+    Binding(&'a str),
 }
 
 fn value_reads<'a>(values: &'a [SsaValue], ctx: String) -> Vec<(TaintRead<'a>, String)> {
@@ -908,6 +909,16 @@ impl SsaInst {
     /// source because validating it is the entire point of the form, and
     /// `CaptureEnd` defines rather than reads. `classify_inst_def` owns those.
     pub(crate) fn taint_reads(&self) -> Vec<(TaintRead<'_>, String)> {
+        self.reads(false)
+    }
+
+    pub(crate) fn ordinary_reads(&self) -> Vec<(TaintRead<'_>, String)> {
+        self.reads(true)
+    }
+
+    /// Escape sinks and propagated reads share one operand inventory.
+    /// Total over `SsaInst`; do not add a wildcard.
+    fn reads(&self, propagation: bool) -> Vec<(TaintRead<'_>, String)> {
         match self {
             SsaInst::Command {
                 name,
@@ -936,8 +947,8 @@ impl SsaInst {
                 .collect(),
             // An attest predicate reads its tainted subject by design; see
             // `TestOrigin`. The same exemption the bare form gets below.
-            SsaInst::Test(_, TestOrigin::AttestPredicate) => vec![],
-            SsaInst::Test(t, TestOrigin::Plain) => {
+            SsaInst::Test(_, TestOrigin::AttestPredicate) if !propagation => vec![],
+            SsaInst::Test(t, _) => {
                 let mut v = Vec::new();
                 push_test_reads(t, &mut v);
                 v
@@ -970,10 +981,25 @@ impl SsaInst {
                 TaintRead::Value(value),
                 format!("an appended element of '{}'", array),
             )],
-            SsaInst::MapFromArray { target, key, .. } => vec![(
-                TaintRead::Value(key),
-                format!("a map key filling '{}'", target.name),
-            )],
+            SsaInst::MapFromArray {
+                source,
+                target,
+                key,
+                taint_off,
+                ..
+            } => {
+                let mut reads = vec![(
+                    TaintRead::Value(key),
+                    format!("a map key filling '{}'", target.name),
+                )];
+                if propagation && !taint_off {
+                    reads.push((
+                        TaintRead::Binding(&source.name),
+                        format!("an array filling '{}'", target.name),
+                    ));
+                }
+                reads
+            }
             SsaInst::SplitValue { source, target } => vec![(
                 TaintRead::Value(source),
                 format!("the split source for '{}'", target.name),
@@ -996,10 +1022,23 @@ impl SsaInst {
             SsaInst::GlobFill { patterns, .. } => {
                 value_reads(patterns, "a glob pattern".to_string())
             }
-            // Propagation and definition sites. A tainted value here flows
-            // into a target whose own taint is derived from it by
-            // `classify_inst_def`; it does not escape. The last three read no
-            // `SsaValue` at all.
+            SsaInst::Assign { value, .. } if propagation => {
+                vec![(TaintRead::Value(value), "an assigned value".to_string())]
+            }
+            SsaInst::CollectionPublish { source, .. } if propagation => vec![(
+                TaintRead::Binding(&source.name),
+                "a published collection".to_string(),
+            )],
+            SsaInst::KeysFill { source, .. } if propagation => {
+                vec![(TaintRead::Binding(source), "a keys source".to_string())]
+            }
+            SsaInst::Attest { test, .. } | SsaInst::AttestAll { test, .. } if propagation => {
+                let mut reads = Vec::new();
+                push_test_reads(test, &mut reads);
+                reads
+            }
+            // Taint propagates at definitions rather than escaping. Attest
+            // retags preserve an already checked value and are not data reads.
             SsaInst::Assign { .. }
             | SsaInst::Attest { .. }
             | SsaInst::AttestAll { .. }
@@ -1476,6 +1515,100 @@ pub struct ArraySplatDisposition {
 }
 
 impl SsaValue {
+    /// Ordinary storage reads, including indices of explicitly trusted cells.
+    /// Total over `SsaValue`; do not add a wildcard.
+    pub(crate) fn read_variables(&self, f: &mut impl FnMut(&VarRef)) {
+        match self {
+            Self::Trusted { source }
+            | Self::ElideEmpty {
+                source,
+                taint_off: true,
+            } => {
+                source.trusted_read_operands(f);
+                return;
+            }
+            Self::Var(var)
+            | Self::ArgvIndex(var)
+            | Self::ArithExpr { var, .. }
+            | Self::ParamExpansion { var, .. }
+            | Self::Subscript { array: var, .. } => f(var),
+            Self::ArraySplat { array, disposition } => {
+                if !disposition.as_ref().is_some_and(|d| d.taint_off) {
+                    f(array);
+                }
+            }
+            Self::TableValue { array, index } | Self::TableKey { array, index } => {
+                f(array);
+                f(index);
+            }
+            Self::Literal(_)
+            | Self::Expr(_)
+            | Self::FuncCall { .. }
+            | Self::IntFuncCall { .. }
+            | Self::CmdSubst { .. }
+            | Self::CmdSubstBody { .. }
+            | Self::SlurpFile(_)
+            | Self::Concat(_)
+            | Self::ArithBinOp { .. }
+            | Self::RegexReplace { .. }
+            | Self::RegexMatch { .. }
+            | Self::CaseConvert { .. }
+            | Self::StrLen { .. }
+            | Self::DefaultValue { .. }
+            | Self::RequireValue { .. }
+            | Self::ElideEmpty {
+                taint_off: false, ..
+            }
+            | Self::Substring { .. }
+            | Self::AssocArray(_)
+            | Self::IndexedArray(_)
+            | Self::IntCell(_)
+            | Self::Ternary { .. } => {}
+        }
+        for value in self.child_values() {
+            value.read_variables(f);
+        }
+    }
+
+    fn trusted_read_operands(&self, f: &mut impl FnMut(&VarRef)) {
+        match self {
+            Self::IntCell(source) => source.trusted_read_operands(f),
+            Self::ArgvIndex(index)
+            | Self::TableValue { index, .. }
+            | Self::TableKey { index, .. } => f(index),
+            Self::Literal(_)
+            | Self::Var(_)
+            | Self::Expr(_)
+            | Self::FuncCall { .. }
+            | Self::IntFuncCall { .. }
+            | Self::CmdSubst { .. }
+            | Self::CmdSubstBody { .. }
+            | Self::SlurpFile(_)
+            | Self::Concat(_)
+            | Self::ArithExpr { .. }
+            | Self::ArithBinOp { .. }
+            | Self::RegexReplace { .. }
+            | Self::RegexMatch { .. }
+            | Self::CaseConvert { .. }
+            | Self::StrLen { .. }
+            | Self::DefaultValue { .. }
+            | Self::RequireValue { .. }
+            | Self::ElideEmpty { .. }
+            | Self::Trusted { .. }
+            | Self::Substring { .. }
+            | Self::ParamExpansion { .. }
+            | Self::AssocArray(_)
+            | Self::IndexedArray(_)
+            | Self::ArraySplat { .. }
+            | Self::Subscript { .. }
+            | Self::Ternary { .. } => {
+                for value in self.child_values() {
+                    value.read_variables(f);
+                }
+            }
+        }
+    }
+
     /// Visit the lowered storage references, including those in nested values.
     /// Total over `SsaValue`; do not add a wildcard.
     pub(crate) fn map_variables(&mut self, f: &mut impl FnMut(&mut VarRef)) {
@@ -3359,6 +3492,8 @@ mod value_walk_tests {
                 index: var("key_index"),
             },
         ]);
+        let mut read = Vec::new();
+        value.read_variables(&mut |var| read.push(var.name.clone()));
         let mut visited = Vec::new();
         value.map_variables(&mut |v| {
             visited.push(v.name.clone());
@@ -3383,6 +3518,29 @@ mod value_walk_tests {
                 "key_index",
             ]
         );
+        assert_eq!(read, visited);
         value.map_variables(&mut |v| assert_eq!(v.version, 0));
+
+        let trusted_indices = SsaValue::Concat(
+            [
+                SsaValue::ArgvIndex(var("position")),
+                SsaValue::TableValue {
+                    array: var("values"),
+                    index: var("value_index"),
+                },
+                SsaValue::TableKey {
+                    array: var("keys"),
+                    index: var("key_index"),
+                },
+            ]
+            .into_iter()
+            .map(|source| SsaValue::Trusted {
+                source: Box::new(SsaValue::IntCell(Box::new(source))),
+            })
+            .collect(),
+        );
+        read.clear();
+        trusted_indices.read_variables(&mut |var| read.push(var.name.clone()));
+        assert_eq!(read, ["position", "value_index", "key_index"]);
     }
 }

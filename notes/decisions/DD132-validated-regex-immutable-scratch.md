@@ -291,9 +291,14 @@ caught scratch forms, regex permission expires at the lexical boundary,
 including on copies and helper arguments. This check is unconditional,
 including inspection modes and taint-disable switches.
 
-The broader caught-scratch ordinary-read restriction and unresolved-failure
-relaxation remain implementation work, as do the remaining caught forms,
-substitution booleans and `rglob`. The proof unit does not claim those
-semantics from its regex-only restrictions. The predicate and consumers
-still compile separately; no compiled handle, retained cache or runtime
-ABI was added. The construction spelling is settled in DD131.
+Caught-scratch ordinary-read permissions and unresolved-failure fall-through
+are implemented with SB5107 (journal 651), including negated and logical
+forms. Ordinary bindings and consts retain R2; eligible attest predicates,
+fresh instances, helpers, captures, children and independent handlers keep
+their own boundaries. `--no-taint` disables ordinary-read enforcement;
+`--no-taint-cst` does not. Signal deferral protects acquisition through the
+caught predicate, then releases on failure without cleaning the instance.
+
+Substitution booleans and `rglob` remain implementation work. The predicate
+and consumers still compile separately; no compiled handle, retained cache
+or runtime ABI was added. The construction spelling is settled in DD131.

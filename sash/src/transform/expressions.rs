@@ -70,7 +70,9 @@ pub(super) fn arg_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
 
 /// DD#69: `@{a:-WORD}` / `@{a:?WORD}` → the empty-disposition (operator
 /// `arrvals_default` / `arrvals_abort`; the WORD is the interpolating
-/// operand, absent for the bare `@{a:-}`). `None` for a plain `arrvals`.
+/// operand, absent for `@{a:~}`). A bare trusted list splice retains its trust
+/// modifier with the same zero-element empty result as an undispositioned splice.
+/// `None` for an unmodified `arrvals`.
 fn splat_disposition(
     pe: &ParameterExpansion,
     state: &VersionState,
@@ -81,6 +83,7 @@ fn splat_disposition(
     let abort = match pe.operator.as_deref() {
         Some("arrvals_default") => false,
         Some("arrvals_abort") => true,
+        Some("arrvals") if pe.taint_off => false,
         _ => return None,
     };
     let taint_off = pe.taint_off;

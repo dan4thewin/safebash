@@ -114,7 +114,7 @@ pub(crate) fn live_insts(block: &BasicBlock) -> &[SsaInst] {
     &block.insts[..end]
 }
 
-fn is_exit(inst: &SsaInst) -> bool {
+pub(crate) fn is_exit(inst: &SsaInst) -> bool {
     matches!(
         inst,
         SsaInst::Command {

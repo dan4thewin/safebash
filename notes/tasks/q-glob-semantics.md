@@ -72,8 +72,9 @@ and gated with SB5105 (journal 649), including with taint checking disabled.
 Mandatory immutable-value proofs now cover every existing consumer with
 SB5106 (journal 650), including collection presence, helper/process flow
 and the lexical boundary of currently caught scratch regex uses.
-`rglob`, general caught-scratch read permissions and failed-path relaxation,
-remaining caught forms and regex result channels remain implementation work;
+Caught-scratch ordinary reads and failed-path relaxation are now enforced
+with SB5107 (journal 651), including negated/logical forms and handler/signal
+boundaries. `rglob` and regex result channels remain implementation work;
 this owner stays open through the integrated trial and DG's evaluation.
 
 This is the **single integrated implementation/evaluation owner**, including
@@ -393,6 +394,10 @@ implementation boundary from
 pattern contract with a shared SSA analysis; no language rule or runtime
 representation is newly selected.
 
+The caught-scratch unit updates DD132's implementation boundary from
+`ebdf18bfac6f065f47b86b1f784f695918c0da0a`. It implements the recorded
+read/failure/signal contract without a new language rule or runtime ABI.
+
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
@@ -521,10 +526,29 @@ with 208 added and 40 deliberately retired mode IDs.
 The compiler/runtime/lock identities match the restored positive. This unit
 adds no runtime allocation or ABI, but a mutable builder now needs a fresh
 immutable candidate and validation before regex use, as the tour migration
-demonstrates. General caught ordinary-read permissions, failed fall-through,
-remaining caught forms, result channels, `rglob` and integrated migration/
-memory/time evaluation remain open. No main adoption or fresh coverage run
-is included.
+demonstrates. The caught ordinary-read/failure follow-up is recorded below;
+result channels, `rglob` and integrated migration/memory/time evaluation
+remain open. No main adoption or fresh coverage run is included.
+
+The caught-scratch unit follows `ebdf18bfac6f065f47b86b1f784f695918c0da0a`;
+[journal 651](../journal/651-caught-scratch-permissions.md) records SB5107,
+scratch-only unresolved fall-through, shared logical-attest lowering and
+actual EXIT/ERR inputs. Trusted bare splices retain their trust metadata.
+Fresh zero initialization no longer ends signal protection before acquisition;
+the caught predicate releases it on either outcome without cleaning failure.
+
+The finalized before compiler fails 48 new scratch assertions in native mode,
+49 in C, and both new signal assertions in each. All original 51 scratch and
+126 signal checks stay passing. Thirteen independent reversions are restored,
+with all 26 mode runs accounted for; the trusted-index mutation also reaches
+redirect targets through their normal scalar spills.
+
+The gate adds exactly 120 mode IDs, with no flips or retirements:
+12331 checks, 12318 passing and 13 existing skips, native 6277 and C 6054.
+All 12211 accepted proof-baseline statuses are unchanged. The unit adds no
+runtime allocation, retained state or dependency. Regex result channels,
+`rglob` and the integrated useful-program/helper/converter/memory evaluation
+remain, followed by DG's adoption decision.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 / DD#128 — signals and terminal handlers
 . common.sh
-plan=126
+plan=128
 setup signals
 
 set +e
@@ -982,6 +982,32 @@ ERR {
 }
 fail'
 [[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.40
+
+# Failed caught scratch releases the signal guard without cleaning the value.
+run_sash_under 'signal 15 EXIT
+str _x=$(echo bad; /bin/true)
+if attest _x [[ $_x == ok ]] { echo wrong } else {
+  /bin/true
+  echo delayed
+}
+EXIT { echo "${_x:!}" }' \
+    strace -qq -o scratch-scalar.log -e inject=write:signal=SIGTERM:when=1
+scalar_trace=$(<scratch-scalar.log)
+[[ $rc = 143 && $out = bad && -z $err && -z $rerr &&
+   $scalar_trace == *'write(1, "bad", 3)'* && $scalar_trace == *SIGTERM* ]]; chk scratchsig.1
+
+printf 'bad\0good\0' > scratch-input
+run_sash_under 'signal 15 EXIT
+read _a < scratch-input
+if attest v in _a [[ $v == good ]] { echo wrong } else {
+  /bin/true
+  echo delayed
+}
+EXIT { echo "${_a[0]:!}" }' \
+    strace -qq -o scratch-array.log -e inject=read:signal=SIGTERM:when=1
+array_trace=$(<scratch-array.log)
+[[ $rc = 143 && $out = bad && -z $err && -z $rerr &&
+   $array_trace == *'"bad\0good\0"'* && $array_trace == *SIGTERM* ]]; chk scratchsig.2
 
 set -e
 tally

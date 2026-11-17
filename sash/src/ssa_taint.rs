@@ -172,62 +172,23 @@ struct TerminalStates {
 #[derive(Clone, Default, PartialEq, Eq)]
 struct TerminalFlow {
     tainted: HashSet<String>,
-    armed: HashSet<i64>,
-    pending: bool,
+    signals: crate::signals::PendingSignals,
 }
 
 impl TerminalFlow {
     fn extend(&mut self, other: &Self) {
         self.tainted.extend(other.tainted.iter().cloned());
-        self.armed.extend(&other.armed);
-        self.pending |= other.pending;
+        self.signals.extend(&other.signals);
     }
 
-    fn receipt(&mut self) {
-        self.pending |= !self.armed.is_empty();
-    }
-
-    fn checkpoint(&mut self, deferred: bool, span: crate::ir::Span, result: &mut TerminalStates) {
-        self.receipt();
-        if deferred {
-            return;
-        }
-        if self.pending {
+    fn record_signal(&self, dispatch: bool, span: crate::ir::Span, result: &mut TerminalStates) {
+        if dispatch {
             result
                 .signals
                 .entry(span)
                 .or_default()
                 .extend(self.tainted.iter().cloned());
             result.exits.extend(self.tainted.iter().cloned());
-        }
-        // Continuing past a dispatch-enabled checkpoint means no request was pending.
-        self.pending = false;
-    }
-
-    fn disposition(&mut self, inst: &SsaInst) {
-        match inst {
-            SsaInst::Command {
-                kind: BuiltinCmd::SignalFlag,
-                args,
-                ..
-            } => {
-                let (signal, exiting) = BuiltinCmd::expect_signal_flag(args);
-                if exiting == 1 {
-                    self.armed.insert(signal);
-                } else {
-                    self.armed.remove(&signal);
-                }
-            }
-            SsaInst::Command {
-                kind: BuiltinCmd::TrapSignal,
-                args,
-                ..
-            } => {
-                let [signal, _] = BuiltinCmd::TrapSignal.expect_ssa_args(args);
-                self.armed
-                    .remove(&BuiltinCmd::TrapSignal.expect_literal_int(signal));
-            }
-            _ => {}
         }
     }
 
@@ -262,28 +223,6 @@ impl TerminalFlow {
                 pending.push_back(next);
             }
         }
-    }
-
-    fn before_instruction(
-        &mut self,
-        inst: &SsaInst,
-        span: crate::ir::Span,
-        deferred: bool,
-        result: &mut TerminalStates,
-    ) {
-        self.receipt();
-        if crate::signals::direct_polls(inst).0 {
-            self.checkpoint(deferred, span, result);
-        }
-        if let SsaInst::Command {
-            kind: BuiltinCmd::SignalCheckpoint,
-            args,
-            ..
-        } = inst
-        {
-            self.checkpoint(BuiltinCmd::signal_deferred(args), span, result);
-        }
-        self.disposition(inst);
     }
 
     fn record_definition(
@@ -325,11 +264,13 @@ impl TerminalFlow {
         result: &mut TerminalStates,
     ) -> bool {
         if let Some((span, deferred)) = poll {
-            self.before_instruction(inst, span, deferred, result);
+            let dispatch = self.signals.before(inst, deferred);
+            self.record_signal(dispatch, span, result);
         }
         self.record_definition(program, inst, view, result);
-        if let Some((span, deferred)) = poll.filter(|_| crate::signals::direct_polls(inst).1) {
-            self.checkpoint(deferred, span, result);
+        if let Some((span, deferred)) = poll {
+            let dispatch = self.signals.after(inst, deferred);
+            self.record_signal(dispatch, span, result);
         }
         !self.explicit_exit(inst, result)
     }
@@ -759,6 +700,9 @@ fn check_inst_uses(
             TaintRead::RedirectTarget(e) => {
                 check_redirect_target(e, taint, errors, &context, names)
             }
+            TaintRead::Binding(_) => {
+                unreachable!("binding-only reads require ordinary_reads, not taint_reads")
+            }
         }
     }
 }
@@ -796,7 +740,7 @@ fn check_redirect_target(
 /// `walk_expr_tree`'s callback takes its node under an anonymous lifetime.
 ///
 /// **Total over `ExprKind` on purpose — do not add a wildcard.**
-fn collect_expr_var_name(e: &crate::ir::Expr, out: &mut Vec<String>) {
+pub(crate) fn collect_expr_var_name(e: &crate::ir::Expr, out: &mut Vec<String>) {
     use crate::ir::ExprKind;
     match &e.kind {
         ExprKind::SimpleExpansion(name) => out.push(name.clone()),

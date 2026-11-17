@@ -6735,6 +6735,7 @@ fn taint_if(
             span,
             &paths,
             i.else_body.is_some(),
+            sx.scratch,
             diags,
         );
     }
@@ -6798,10 +6799,9 @@ fn condition_attest(cond: &[Statement]) -> Option<&Command> {
     let [only] = cond else {
         return None;
     };
-    match &only.kind {
-        StmtKind::Command(c) if expr_literal_str(&c.name) == "attest" => Some(c),
-        _ => None,
-    }
+    crate::ir::caught_attest(only)
+        .filter(|caught| !caught.negated)
+        .map(|caught| caught.command)
 }
 
 /// DD#121: every name an `attest` clears, across the DD#24 scalar, DD#61
@@ -6843,12 +6843,13 @@ fn check_caught_resolution(
     span: Span,
     paths: &[(Tainted, bool)],
     has_else: bool,
+    scratch: &crate::scratch::Bindings,
     diags: &mut Vec<Diagnostic>,
 ) {
     let Some(subject) = names.first() else {
         return;
     };
-    if !has_else {
+    if !has_else && !scratch.contains(subject) {
         diags.push(Diagnostic::error_span(
             span,
             "SB5089",
@@ -6862,6 +6863,7 @@ fn check_caught_resolution(
     }
     if let Some(n) = names
         .iter()
+        .filter(|n| !scratch.contains(n))
         .find(|n| paths.iter().any(|(out, falls)| *falls && out.contains(**n)))
     {
         diags.push(Diagnostic::error_span(span, "SB5089", unresolved_msg(n)));
@@ -6874,47 +6876,6 @@ fn unresolved_msg(n: &str) -> String {
          tainted. Resolve it there (`{n}=DEFAULT`) or leave the branch \
          (`exit` / `return` / `break` / `continue`)"
     )
-}
-
-/// DD#121 R2 for `&&` / `||`. `&&` has no failure branch at all, so it can
-/// never resolve the subject; `||`'s right operand is the failure branch and is
-/// held to the same rule as an `else`.
-fn check_list_caught_resolution(
-    l: &List,
-    span: Span,
-    right_out: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    let StmtKind::Command(c) = &l.left.kind else {
-        return;
-    };
-    let names = attest_clear_names(c);
-    let Some(subject) = names.first() else {
-        return;
-    };
-    match l.op {
-        ListOp::And => diags.push(Diagnostic::error_span(
-            span,
-            "SB5089",
-            format!(
-                "caught attest of '{subject}': `&&` has no failure branch, so on failure it \
-                 falls through with '{subject}' still tainted. Use \
-                 `attest … || {subject}=DEFAULT`, an `if attest` with an `else`, or a bare \
-                 `attest` followed by the command"
-            ),
-        )),
-        ListOp::Or => {
-            let falls = block_falls_through(std::slice::from_ref(l.right.as_ref()));
-            if falls && names.iter().any(|n| right_out.contains(*n)) {
-                diags.push(Diagnostic::error_span(
-                    span,
-                    "SB5089",
-                    unresolved_msg(subject),
-                ));
-            }
-        }
-        ListOp::Background => {}
-    }
 }
 
 /// DD#121: a `while` condition and body both run 0..n times, so the entry state
@@ -6978,6 +6939,20 @@ fn taint_list(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
+    if let Some((caught, _)) = l.caught_attest_if() {
+        taint_if(&caught, span, tainted, just, sx, diags);
+    } else {
+        taint_uncaught_list(l, tainted, just, sx, diags);
+    }
+}
+
+fn taint_uncaught_list(
+    l: &List,
+    tainted: &mut Tainted,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
     if matches!(l.op, ListOp::Background) {
         taint_discarded(&l.left, tainted, sx, diags);
         taint_block(
@@ -6997,42 +6972,23 @@ fn taint_list(
         sx,
         diags,
     );
-    // `&&` runs the right on success (the attest's removal stands); `||` runs
-    // it on failure (the subject is still tainted).
-    let mut failed_attests = sx.failed_attests.to_vec();
     let mut right = if matches!(l.op, ListOp::Or) {
-        failed_attests.extend(
-            condition_attest(std::slice::from_ref(l.left.as_ref()))
-                .and_then(attest_subject)
-                .map(str::to_string),
-        );
         let mut s = before;
         s.extend(tainted.clone());
         s
     } else {
         tainted.clone()
     };
-    let right_cx = SlotCx {
-        failed_attests: &failed_attests,
-        ..*sx
-    };
     taint_block(
         std::slice::from_ref(l.right.as_ref()),
         &mut right,
         &JustTainted::new(),
-        &right_cx,
+        sx,
         diags,
     );
-    check_list_caught_resolution(l, span, &right, diags);
     // DD#121 R2: the right operand is a branch like any other, so if it diverts
     // (`exit` / `return` / `break` / `continue`) its out-state never arrives at
     // the merge — the same rule `merge_paths` applies to a diverting `else`.
-    //
-    // Merging it unconditionally undid the exemption R2 explicitly grants ("A
-    // path that does not fall through … is exempt"). `check_list_caught_resolution`
-    // honoured it, correctly staying silent, and then this line put the subject
-    // back in the set, so the next read was SB5020. That rejected
-    // `attest x [[ … ]] || exit 1` — the very form the SB5089 text recommends.
     if block_falls_through(std::slice::from_ref(l.right.as_ref())) {
         tainted.extend(right);
     }

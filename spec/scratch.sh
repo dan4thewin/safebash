@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup scratch
-plan=51
+plan=109
 echo "1..$plan" >&3
 
 set +e
@@ -171,5 +171,182 @@ run_sash 'int n=2; while (( n > 0 )) { (( n -= 1 )); int map _m=([k]=$(( 7 / n )
 
 run_sash '_x+=one; echo "$_x"'
 [[ $rc != 0 && $err == *SB5103* && $err == *'`_x`'* ]]; chk scratch.51
+
+# DD132: failed immutable candidates survive, but the read permission does not.
+SCRATCH_INPUT=bad run_sash 'str _x=$(- getenv SCRATCH_INPUT); if attest _x [[ $_x == ok ]] { echo yes }; echo "${_x:!}"; echo done'
+[[ $rc = 0 && $out = $'bad\ndone' && -z $err && -z $rerr ]]; chk scratchperm.1
+
+run_sash 'str _x=ok; if attest _x p? { echo yes } else { fail 1 }; echo $_x'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.2
+
+run_sash 'str _x=bad; if attest _x [[ $_x == ok ]] { echo yes } else { echo $_x }'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.3
+
+run_sash 'str _x=bad; if attest _x [[ $_x == ok ]] { echo yes } else { echo ${_x:!} }; echo ${_x:!}; str _y=ok; if ! attest _y p? { fail 1 } else { echo $_y }'
+[[ $rc = 0 && $out = $'bad\nbad\nok' && -z $err && -z $rerr ]]; chk scratchperm.4
+
+run_sash 'str _x=ok; attest _x p? && echo $_x; echo done'
+[[ $rc = 0 && $out = $'ok\ndone' && -z $err && -z $rerr ]]; chk scratchperm.5
+
+SCRATCH_INPUT=bad run_sash 'str _x=$(- getenv SCRATCH_INPUT); attest _x [[ $_x == ok ]] && echo wrong; echo ${_x:!}'
+[[ $rc = 0 && $out = bad && -z $err && -z $rerr ]]; chk scratchperm.6
+
+run_sash 'str _x=bad; attest _x [[ $_x == ok ]] || echo $_x'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.7
+
+run_sash 'str _x=bad; if attest _x [[ $_x == ok ]] || /bin/false { echo yes } else { echo no }'
+[[ $rc = 0 && $out = no && -z $err && -z $rerr ]]; chk scratchperm.8
+
+run_sash 'str _x=ok; if attest _x p? && /bin/false { echo yes } else { echo no }'
+[[ $rc = 0 && $out = no && -z $err && -z $rerr ]]; chk scratchperm.9
+
+run_sash 'str _x=bad; ! attest _x [[ $_x == ok ]] && echo ${_x:!}; echo done'
+[[ $rc = 0 && $out = $'bad\ndone' && -z $err && -z $rerr ]]; chk scratchperm.10
+
+run_sash 'str _x=ok; ! attest _x p? || echo $_x; echo done'
+[[ $rc = 0 && $out = $'ok\ndone' && -z $err && -z $rerr ]]; chk scratchperm.11
+
+run_sash 'str _x=ok; if ! attest _x p? && /bin/true { echo wrong } else { echo false }; str _y=bad; if ! attest _y [[ $_y == ok ]] || /bin/false { echo true } else { echo wrong }'
+[[ $rc = 0 && $out = $'false\ntrue' && -z $err && -z $rerr ]]; chk scratchperm.12
+
+run_sash 'str _x=bad; attest _x [[ $_x == ok ]] || /bin/false; echo leaked'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk scratchperm.13
+
+run_sash 'str _x=ok; if attest _x p? && [[ $_x == ok ]] { echo $_x } else { echo no }'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.14
+
+# An attest elsewhere in a general condition is still implicitly checked.
+run_sash 'str _x=bad; if :; attest _x [[ $_x == ok ]] { echo yes } else { echo no }'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *"attest: _x = 'bad' failed the gate"* ]]; chk scratchperm.15
+
+run_sash 'str _x=bad; if /bin/true && attest _x [[ $_x == ok ]] { echo yes } else { echo no }'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *"attest: _x = 'bad' failed the gate"* ]]; chk scratchperm.16
+
+SASH_CFLAGS=--no-taint-cst run_sash 'str _x=bad; if attest _x [[ $_x == ok ]] { echo yes } else { echo $_x }'
+[[ $rc != 0 && $err == *SB5107* ]]; chk scratchperm.17
+
+SASH_CFLAGS=--no-taint run_sash 'str _x=bad; if attest _x [[ $_x == ok ]] { echo yes } else { echo $_x }; echo $_x'
+[[ $rc = 0 && $out = $'bad\nbad' && -z $err && -z $rerr ]]; chk scratchperm.18
+
+SCRATCH_INPUT=bad run_sash 'str x=$(- getenv SCRATCH_INPUT); if attest x p? { echo "$x" }; echo "${x:!}"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk scratchperm.19
+
+SCRATCH_INPUT=bad run_sash 'const x=$(- getenv SCRATCH_INPUT); if attest x p? { echo "$x" } else { echo "${x:!}" }'
+[[ $rc != 0 && $err == *SB5089* ]]; chk scratchperm.20
+
+SCRATCH_INPUT=bad run_sash 'str x=$(- getenv SCRATCH_INPUT); if attest x (( _n = x )) { echo "$_n" }; echo "${x:!}"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk scratchperm.21
+
+run_sash 'argv 1 _a; if attest v in _a g? { echo wrong } else { /bin/echo @{_a:!~} }; echo done' one 'two words'
+[[ $rc = 0 && $out = $'one two words\ndone' && -z $err && -z $rerr ]]; chk scratchperm.22
+
+run_sash 'map _m=([key]=bad); if attest k v in _m [[ $k == key && $v == ok ]] { echo yes } else { keys _m names; echo "$(join names)" }'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_m'"* ]]; chk scratchperm.23
+
+run_sash 'array _a=(ok); if attest v in _a p? { : } else { fail 1 }; array copy=(@_a); echo "${copy[0]}"'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_a'"* ]]; chk scratchperm.24
+
+run_sash 'array _a=(ok); if attest v in _a p? { : } else { fail 1 }; array copy=(@{_a:!}); echo "${copy[0]}"'
+[[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk scratchperm.25
+
+run_sash 'array _pairs=(key val); if attest v in _pairs p? { : }; map copy=@{_pairs:~}; echo "${copy[key]}"'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_pairs'"* ]]; chk scratchperm.26
+
+run_sash 'array _pairs=(key val); if attest v in _pairs p? { : }; map copy=@{_pairs:!~}; echo "${copy[key]}"'
+[[ $rc = 0 && $out = val && -z $err && -z $rerr ]]; chk scratchperm.27
+
+run_sash 'str _x=ok; if attest _x p? { : }; echo "$(strlen $_x)"'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.28
+
+run_sash 'str _x=ok; if attest _x p? { : }; echo "$(strlen ${_x:!})"'
+[[ $rc = 0 && $out = 2 && -z $err && -z $rerr ]]; chk scratchperm.29
+
+run_sash 'int _i=0; if attest _i [[ "$_i" == 0 ]] { : }; array a=(value); echo "${a[$_i]:!}"'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_i'"* ]]; chk scratchperm.30
+
+run_sash 'int _i=0; if attest _i [[ "$_i" == 0 ]] { : }; array a=(value); echo "${a[${_i:!}]:!}"'
+[[ $rc = 0 && $out = value && -z $err && -z $rerr ]]; chk scratchperm.31
+
+run_sash 'fn show { echo $_x }; str _x=ok; if attest _x p? { show }; show'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.32
+
+run_sash 'fn show { echo "${A[0]}" }; array _a=(ok); if attest v in _a p? { show =_a }; show =_a'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_a'"* ]]; chk scratchperm.33
+
+run_sash 'fn unused { echo okay }; array _a=(ok); if attest v in _a p? { : }; unused =_a'
+[[ $rc = 0 && $out = okay && -z $err && -z $rerr ]]; chk scratchperm.34
+
+run_sash 'str _x=ok; if attest _x p? { : }; text=$(echo $_x); echo "$text"'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.35
+
+run_sash 'str _x=ok; if attest _x p? { : }; echo $_x &; - wait'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.36
+
+run_sash 'str _x=ok; fn child { if attest _x p? { echo $_x } }; child &; - wait; echo $_x; EXIT { echo $_x }'
+[[ $rc = 0 && $out = $'ok\nok\nok' && -z $err && -z $rerr ]]; chk scratchperm.37
+
+run_sash 'for value in one two { _x=$value; echo "before:$_x"; if attest _x p? { echo "inside:$_x" }; echo "after:${_x:!}" }'
+[[ $rc = 0 && $out = $'before:one\ninside:one\nafter:one\nbefore:two\ninside:two\nafter:two' && -z $err && -z $rerr ]]; chk scratchperm.38
+
+run_sash 'fn f { str _x=$1; echo $_x; if attest _x p? { : } }; f one; f two'
+[[ $rc = 0 && $out = $'one\ntwo' && -z $err && -z $rerr ]]; chk scratchperm.39
+
+run_sash 'for value in one two { str _x=$value; if attest _x p? { : } else { continue }; echo $_x }'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.40
+
+run_sash 'str _x=ok; if attest _x p? { : }; EXIT { echo $_x }'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.41
+
+run_sash 'str _x=ok; if attest _x p? { : }; ERR { - echo $_x }'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.42
+
+SCRATCH_INPUT=bad run_sash 'str _x=$(- getenv SCRATCH_INPUT); if attest _x [[ $_x == ok ]] { : }; fail 7; ERR { - echo "${_x:!}" }'
+[[ $rc = 7 && $out = bad && -z $err && -z $rerr ]]; chk scratchperm.43
+
+SCRATCH_INPUT=bad run_sash 'str _x=$(- getenv SCRATCH_INPUT); if attest _x [[ $_x == ok ]] { : }; exit 7; EXIT { echo "${_x:!}" }'
+[[ $rc = 7 && $out = bad && -z $err && -z $rerr ]]; chk scratchperm.44
+
+run_sash 'str _x=ok; exit 0; if attest _x p? { : }; EXIT { echo $_x }'
+[[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk scratchperm.45
+
+run_sash 'for phase in check leave { _x=$phase; if [[ $phase == leave ]] { exit 0 }; if attest _x p? { : } }; fail 1; EXIT { echo $_x }'
+[[ $rc = 0 && $out = leave && -z $err && -z $rerr ]]; chk scratchperm.46
+
+run_sash 'str _x=ok; EXIT { if attest _x p? { fail 7 } else { fail 8 } }; ERR { - echo $_x }'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.47
+
+# Only the subject's eligible reads are exempt inside an attest predicate.
+run_sash 'str _x=ok; if attest _x p? { : }; str y=ok; attest y [[ $y == $_x ]]; echo "$y"'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_x'"* ]]; chk scratchperm.48
+
+SCRATCH_INPUT=bad run_sash 'str _x=$(- getenv SCRATCH_INPUT); attest _x [[ $_x == ok ]] && echo yes; attest _x p?; echo "${_x:!}"'
+[[ $rc != 0 && $err == *SB5088* ]]; chk scratchperm.49
+
+run_sash 'int _i=0; if attest _i [[ "$_i" == 0 ]] { : }; array paths=(/dev/null); fn send { echo data }; send >"${paths[$_i]:!?path}"'
+[[ $rc != 0 && $err == *SB5107* && $err == *"'_i'"* ]]; chk scratchperm.50
+
+run_sash 'int _i=0; if attest _i [[ "$_i" == 0 ]] { : }; array paths=(/dev/null); fn send { echo data }; send >"${paths[${_i:!}]:!?path}"; echo done'
+[[ $rc = 0 && $out = done && -z $err && -z $rerr ]]; chk scratchperm.51
+
+run_sash 'str _s=12; ! attest _s (( _n = _s )) || echo "$_s:$_n"; echo done'
+[[ $rc = 0 && $out = $'12:12\ndone' && -z $err && -z $rerr ]]; chk scratchperm.52
+
+run_sash 'str _s=bad; if attest _s (( _n = _s )) || /bin/false { echo yes } else { echo "${_s:!}:$_n" }'
+[[ $rc = 0 && $out = bad:0 && -z $err && -z $rerr ]]; chk scratchperm.53
+
+run_sash 'array _a=(ok); ! attest v in _a p? || echo "${_a[0]}"; echo done'
+[[ $rc = 0 && $out = $'ok\ndone' && -z $err && -z $rerr ]]; chk scratchperm.54
+
+run_sash 'array _a=(bad); if attest v in _a [[ $v == ok ]] || /bin/false { echo yes } else { echo no }'
+[[ $rc = 0 && $out = no && -z $err && -z $rerr ]]; chk scratchperm.55
+
+run_sash 'str _x=ok; if attest _x p? { : }; attest _x p?; echo $_x'
+[[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk scratchperm.56
+
+run_sash 'array _a=(); if attest v in _a p? { : }; array copy=(@{_a:!}); echo "$(len copy)"'
+[[ $rc = 0 && $out = 0 && -z $err && -z $rerr ]]; chk scratchperm.57
+
+run_sash 'write bad | read _a; if attest v in _a [[ $v == ok ]] { : }; array copy=(@{_a:!}); echo "${copy[0]}"'
+[[ $rc = 0 && $out = bad && -z $err && -z $rerr ]]; chk scratchperm.58
 
 tally

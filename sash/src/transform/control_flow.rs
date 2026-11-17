@@ -65,14 +65,77 @@ impl AttestKind {
         }
     }
 
-    /// The name the attest checks and then cleans, as written. The shared
-    /// builders resolve a DD#100 slot themselves.
+    /// The shared builders resolve a collection slot themselves.
     fn subject(&self) -> &str {
         match self {
             Self::Scalar(var) => var,
             Self::Coll { array, .. } => array,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum AttestUse {
+    Branch,
+    Logical {
+        right_on_success: bool,
+        negated: bool,
+        caught: bool,
+        is_or: bool,
+    },
+}
+
+impl AttestUse {
+    fn finish_arm(
+        self,
+        success: bool,
+        ssa: &mut SsaProgram,
+        state: &mut VersionState,
+        block: BlockId,
+    ) {
+        let Self::Logical {
+            right_on_success,
+            negated,
+            caught,
+            is_or,
+        } = self
+        else {
+            return;
+        };
+        if success == right_on_success {
+            super::statements::finish_list_right(is_or, caught, ssa, state, block);
+            return;
+        }
+        if negated {
+            ssa.block_mut(block).insts.push(SsaInst::internal(
+                BuiltinCmd::NegateTestResult,
+                vec![],
+                false,
+            ));
+        }
+    }
+}
+
+pub(super) fn lower_attest_list(
+    list: &List,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    let (mut branches, negated) = list.caught_attest_if()?;
+    let usage = AttestUse::Logical {
+        right_on_success: (list.op == ListOp::And) != negated,
+        negated,
+        caught: state.in_condition > 0 || state.suppressed > 0,
+        is_or: list.op == ListOp::Or,
+    };
+    // Both outcomes need a block: a skipped right operand still returns the
+    // left operand's result, including its source negation.
+    branches.else_body.get_or_insert_default();
+    let command = if_attest_condition(&branches).expect("caught list contains an attest");
+    Some(lower_if_attest(
+        &branches, command, usage, ssa, state, block,
+    ))
 }
 
 /// DD#93 Part D in the `if` position: `if attest SOURCE (( TARGET = SOURCE ))`.
@@ -85,6 +148,7 @@ impl AttestKind {
 #[allow(clippy::too_many_arguments)]
 fn lower_if_attest_convert(
     i: &If,
+    usage: AttestUse,
     source_name: &str,
     target_name: &str,
     value: &ArithExpr,
@@ -131,11 +195,13 @@ fn lower_if_attest_convert(
     );
 
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
+    usage.finish_arm(true, ssa, state, then_exit);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
 
     let then_state = state.snapshot();
     merge_attest_branches(
         i.else_body.as_deref(),
+        usage,
         source_name,
         ssa,
         state,
@@ -177,6 +243,7 @@ fn push_if_attest_condition(
 fn lower_if_attest(
     i: &If,
     c: &crate::ir::Command,
+    usage: AttestUse,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -203,7 +270,9 @@ fn lower_if_attest(
             let target = target.to_string();
             let value = value.clone();
             let span = c.args.last().map(|a| a.span).unwrap_or_default();
-            return lower_if_attest_convert(i, &var, &target, &value, span, ssa, state, block);
+            return lower_if_attest_convert(
+                i, usage, &var, &target, &value, span, ssa, state, block,
+            );
         }
         AttestPredicate::Test(test) => test.clone(),
     };
@@ -220,23 +289,15 @@ fn lower_if_attest(
     // Then branch: retag the attested entity clean (only reached on pass).
     push_attest_retag(ssa, state, then_block, kind.subject());
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
+    usage.finish_arm(true, ssa, state, then_exit);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
     let then_state = state.snapshot();
 
-    // Merge like any other two-branch construct. DD#121 R2 is what makes this
-    // safe *and* necessary: a caught attest "must leave its subject clean on
-    // every path that falls through to the merge", so a clean version always
-    // reaches here — from the then-branch's retag, from the else-branch's
-    // resolution, or from the one surviving path when the other diverts.
-    //
-    // An earlier version restored `pre_state` instead, on the stated premise
-    // that SB5089 left "no clean version to merge to". That reads R2 backwards:
-    // R2 is precisely the guarantee that there *is* one. It also did not do
-    // what it said — the restore only ran in the no-else case, so an `else`
-    // leaked its own version to the merge and code after the `if` read a
-    // version defined on exactly one path.
+    // Scratch may retain unresolved taint on the false edge. Merge the real
+    // reaching versions; lexical read permission is checked independently.
     merge_attest_branches(
         i.else_body.as_deref(),
+        usage,
         kind.subject(),
         ssa,
         state,
@@ -258,6 +319,7 @@ fn lower_if_attest(
 #[allow(clippy::too_many_arguments)]
 fn merge_attest_branches(
     else_body: Option<&[Statement]>,
+    usage: AttestUse,
     subject: &str,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
@@ -276,8 +338,7 @@ fn merge_attest_branches(
     };
 
     let Some(else_body) = else_body else {
-        // SB5089 rejects this shape, but `--no-taint` reaches it: merge the
-        // then-branch against the untaken fall-through edge from `block`.
+        // The omitted failure arm keeps the pre-attest value and taint.
         insert_phis_two_branch(
             state,
             ssa,
@@ -295,6 +356,7 @@ fn merge_attest_branches(
     state.failed_attests.push(subject);
     let else_exit = lower_stmts(else_body, ssa, state, else_block);
     state.failed_attests.pop();
+    usage.finish_arm(false, ssa, state, else_exit);
     ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
     let else_state = state.snapshot();
 
@@ -327,7 +389,9 @@ fn if_attest_condition(i: &If) -> Option<&Command> {
     let [cond] = i.condition.as_slice() else {
         return None;
     };
-    super::statements::attest_command(cond)
+    crate::ir::caught_attest(cond)
+        .filter(|caught| !caught.negated && caught.command.args.len() >= 2)
+        .map(|caught| caught.command)
 }
 
 pub(super) fn lower_if(
@@ -338,7 +402,7 @@ pub(super) fn lower_if(
 ) -> BlockId {
     // DD#24: detect if-attest conditional form
     if let Some(c) = if_attest_condition(i) {
-        return lower_if_attest(i, c, ssa, state, block);
+        return lower_if_attest(i, c, AttestUse::Branch, ssa, state, block);
     }
 
     // Lower condition into current block

@@ -384,7 +384,7 @@ fn transfer(
     }
     active.begin_resolution(node, guards);
     plan.deferred = active.deferred();
-    if let Some(name) = resolved_name(inst, program, classified) {
+    if let Some(name) = resolved_name(inst, graph.nodes[node].origin, program, classified) {
         active.resolve(name, guards);
     }
     plan
@@ -417,12 +417,19 @@ fn starting_guards(
 
 fn resolved_name<'a>(
     inst: Option<&'a SsaInst>,
-    program: &SsaProgram,
+    origin: Option<usize>,
+    program: &'a SsaProgram,
     classified: &Classification,
 ) -> Option<&'a str> {
     let inst = inst?;
     match inst {
+        // Fresh zero precedes acquisition; it does not finish the pending guard.
+        SsaInst::LifetimeStart { .. } => None,
         SsaInst::Attest { target, .. } | SsaInst::AttestRetag { target, .. } => Some(&target.name),
+        SsaInst::Test(_, TestOrigin::AttestPredicate)
+        | SsaInst::AttestAll { if_form: true, .. } => {
+            program.caught_scratch.get(&origin?).map(String::as_str)
+        }
         _ => instruction_target(inst)
             .filter(|target| program.resolutions.contains(*target) && !classified.tainted(target))
             .map(|target| target.name.as_str()),
@@ -488,5 +495,78 @@ pub(crate) fn direct_polls(inst: &SsaInst) -> (bool, bool) {
         } => (!args.is_empty(), false),
         SsaInst::PipelineFinish { .. } => (false, true),
         _ => (false, false),
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PendingSignals {
+    armed: HashSet<i64>,
+    pending: bool,
+}
+
+impl PendingSignals {
+    pub(crate) fn extend(&mut self, other: &Self) {
+        self.armed.extend(&other.armed);
+        self.pending |= other.pending;
+    }
+
+    fn receipt(&mut self) {
+        self.pending |= !self.armed.is_empty();
+    }
+
+    fn checkpoint(&mut self, deferred: bool) -> bool {
+        self.receipt();
+        if deferred {
+            return false;
+        }
+        let dispatch = self.pending;
+        self.pending = false;
+        dispatch
+    }
+
+    fn disposition(&mut self, inst: &SsaInst) {
+        match inst {
+            SsaInst::Command {
+                kind: BuiltinCmd::SignalFlag,
+                args,
+                ..
+            } => {
+                let (signal, exiting) = BuiltinCmd::expect_signal_flag(args);
+                if exiting == 1 {
+                    self.armed.insert(signal);
+                } else {
+                    self.armed.remove(&signal);
+                }
+            }
+            SsaInst::Command {
+                kind: BuiltinCmd::TrapSignal,
+                args,
+                ..
+            } => {
+                let [signal, _] = BuiltinCmd::TrapSignal.expect_ssa_args(args);
+                self.armed
+                    .remove(&BuiltinCmd::TrapSignal.expect_literal_int(signal));
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn before(&mut self, inst: &SsaInst, deferred: bool) -> bool {
+        self.receipt();
+        let dispatch = match inst {
+            SsaInst::Command {
+                kind: BuiltinCmd::SignalCheckpoint,
+                args,
+                ..
+            } => self.checkpoint(BuiltinCmd::signal_deferred(args)),
+            _ if direct_polls(inst).0 => self.checkpoint(deferred),
+            _ => false,
+        };
+        self.disposition(inst);
+        dispatch
+    }
+
+    pub(crate) fn after(&mut self, inst: &SsaInst, deferred: bool) -> bool {
+        direct_polls(inst).1 && self.checkpoint(deferred)
     }
 }

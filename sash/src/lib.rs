@@ -446,8 +446,12 @@ pub fn cli_main(args: Vec<String>) {
     let mut ssa = transform_or_exit(input, &bound, &names, type_map, &scratch);
     ssa.source_names = names.clone();
     reject_bound_diagnostics(input, &names, scratch::check_writes(&ssa, &scratch));
-    reject_bound_diagnostics(input, &names, regex_proof::check(&ssa));
     signals::prepare(&mut ssa, &taint_analysis.signal_pairs);
+    reject_bound_diagnostics(
+        input,
+        &names,
+        regex_proof::check(&ssa, !ssa_taint_disabled(&parsed.flags)),
+    );
     check_terminal_or_exit(input, &bound, &ssa, &taint_analysis, &parsed.flags, &names);
 
     // DD#86: more-specific semantic/type/transform errors win over SB5050.

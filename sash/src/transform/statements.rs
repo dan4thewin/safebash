@@ -63,7 +63,7 @@ fn source_attest_span(stmt: &Statement) -> Option<Span> {
         StmtKind::List(l) => l.left.as_ref(),
         _ => stmt,
     };
-    attest_command(candidate).map(|_| candidate.span)
+    crate::ir::caught_attest(candidate).map(|caught| caught.statement.span)
 }
 
 pub(super) fn restart_scratch(
@@ -957,73 +957,25 @@ fn track_collection_kind(name: &str, val: &SsaValue, state: &mut VersionState) {
     }
 }
 
-/// DD#24's `attest VAR [[ … ]]` command, if this statement is one.
-///
-/// Two callers ask the same question of different shapes — `is_attest_left`
-/// wants a yes/no for an `&&`/`||` operand, `lower_if` wants the `Command`
-/// back out of a one-statement condition — so the predicate lives here once.
-/// A second spelling of it is exactly how a fix lands on one copy and not
-/// the other.
-pub(super) fn attest_command(stmt: &Statement) -> Option<&Command> {
-    let StmtKind::Command(c) = &stmt.kind else {
-        return None;
-    };
-    (literal_name_of(&c.name) == "attest" && c.args.len() >= 2).then_some(c)
-}
-
-/// A `attest VAR [[ … ]]` command as an `&&`/`||` operand — detected so
-/// `lower_list_stmt` can route it through the if-attest catch machinery.
-fn is_attest_left(stmt: &Statement) -> bool {
-    attest_command(stmt).is_some()
-}
-
-/// DD#24/#47: a `attest` as the left operand of `&&`/`||` is a *caught* gate, not
-/// a bare abort — its pass/fail must feed the short-circuit exactly like `if
-/// attest`. Rewrite to the if-attest form so it reuses `lower_if_attest` (branch on
-/// the test, retag clean on pass):
-///   `attest V [[t]] || X`  →  `if attest V [[t]] { } else { X }`  (X on fail)
-///   `attest V [[t]] && X`  →  `if attest V [[t]] { X }`           (X on pass)
-/// Without this the attest lowers as the abort form and the `||` never catches it
-/// — it aborts on failure, and on *success* the branch reads a stale status and
-/// wrongly runs the right side (`attest … || v=dflt` gave the default even for
-/// valid input). The fallback is trusted, not re-validated (DG 2026-09-01).
-/// Returns `None` (fall through to the normal list lowering) unless the left is
-/// a attest and the op is `&&`/`||`.
-fn try_lower_attest_list(
-    l: &List,
+/// DD#55: a caught list consumes only its right operation's result, not an
+/// operand or inlined body's failures. Preserve that result for the consumer.
+/// At statement level, `a || b` instead resets status after its checked right
+/// side completes; otherwise the left failure could escape a successful guard.
+pub(super) fn finish_list_right(
+    is_or: bool,
+    caught: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
-) -> Option<BlockId> {
-    if !matches!(l.op, ListOp::And | ListOp::Or) || !is_attest_left(&l.left) {
-        return None;
+) {
+    if caught {
+        super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(block).insts);
     }
-    let cond = vec![l.left.as_ref().clone()];
-    let right = vec![l.right.as_ref().clone()];
-    let synth = if matches!(l.op, ListOp::Or) {
-        If {
-            condition: cond,
-            then_body: vec![],
-            elif_clauses: vec![],
-            else_body: Some(right),
-        }
-    } else {
-        If {
-            condition: cond,
-            then_body: right,
-            elif_clauses: vec![],
-            else_body: None,
-        }
-    };
-    Some(lower_if(&synth, ssa, state, block))
+    if is_or {
+        reset_or_status_at_top_level(caught, ssa, state, block);
+    }
 }
 
-/// DD#55: at top level, `a || b` is a guard — if the right side completes, the
-/// list "succeeded", so reset `$?` to 0 so the program doesn't exit with the
-/// left side's failure status. In a *caught* position (a condition, or the left
-/// of an enclosing `&&`/`||`) the aggregate's real status is the condition
-/// value — resetting it would make `if false || false` wrongly take the
-/// then-branch, so keep the right side's true status. No-op when caught.
 fn reset_or_status_at_top_level(
     caught: bool,
     ssa: &mut SsaProgram,
@@ -1047,7 +999,7 @@ fn lower_list_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    if let Some(done) = try_lower_attest_list(l, ssa, state, block) {
+    if let Some(done) = super::control_flow::lower_attest_list(l, ssa, state, block) {
         return done;
     }
     // DD#55: in a *caught* position — an `if`/`while` condition, or the left
@@ -1100,12 +1052,7 @@ fn lower_short_circuit(
     };
 
     let right_end = lower_one(&l.right, ssa, state, right_block);
-    if caught {
-        super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(right_end).insts);
-    }
-    if !is_and {
-        reset_or_status_at_top_level(caught, ssa, state, right_end);
-    }
+    finish_list_right(!is_and, caught, ssa, state, right_end);
     ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
     merge_block
 }

@@ -49,8 +49,10 @@ safebash source (.sb)
     lexical binding resolution
     semantic validation + type checking
     AST -> SSA, once, using CheckedTypes
-    scratch-write + immutable regex-proof checks (trial branch)
-    signal planning + terminal/entry checks + dead-variable checks
+    scratch-write checks (trial branch)
+    signal planning
+    immutable regex-proof + caught-scratch read checks (trial branch)
+    terminal/entry checks + dead-variable checks
         +-- --emit-ir / --manifest: inspection output
         `-- SSA taint verification
               +-- Cranelift -> object -> ld + sash-rt -> static ELF
@@ -152,9 +154,11 @@ The same SSA instructions feed both backends and the taint/handler analyses.
 
 Revisiting one construction site is allowed; skipped sites and zero-trip
 loop binders do not reset storage. This adds neither block scope nor automatic
-destruction at loop exit. General caught-attest read permissions and `rglob`
-remain subsequent trial work; the regex-specific proof boundary is described
-below.
+destruction at loop exit. A caught attest permits ordinary scratch reads only
+inside its success arm; failure and post-construct reads require explicit
+trust. The failed instance remains intact and unresolved, without an ordinary
+binding's requirement to replace it or leave the path. This does not relax
+adjacency, ownership or the separate regex-proof requirement described below.
 
 Ordinary array fillers now build private batches too. `CollectionPublish`
 carries the previous destination explicitly; the shared runtime prepares a
@@ -360,9 +364,22 @@ Inlined helper and capture control flow carries these facts without adding
 source-level regex types. Background/pipeline children inherit at their actual
 spawn point; independent handler roots inherit no main-path certificate.
 Caught scratch regex permission is limited to the successful lexical arm,
-including through copies. Ordinary caught-scratch read restrictions and
-failed-path relaxation are still pending, as are consumer result-kind changes
-and `rglob`. The pass adds no runtime storage or compiled-regex cache.
+including through copies. The same analysis enforces ordinary reads with
+SB5107, using the canonical instruction/value read inventory, including
+propagation and separately evaluated indices. Eligible attest-subject reads
+remain legal; other predicate operands receive no exemption. `--no-taint`
+disables ordinary-read enforcement, but `--no-taint-cst` does not; neither
+disables regex proofs.
+
+Logical and negated caught attests share positive-attest branch lowering.
+Only the consumed RHS result is unchecked; body and operand failures remain
+checked. Independent handlers receive restrictions from their actual incoming
+states, not success-arm permissions or regex certificates. The proof/read and
+SSA taint analyses share pending-signal tracking. Fresh zero initialization
+does not finish an acquisition guard; a caught scratch predicate finishes it
+on either outcome, without cleaning failed data or deferring signals forever.
+Consumer result-kind changes and `rglob` remain pending. These analyses add no
+runtime storage or compiled-regex cache.
 
 EXIT and ERR are private generated callbacks over real global storage,
 with their own locals and entry status. Selection is by cause:

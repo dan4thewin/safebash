@@ -1918,6 +1918,54 @@ pub struct List {
     pub right: Box<Statement>,
 }
 
+pub(crate) struct CaughtAttest<'a> {
+    pub statement: &'a Statement,
+    pub command: &'a Command,
+    pub negated: bool,
+}
+
+pub(crate) fn caught_attest(stmt: &Statement) -> Option<CaughtAttest<'_>> {
+    let (statement, negated) = match &stmt.kind {
+        StmtKind::Pipeline(p) if p.negated && p.commands.len() == 1 => (&p.commands[0], true),
+        _ => (stmt, false),
+    };
+    let StmtKind::Command(command) = &statement.kind else {
+        return None;
+    };
+    matches!(&command.name.kind, ExprKind::Literal(name) if name == "attest").then_some(
+        CaughtAttest {
+            statement,
+            command,
+            negated,
+        },
+    )
+}
+
+impl List {
+    pub(crate) fn caught_attest_if(&self) -> Option<(If, bool)> {
+        if self.op == ListOp::Background {
+            return None;
+        }
+        let caught = caught_attest(&self.left)?;
+        let right_on_success = (self.op == ListOp::And) != caught.negated;
+        let right = vec![self.right.as_ref().clone()];
+        let (then_body, else_body) = if right_on_success {
+            (right, None)
+        } else {
+            (vec![], Some(right))
+        };
+        Some((
+            If {
+                condition: vec![caught.statement.clone()],
+                then_body,
+                elif_clauses: vec![],
+                else_body,
+            },
+            caught.negated,
+        ))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListOp {
     And,        // &&

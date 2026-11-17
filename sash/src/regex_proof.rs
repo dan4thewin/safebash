@@ -1,8 +1,9 @@
-//! DD132: immutable runtime regex values need an all-reaching-path witness.
+//! DD132: immutable regex witnesses and lexical caught-scratch read permissions.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::diagnostic::Diagnostic;
+use crate::ir::HandlerKind;
 use crate::ssa::*;
 use crate::terminal::{live_insts, live_successors, origin_sites};
 
@@ -253,6 +254,7 @@ fn within(program: &SsaProgram, mut origin: Option<usize>, scope: usize) -> bool
 struct Flow {
     facts: Facts,
     outcomes: [Option<Facts>; 2],
+    signals: crate::signals::PendingSignals,
 }
 
 impl Flow {
@@ -260,6 +262,7 @@ impl Flow {
         Self {
             outcomes: [Some(facts.clone()), Some(facts.clone())],
             facts,
+            signals: crate::signals::PendingSignals::default(),
         }
     }
 
@@ -278,9 +281,12 @@ impl Flow {
     }
 
     fn meet(&self, other: &Self) -> Self {
+        let mut signals = self.signals.clone();
+        signals.extend(&other.signals);
         Self {
             facts: self.facts.meet(&other.facts),
             outcomes: std::array::from_fn(|i| meet_optional(&self.outcomes[i], &other.outcomes[i])),
+            signals,
         }
     }
 
@@ -290,6 +296,7 @@ impl Flow {
         };
         let facts = self.outcomes[usize::from(truth)].clone()?;
         let mut result = Self::new(facts);
+        result.signals = self.signals.clone();
         result.reset(Some(truth));
         Some(result)
     }
@@ -308,15 +315,33 @@ struct Checker<'a> {
     pending: VecDeque<BlockId>,
     diagnostics: Vec<Diagnostic>,
     reporting: bool,
+    check_reads: bool,
+    main_blocks: BTreeSet<BlockId>,
+    exit_blocks: BTreeSet<BlockId>,
 }
 
-pub(crate) fn check(program: &SsaProgram) -> Vec<Diagnostic> {
+pub(crate) fn check(program: &SsaProgram, check_reads: bool) -> Vec<Diagnostic> {
     let mut checker = Checker {
         program,
         inputs: BTreeMap::new(),
         pending: VecDeque::new(),
         diagnostics: Vec::new(),
         reporting: false,
+        check_reads,
+        main_blocks: program
+            .process_blocks(&[program.entry])
+            .into_iter()
+            .collect(),
+        exit_blocks: program
+            .handlers
+            .get(&HandlerKind::Exit)
+            .map(|handler| {
+                program
+                    .process_blocks(&[handler.block])
+                    .into_iter()
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
     for root in program.roots() {
         checker.enqueue(root, Flow::new(Facts::default()));
@@ -353,17 +378,94 @@ impl Checker<'_> {
         let mut flow = self.inputs[&id].clone();
         let mut origin = block.origin;
         flow.map(|facts| facts.at_origin(self.program, origin));
-        for inst in live_insts(block) {
-            if let SsaInst::SourceOrigin(next, _) = inst {
-                origin = *next;
-                flow.map(|facts| facts.at_origin(self.program, origin));
-            }
-            self.pipeline_children(inst, &flow, propagate);
-            self.instruction(inst, origin, &mut flow);
+        for (index, inst) in live_insts(block).iter().enumerate() {
+            self.instruction_at(block, index, inst, &mut origin, &mut flow, propagate);
         }
         if propagate {
+            self.block_completion(block, &flow.facts);
             self.successors(block, &flow);
         }
+    }
+
+    fn instruction_at(
+        &mut self,
+        block: &BasicBlock,
+        index: usize,
+        inst: &SsaInst,
+        origin: &mut Option<usize>,
+        flow: &mut Flow,
+        propagate: bool,
+    ) {
+        if let SsaInst::SourceOrigin(next, _) = inst {
+            *origin = *next;
+            flow.map(|facts| facts.at_origin(self.program, *origin));
+        }
+        let deferred = block.signal_deferred.contains(&index);
+        if propagate {
+            self.poll(block.id, inst, deferred, flow, true);
+        }
+        self.pipeline_children(inst, flow, propagate);
+        self.instruction(inst, *origin, flow);
+        if propagate {
+            self.poll(block.id, inst, deferred, flow, false);
+            self.terminal_inputs(block.id, inst, &flow.facts);
+        }
+    }
+
+    fn poll(&mut self, id: BlockId, inst: &SsaInst, deferred: bool, flow: &mut Flow, before: bool) {
+        if !self.main_blocks.contains(&id) {
+            return;
+        }
+        let dispatch = if before {
+            flow.signals.before(inst, deferred)
+        } else {
+            flow.signals.after(inst, deferred)
+        };
+        if dispatch {
+            self.handler_input(HandlerKind::Exit, &flow.facts);
+        }
+    }
+
+    fn terminal_inputs(&mut self, id: BlockId, inst: &SsaInst, facts: &Facts) {
+        let main = self.main_blocks.contains(&id);
+        if main
+            && matches!(
+                inst,
+                SsaInst::Command {
+                    kind: BuiltinCmd::Exit,
+                    ..
+                }
+            )
+        {
+            self.handler_input(HandlerKind::Exit, facts);
+        }
+        if main || self.exit_blocks.contains(&id) {
+            self.handler_input(HandlerKind::Err, facts);
+        }
+    }
+
+    fn block_completion(&mut self, block: &BasicBlock, facts: &Facts) {
+        if self.main_blocks.contains(&block.id)
+            && matches!(block.terminator, Terminator::Return)
+            && !live_insts(block).iter().any(crate::terminal::is_exit)
+        {
+            self.handler_input(HandlerKind::Exit, facts);
+        }
+    }
+
+    fn handler_input(&mut self, kind: HandlerKind, facts: &Facts) {
+        let Some(handler) = self.program.handlers.get(&kind) else {
+            return;
+        };
+        let mut incoming = Facts::default();
+        for name in facts.permissions.keys() {
+            if self.program.globals.contains_key(name) {
+                incoming
+                    .permissions
+                    .insert(name.clone(), Permission::Blocked);
+            }
+        }
+        self.enqueue(handler.block, Flow::new(incoming));
     }
 
     fn pipeline_children(&mut self, inst: &SsaInst, flow: &Flow, propagate: bool) {
@@ -401,6 +503,9 @@ impl Checker<'_> {
     }
 
     fn instruction(&mut self, inst: &SsaInst, origin: Option<usize>, flow: &mut Flow) {
+        if self.reporting && self.check_reads && !flow.facts.permissions.is_empty() {
+            self.instruction_reads(inst, origin, &flow.facts);
+        }
         self.instruction_patterns(inst, origin, &flow.facts);
         match inst {
             SsaInst::Test(test, test_origin) => {
@@ -567,7 +672,8 @@ impl Checker<'_> {
         }
         self.collection_witnesses(source, binders, is_map, &checked, &mut yes);
         if !if_form {
-            *flow = Flow::new(yes);
+            flow.facts = yes;
+            flow.reset(None);
             return;
         }
         let mut no = flow.facts.clone();
@@ -793,6 +899,52 @@ impl Checker<'_> {
         }
     }
 
+    fn instruction_reads(&mut self, inst: &SsaInst, origin: Option<usize>, facts: &Facts) {
+        let subject = match inst {
+            SsaInst::Attest { source, .. } | SsaInst::AttestAll { source, .. } => {
+                Some(source.name.as_str())
+            }
+            SsaInst::Test(_, TestOrigin::AttestPredicate) => origin
+                .and_then(|id| self.program.caught_scratch.get(&id))
+                .map(String::as_str),
+            _ => None,
+        };
+        let mut names = BTreeSet::new();
+        for (read, _) in inst.ordinary_reads() {
+            names.extend(read_names(read));
+        }
+        for name in names {
+            self.restricted_read(&name, subject, origin, facts);
+        }
+    }
+
+    fn restricted_read(
+        &mut self,
+        name: &str,
+        subject: Option<&str>,
+        origin: Option<usize>,
+        facts: &Facts,
+    ) {
+        if subject == Some(name)
+            || !matches!(facts.permissions.get(name), Some(Permission::Blocked))
+        {
+            return;
+        }
+        let (site, call) = origin_sites(self.program, origin);
+        let diagnostic = Diagnostic::error_span(
+            call,
+            "SB5107",
+            format!(
+                "scratch '{name}' read at {}:{} is outside its caught attest-success arm; \
+                 use an explicit :! read for ordinary data",
+                site.line, site.col
+            ),
+        );
+        if !self.diagnostics.contains(&diagnostic) {
+            self.diagnostics.push(diagnostic);
+        }
+    }
+
     fn instruction_patterns(&mut self, inst: &SsaInst, origin: Option<usize>, facts: &Facts) {
         match inst {
             SsaInst::Test(..) | SsaInst::Attest { .. } | SsaInst::AttestAll { .. } => return,
@@ -846,6 +998,22 @@ impl Checker<'_> {
             self.diagnostics.push(diagnostic);
         }
     }
+}
+
+fn read_names(read: TaintRead<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+    match read {
+        TaintRead::Value(value) => {
+            value.read_variables(&mut |var| names.push(var.name.clone()));
+        }
+        TaintRead::Binding(name) => names.push(name.to_string()),
+        TaintRead::RedirectTarget(expr) => {
+            crate::ir::walk_expr_tree(expr, &mut |node| {
+                crate::ssa_taint::collect_expr_var_name(node, &mut names);
+            });
+        }
+    }
+    names
 }
 
 fn place_of(value: &SsaValue, trusted_candidate: bool) -> Option<Place> {

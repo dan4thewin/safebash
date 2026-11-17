@@ -788,32 +788,21 @@ fn take_negated_attest(condition: &mut [Statement]) -> bool {
     let [stmt] = condition else {
         return false;
     };
-    let StmtKind::Pipeline(p) = &mut stmt.kind else {
+    let Some(caught) = crate::ir::caught_attest(stmt) else {
         return false;
     };
-    if !p.negated {
+    if !caught.negated {
         return false;
     }
-    let is_attest = matches!(p.commands.as_slice(),
-        [stage] if matches!(&stage.kind,
-            StmtKind::Command(c) if matches!(&c.name.kind, ExprKind::Literal(n) if n == "attest")));
-    if !is_attest {
-        return false;
-    }
-    // `is_attest` matched a one-element slice, so index 0 exists.
-    *stmt = p.commands.remove(0);
+    *stmt = caught.statement.clone();
     true
 }
 
 /// DD#121: rewrite `if ! attest … { A } else { B }` into the equivalent
 /// `if attest … { B } else { A }`.
 ///
-/// DD#121 names three caught forms — `if attest`, `attest && CMD`,
-/// `attest || CMD` — and the negated spelling is none of them. Rather than
-/// teach the R2 resolution check and the SSA merge to carry a polarity (two
-/// places whose "resolve" and "divert" arms would have to invert in step, and
-/// silently disagree if they ever drifted), the polarity is removed here and
-/// no negated caught attest ever reaches the analysis.
+/// The branches remain expressed in attest-success order, as in the shared
+/// normalization of caught logical lists.
 ///
 /// The swap is only valid once the elif chain is accounted for: the chain
 /// hangs off the *unnegated* condition's false arm, so
