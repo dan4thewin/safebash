@@ -69,7 +69,6 @@ eval $cmd # rejected
 
 ```text
 snippet.sh:2:1: error [SB4001] `eval` is rejected — sash forbids dynamic command execution; a program's behavior is fixed at compile time and there is no runtime interpreter to run constructed code
-snippet.sh:2:1: error [SB5011] command 'eval' not found — use absolute path or define as function
 ```
 
 

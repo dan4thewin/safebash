@@ -1690,7 +1690,6 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     if check_heredoc(name, c, span, diags) {
         return;
     }
-    check_dynexec(name, span, diags);
     check_trap(name, span, diags);
     check_signal(name, c, span, diags);
     check_test_constructs(name, c, span, diags);
@@ -1795,7 +1794,7 @@ fn check_heredoc(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic
 }
 
 /// SB4001: reject dynamic-execution builtins.
-fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) -> bool {
     if name == "eval" || name == "source" || name == "." || name == "command" {
         diags.push(Diagnostic::error_span(
             span,
@@ -1812,7 +1811,10 @@ fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
             "SB4001",
             "sash has no `coproc` — asynchronous coprocesses are outside its model".to_string(),
         ));
+    } else {
+        return false;
     }
+    true
 }
 
 /// SB4043 (DD#56): `trap` is not part of native sash. The signal model is the
@@ -4204,6 +4206,9 @@ fn check_command_head(
     pos: CmdPos,
     diags: &mut Vec<Diagnostic>,
 ) {
+    if check_dynexec(name, stmt.span, diags) {
+        return;
+    }
     match name {
         // DD#14: `exec` replaces the running program (or manipulates its fds).
         // Its target — the first argument, for the replace form — must be

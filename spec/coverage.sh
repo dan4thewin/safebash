@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=372
+plan=374
 echo "1..$plan" >&3
 
 set +e
@@ -46,7 +46,8 @@ run_sash 'array a=(); a[0]=$(getenv HOME)'
 # from the parser's removed-builtin table; that table is gone and SB4001 from
 # validate::check_dynexec — which always fired too — is now the only answer.)
 run_sash 'source f'
-[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.11
+[[ $rc != 0 && -z $out && $err == *SB4001* &&
+   $(grep -cE 'error \[SB[0-9]{4}\]' <<< "$err") = 1 ]]; chk cov.11
 # cov.12 indirect expansion `${!x}` is rejected → SB4003
 run_sash 'x=y; echo ${!x}'
 [[ $rc != 0 && -z $out && $err == *SB4003* ]]; chk cov.12
@@ -104,7 +105,8 @@ run_sash 'echo "$(argv)"'
 [[ $rc != 0 && -z $out && $err == *SB5026* ]]; chk cov.21
 # cov.22 `eval` (dynamic execution) is rejected → SB4001
 run_sash 'eval "echo hi"'
-[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.22
+[[ $rc != 0 && -z $out && $err == *SB4001* &&
+   $(grep -cE 'error \[SB[0-9]{4}\]' <<< "$err") = 1 ]]; chk cov.22
 # cov.23 a prefix `++`/`--` in `(( ))` is an arith syntax error → SB4020
 run_sash 'int x=0; (( ++x ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.23
@@ -226,7 +228,8 @@ run_sash 'int x=0; echo $(( x>0 ? 10/x : 42 ))'
 # check_dynexec), same class as eval/source. Pins the removal of the dead
 # emit_command_builtin codegen (validation shadows it).
 run_sash 'command /bin/echo hi'
-[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.58
+[[ $rc != 0 && -z $out && $err == *SB4001* &&
+   $(grep -cE 'error \[SB[0-9]{4}\]' <<< "$err") = 1 ]]; chk cov.58
 # cov.59 the `$(< file)` slurp form (parse/expr.rs parse_slurp_form) parses,
 # then reads a file → tainted → SB5020 (no feature spec uses `$(< …)`; the
 # other `$(<…)` in the tree are bash harness code, not sash source).
@@ -425,7 +428,8 @@ run_sash 'eval x'
 
 # cov.99 `.` is still rejected too
 run_sash '. f'
-[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.99
+[[ $rc != 0 && -z $out && $err == *SB4001* &&
+   $(grep -cE 'error \[SB[0-9]{4}\]' <<< "$err") = 1 ]]; chk cov.99
 
 # cov.100 `eval` is a reject, not a reserved word: it cannot be redefined away
 run_sash 'eval() {
@@ -1930,6 +1934,21 @@ run_sash 'echo "abc$'
 run_sash 'str s=abc
 echo ${s:s/a/b'
 [[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk cov.374
+
+# Rejected heads stay single diagnostics in function and capture bodies.
+run_sash 'fn f { - eval "echo hi" >/dev/null }
+echo $(coproc /bin/echo hi)'
+[[ $rc != 0 && -z $out && $err == *SB4001* &&
+   $err == *'`eval` is rejected'* && $err == *'asynchronous coprocesses'* &&
+   $(grep -cE 'error \[SB[0-9]{4}\]' <<< "$err") = 2 ]]; chk rejecthead.1
+
+# Only the rejected head skips lookup; independent missing commands still report.
+run_sash 'eval $(sash_missing_rejecthead_arg)
+sash_missing_rejecthead_sibling'
+[[ $rc != 0 && -z $out && $err == *SB4001* &&
+   $err == *"command 'sash_missing_rejecthead_arg' not found"* &&
+   $err == *"command 'sash_missing_rejecthead_sibling' not found"* &&
+   $(grep -cE 'error \[SB[0-9]{4}\]' <<< "$err") = 3 ]]; chk rejecthead.2
 
 set -e
 tally
