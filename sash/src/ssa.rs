@@ -2427,12 +2427,13 @@ impl VersionState {
     /// rejects every statement that writes one, and SB5072 keeps one out of
     /// the bodies lowered more than once, so a second definition means
     /// lowering bound the name twice by itself — and the const would silently
-    /// gain a second value. Merge phis use [`Self::define_merge`].
+    /// gain a second value. Merge phis use [`Self::define_merge`], and
+    /// value-preserving validation uses [`Self::define_attested`].
     pub fn define(&mut self, name: &str) -> VarRef {
         if self.readonly_vars.contains(name) && self.current.contains_key(name) {
             panic!(
                 "readonly `{name}` defined twice in lowering; validate's SB4044 rejects \
-                 every write to a const, so a second version would change one"
+                 every write to a const, so another value definition would change one"
             );
         }
         let previous = self.lookup(name);
@@ -2458,6 +2459,11 @@ impl VersionState {
         self.taint_predecessors.remove(&target);
         self.resolutions.insert(target.clone());
         target
+    }
+
+    /// An attest's passing version aliases unchanged storage, even for a const.
+    pub(crate) fn define_attested(&mut self, name: &str) -> VarRef {
+        self.next_version(name)
     }
 
     /// Define the version a phi joins at a merge. Each version it joins was
@@ -2768,14 +2774,23 @@ mod api_contract_tests {
     }
 
     /// No source program can reach this: SB4044 rejects every write to a
-    /// const. The panic is the claim that lowering never binds one twice.
+    /// const. Validation must not weaken that invariant.
     #[test]
-    #[should_panic(expected = "readonly `k` defined twice in lowering; validate's SB4044")]
     fn defining_a_const_twice_is_an_invariant_failure() {
         let mut state = VersionState::with_types(HashMap::new());
         state.define("k");
         state.readonly_vars.insert("k".to_string());
-        state.define("k");
+        for attest in [false, true] {
+            if attest {
+                state.define_attested("k");
+            }
+            let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| state.define("k")))
+                .expect_err("a real write must still reject after validation");
+            assert!(err
+                .downcast_ref::<String>()
+                .expect("formatted const-write invariant")
+                .contains("readonly `k` defined twice in lowering; validate's SB4044"));
+        }
     }
 }
 

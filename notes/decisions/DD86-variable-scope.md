@@ -93,8 +93,10 @@ DD131's separate-branch trial now gives scalar and collection scratch
 constructions fresh **immutable instances**. The same source site may
 execute again, beginning a new lifetime without the preceding value or
 proof; arbitrary writes and second declaration sites remain forbidden.
-The leading-underscore notation is provisional, with the exact scalar
-declaration spelling still to be finalized.
+The trial uses a leading underscore alone at introduction, without requiring
+`const` (DG, 2026-11-17). Typed declarations still do not become DD88
+capture-conditions. An initializer cannot read its own scratch target,
+directly or through a helper.
 
 Positional visibility and no shadowing remain. Freshness at construction
 does not create block scope, reconstruct a skipped site, or imply
@@ -192,11 +194,11 @@ proof (DD132). The provisional scratch exception above is separate.
 Signal deferral and EXIT/ERR entry requirements continue to follow the
 actual legal resolution.
 
-**Enforcement is pending** in `q-attest-retag-of-const`. The current
-compiler still rejects the retag with SB4044. This supersedes F13's
-retained retag rejection, not its real-write checks. No new declaration
-syntax, diagnostic code or lowering architecture is selected. Journal 602
-records the ruling and the implementation boundary.
+**Implemented on `glob-scratch-trial` (2026-11-17).** Value-preserving
+attests use a distinct SSA validation-version path; real writes retain
+SB4044 and the lowering invariant. This supersedes F13's retained retag
+rejection, not its write checks, and adds no declaration syntax or diagnostic
+code. Journal 602 records the ruling; journal 644 records delivery.
 
 ## Readonly ERR imports (DG, 2026-11-14)
 
@@ -900,8 +902,8 @@ the then-enumerated binding channels, and the backstop becomes an invariant.
 every actual write to a const other than its initialization: an assignment,
 a `for` variable, a `(( ))` write, a command out-param (`readline`, `read`,
 `argv`, ~~`mapfile`,~~ a `keys` or `match` fill), and DD#93's conversion target.
-An attest's value-preserving retag of its subject is allowed; removing the
-current rejection is queued in `q-attest-retag-of-const`. Every real write is
+An attest's value-preserving retag of its subject is allowed, implemented on
+`glob-scratch-trial` in journal 644. Every real write is
 reported, each at the innermost statement that makes it, whether that comes
 before or after the declaration in the text (a binding does not depend on
 textual order, above). Two channels stay with
@@ -923,8 +925,9 @@ first. Both merge sites, a two-way branch's phis and a dispatch's, use
 `define_merge`; a function's template runs its self tail call as a loop; a
 captured function owns its tail loop (batch-531 B58); and the suppressed tail
 specialization restarts from the readonly set its body was entered with.
-The queued retag change must distinguish validation versions without
-weakening this guard against real writes or making the binding mutable.
+Standalone scalar attests, conversion sources and caught retags use
+`define_attested`, which creates only a validation version. Constness stays
+set; the invariant test also rejects a real write after that retag.
 
 **Decide-and-report.**
 

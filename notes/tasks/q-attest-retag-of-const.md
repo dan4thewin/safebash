@@ -1,5 +1,5 @@
 title: "Allow validation of const values without permitting writes"
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
@@ -54,14 +54,31 @@ work as a prerequisite. Do not silently extend scratch lifetimes or
 failed-attest permission to ordinary consts, or treat successful taint
 validation alone as regex proof.
 
-The policy question is closed; **implementation remains open** here,
-with the existing slug and P3 priority. DD24/DD35/DD93/DD128, GUIDE and
-journal 602 agree. DG did not select either retaining the retag refusal
+**Implemented on `glob-scratch-trial`, 2026-11-17** (journal 644).
+The independently accepted policy is complete; main has not yet moved to
+the trial branch. DG did not select either retaining the retag refusal
 or banning tainted const initializers.
 
-## Implementation boundary
+## Delivery
 
-Source inspection at `59489a40` confirms the current mechanisms:
+The validator now enumerates real writes separately from validation.
+Attest identity accesses remain in DD100's strict global footprint.
+`VersionState::define_attested` supplies a value-preserving version for
+standalone scalar predicates, conversion sources and the shared caught
+retag. Actual writes, including conversion targets, still use `define`;
+no production path temporarily drops constness.
+
+`constval.1`-`.17` cover both modes, retiring only the obsolete `constw.4`
+rejection. All seventeen fail on the ordinary before compiler; all 487
+types checks pass afterward. Independent frontend, standalone, conversion,
+caught-retag and readonly-retention reversions are recorded in journal 644,
+with every stub restored. The ordinary gate passes at rows
+7028525-7040187: 11663 checks, 34 first-ever mode IDs, two intended
+retirements, no failures or flips. All 11629 retained statuses are unchanged.
+
+## Pre-implementation boundary
+
+Source inspection at `59489a40` confirmed the old mechanisms:
 
 - `check_const_writes` (`sash/src/validate.rs:134-144`) checks the names
   enumerated by `stmt_bound_names`. Its command arm includes

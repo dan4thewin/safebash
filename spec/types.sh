@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=471
+plan=487
 echo "1..$plan" >&3
 
 set +e
@@ -363,7 +363,7 @@ run_sash 'const x=1; readline x'
 run_sash 'const x=1; echo $x'
 [[ $rc = 0 && $out = 1 && -z $err ]]; chk 35.9
 
-# constw.1-constw.8: every channel that writes a const is SB4044 at the
+# Every channel that writes a const is SB4044 at the
 # writing statement (batch-531 F13). Validate used to enumerate only some
 # channels and walk in textual order; the rest reached a lowering backstop
 # that reported 1:1, or nothing caught them at all (constw.8).
@@ -390,11 +390,12 @@ for i in a b {
 }'
 [[ $rc != 0 && -z $out && $err == *':2:1: error [SB4044]'* ]]; chk constw.3
 
-# constw.4 an attest retags its subject, which is a write
-run_sash 'const h=$(getenv HOME)
-attest h [[ $h =~ ^/ ]]
+# DD86: validating unchanged bytes is not a write (retires constw.4).
+export CONST_VALUE=007 CONST_BAD=bad
+run_sash 'const h=$(getenv CONST_VALUE)
+attest h [[ $h =~ ^[0-9]+$ ]]
 echo "$h"'
-[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4044]'* ]]; chk constw.4
+[[ $rc = 0 && $out = 007 && -z $err && -z $rerr ]]; chk constval.1
 
 # constw.5 an attest conversion's target
 run_sash 'const n=1
@@ -568,6 +569,125 @@ run_sash 'x=zzz
    || { const y=1; echo "c$y"; } ]]
 echo done'
 [[ $rc = 0 && $out = $'c1\ndone' && -z $err ]]; chk constw.21
+
+# Const validation also accepts clean subjects and shorthand predicates.
+run_sash 'const text=abc
+attest text p?
+echo "$text"'
+[[ $rc = 0 && $out = abc && -z $err && -z $rerr ]]; chk constval.2
+
+# Conversion validates the source without changing its bytes or string type.
+run_sash 'const text=$(getenv CONST_VALUE)
+attest text (( number = text ))
+echo "$text:$number"
+echo "$(strlen "$text")"'
+[[ $rc = 0 && $out = $'007:7\n3' && -z $err && -z $rerr ]]; chk constval.3
+
+# A terminating failure arm permits the ordinary const's successful merge.
+run_sash 'const text=$(getenv CONST_VALUE)
+if attest text [[ $text == 007 ]] {
+  echo "ok:$text"
+} else { exit 8 }
+echo "after:$text"'
+[[ $rc = 0 && $out = $'ok:007\nafter:007' && -z $err && -z $rerr ]]; chk constval.4
+
+# Negation swaps the successful conversion arm, not the source's constness.
+run_sash 'const text=$(getenv CONST_VALUE)
+if ! attest text (( number = text )) { exit 8 } else {
+  (( number += 1 ))
+  echo "$text:$number"
+}
+echo "$text"'
+[[ $rc = 0 && $out = $'007:8\n007' && -z $err && -z $rerr ]]; chk constval.5
+
+run_sash 'const text=$(getenv CONST_VALUE)
+attest text i? || exit 9
+echo "$text"'
+[[ $rc = 0 && $out = 007 && -z $err && -z $rerr ]]; chk constval.6
+
+# Retags do not stop ordinary body entry or self-tail entry constructing a const.
+run_sash 'fn again {
+  const text=$1
+  attest text -n
+  echo "$text"
+  if [[ $text != xx ]] { return again "${text}x" }
+}
+again x
+again xx'
+[[ $rc = 0 && $out = $'x\nxx\nxx' && -z $err && -z $rerr ]]; chk constval.7
+
+# Sibling captures retain distinct lexical const identities.
+run_sash 'first=$(const text=$(getenv CONST_VALUE); attest text i?; echo "$text")
+attest first i?
+second=$(const text=$(getenv CONST_VALUE); attest text -n; echo "$text")
+attest second i?
+echo "$first:$second"'
+[[ $rc = 0 && $out = 007:007 && -z $err && -z $rerr ]]; chk constval.8
+
+run_sash 'const text=$(getenv CONST_BAD)
+attest text i?
+echo "$text"'
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"attest: text = 'bad' failed the gate"* ]]; chk constval.9
+
+# Failed validation preserves the candidate and still requires a trusted read.
+run_sash 'const text=$(getenv CONST_BAD)
+if attest text i? { echo "good:$text" } else {
+  echo "rejected:${text:!}"
+  exit 6
+}'
+[[ $rc = 6 && $out = rejected:bad && -z $err && -z $rerr ]]; chk constval.10
+
+# Only the actual write is SB4044, not the preceding value-preserving attest.
+run_sash 'const text=$(getenv CONST_VALUE)
+attest text i?
+text=changed
+echo "$text"'
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB4044]'*
+   && $err != *':2:1: error [SB4044]'* ]]; chk constval.11
+
+# A conversion's const source is legal; its const target is still a real write.
+run_sash 'const number=0
+const text=$(getenv CONST_VALUE)
+attest text (( number = text ))
+echo "$text:$number"'
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB4044]'*
+   && $(printf '%s\n' "$err" | grep -cF '[SB4044]') = 1 ]]; chk constval.12
+
+run_sash 'const text=$(getenv CONST_BAD)
+if attest text i? {
+  echo "$text"
+} else {
+  text=0
+}
+echo "$text"'
+[[ $rc != 0 && -z $out && $err == *':5:3: error [SB4044]'*
+   && $err != *':2:4: error [SB4044]'* ]]; chk constval.13
+
+# Constness supplies neither adjacency nor permission to attest received taint.
+run_sash 'const text=$(getenv CONST_VALUE)
+echo intervening
+attest text i?
+echo "$text"'
+[[ $rc != 0 && -z $out && $err == *SB5088* && $err != *SB4044* ]]; chk constval.14
+
+run_sash 'fn check { attest text i? }
+const text=$(getenv CONST_VALUE)
+check
+echo "$text"'
+[[ $rc != 0 && -z $out && $err == *SB5088* && $err != *SB4044* ]]; chk constval.15
+
+# Ordinary consts do not acquire scratch's unresolved-fall-through exception.
+run_sash 'const text=$(getenv CONST_VALUE)
+if attest text i? { echo "$text" }'
+[[ $rc != 0 && -z $out && $err == *SB5089* && $err != *SB4044* ]]; chk constval.16
+
+run_sash 'const text=$(getenv CONST_BAD)
+if attest text i? { echo "$text" } else {
+  echo "$text"
+  exit 6
+}'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB4044* ]]; chk constval.17
 
 # DD#36 (fixed-point dtoi/itod) is SUPERSEDED — the pair was dropped as YAGNI
 # (DG 2026-09-13). They are now ordinary unknown tokens: SB5011 everywhere, with

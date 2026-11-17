@@ -16,6 +16,7 @@ gates:
   - "selectors succeed on zero matches; normal DD130 handling distinguishes failed open/read/getcwd from no matches or invalid regex candidates, without empty success or new suppression reach"
   - "ordinary array-fill targets accumulate and remain unchanged on operation error; scratch construction starts fresh and leaves an empty batch on error, never a preceding or partial batch"
   - "scratch scalar/collection constructions, readline, for binders and conversion targets create fresh immutable instances; repeated execution is not reassignment or a second source declaration"
+  - "leading underscore alone requests scratch construction, without extra const; initializers reject direct or helper-mediated reads of their own target; typed declarations remain excluded from capture-conditions"
   - "positional visibility, no shadowing, meaningful zeros and bare discard _ remain; skipped sites do not reset values and loop exit is not automatic destruction"
   - "scratch mutation rejects through assignments, append, cells, unset and transitive aliases; mutable A-E fills accumulate while immutable actuals remain read-only"
   - "ordinary scalar readline, type/kind checks, one inferred signature per function, strict non-aliasing, source ownership and ordinary const lifetime/write rules remain intact"
@@ -32,7 +33,7 @@ gates:
   - "existing regex value forms consume their boolean through capture-conditions or explicitly discard it for text-only use; no general assignment status or arbitrary intrinsic/function condition is introduced"
   - "substitution value sugar explicitly projects text per edit; mutation sugar remains resultless and rejects immutable targets; no chain-wide boolean is invented"
   - "other status-less captures still reject inert -; boolean consumption, pointless-work, no-reach and fatal-fault contracts remain"
-  - "assignment remains replacement and resultless; ordinary strings do not silently become glob syntax, and the sugar/quoting boundary is explicitly evaluated"
+  - "assignment remains replacement and resultless; only bare literal list words activate glob sugar; quoted/computed strings are data, and mixed words with an unquoted source star reject with explicit-glob guidance"
   - "migration impact on existing fills, underscore names, reserved command names, converter output and capture-group indexing is measured rather than assumed"
   - "focused real-CLI native/C specs have before/reversion controls; changed contracts use fresh ids and the predicted ordinary gate passes"
   - "the DD revision inventory exactly covers changed/new decision files, records per-contract trial evidence and DG dispositions, and reconciles every affected DD before landing or withdrawal"
@@ -49,6 +50,18 @@ composition and path contracts.
 Retain this P2 owner and slug rather than create competing owners for
 the same experiment. No implementation branch or compiler change was
 made when recording either decision (journals 603-604).
+
+DG authorized implementation on 2026-11-17. The trial branch is
+`glob-scratch-trial`, based on `6c7b899ff9f8e1bfe18a5746efd23d8c549003ea`.
+He accepted leading-underscore construction without extra `const`,
+rejection of initializer self-reads (including through helpers), and
+bare-literal-only glob sugar. These settle the previously deferred source
+choices; they do not adopt the package on main.
+
+The independently accepted const-validation prerequisite is implemented
+and gated on this branch (journal 644). Scratch construction, fillers,
+selectors and regex proof remain the next implementation work; this owner
+stays open through the integrated trial and DG's evaluation.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record
@@ -104,9 +117,11 @@ The same glob rules apply to other legal initializer/append/list mixtures
 and both brace and keyword loop bodies, not just these exact spellings.
 This does not broaden named-splat/keys placement or ordinary command-
 argument globs. Explicit selector operands are interpreted patterns,
-not implicit argument expansion. Inventory raw, quoted and computed
-strings in list sugar; raise any genuine syntax fork rather than
-silently treating every evaluated string containing `*` as a glob.
+not implicit argument expansion. Only bare literal words such as
+`sub/*.sb` activate sugar. Quoted stars, including C-quoted ones, and
+computed strings stay data. Mixed words with an unquoted source star
+(`$dir/*.sb`, `"sub/"*.sb`) reject with guidance to use explicit `glob`.
+Preserve source provenance instead of testing evaluated strings for `*`.
 
 ## Immutable scratch construction and existing fillers
 
@@ -124,6 +139,8 @@ It is not a write to the preceding constant. Failed scratch array
 construction leaves the fresh empty result, not a preceding or partial
 batch. The earlier retained-scratch interpretation was the AI's
 extrapolation, corrected by DG, not a separately selected rule to preserve.
+An initializer may not read its own target, directly or through a helper;
+it cannot use either the old instance or the new meaningful zero.
 
 The model also covers scalar initializers/captures, `readline _line`,
 `for _item`, array/map construction and scratch arithmetic-conversion
@@ -210,13 +227,13 @@ Preserve useful-statement checks, no-reach and existing capture/body
 boundaries. Inventory condition, argument/interpolation, return/value
 and sugar positions without silently widening their legal placement.
 
-Before coding, settle the still-open consequential details with DG:
-final scalar scratch declaration spelling and its fit with DD88's
-declaration restriction; any genuinely underdetermined initialization/
-self-reference rule; and the proof/publication architecture where it
-affects the contract. No choice may resurrect the old instance, invent
-an unchecked regex route or weaken the selected immutability. Ordinary
-reversible staging/internal choices follow the normal decision tree.
+The scalar spelling and self-reference choices were settled on 2026-11-17:
+leading underscore alone requests construction, and initializer self-reads
+reject. `if _out=$(...)` remains untyped; DD88's declaration restriction
+does not change. Raise any remaining consequential proof/publication
+architecture choice only where it affects the contract. No choice may
+resurrect the old instance, invent an unchecked regex route or weaken
+immutability. Ordinary reversible internal choices follow the decision tree.
 
 ## Errors and shared ownership
 
@@ -332,6 +349,21 @@ from overlooking an earlier companion edit.
 
 ### Using the inventory during evaluation
 
+The implementation-start clarification has baseline
+`6c7b899ff9f8e1bfe18a5746efd23d8c549003ea`:
+
+| Exact DD file | Changed section / contract | Disposition |
+|---|---|---|
+| [DD131-directory-selectors-scratch-collections.md](../decisions/DD131-directory-selectors-scratch-collections.md) | Opening rules, construction, initializer self-reads and list sugar. | DG accepted these trial details on 2026-11-17; implementation/evaluation pending. |
+| [DD86-variable-scope.md](../decisions/DD86-variable-scope.md) | Provisional scratch notation, initializer restriction and unchanged capture-condition grammar. | Same trial ruling; ordinary const validation remains independently accepted. |
+| [DD35-type-keywords.md](../decisions/DD35-type-keywords.md) | Provisional scratch notation without extra const. | Same trial ruling. |
+| [DD98-discard-binder.md](../decisions/DD98-discard-binder.md) | Provisional prefix spelling, preserving bare discard. | Same trial ruling. |
+
+The same unit updates the ordinary const-validation delivery notices in
+DD24, DD35, DD86 and DD93. Those implement the independently accepted
+2026-11-09 rule, not a provisional contract to withdraw with this trial.
+Keep that distinction when reconciling individual sections.
+
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
@@ -362,8 +394,8 @@ exactly one source word. `handle_append_assign` in
 `transform/stmt_handlers.rs:1434-1456` handles `IndexedArray` elements,
 but sends other values to scalar append. The single-glob special value
 therefore needs proper collection composition, not another scalar case.
-The singleton lowering is not an authority for the still-to-be-evaluated
-sugar/quoting boundary.
+The singleton lowering is not an authority for the sugar/quoting boundary
+DG selected on 2026-11-17.
 
 Both backends still pass `"."` as the directory (`value_handlers.rs:71-94`,
 `emit_c.rs:3026-3037`). `sash_glob` (`sash-rt/src/lib.rs:3721-3842`)

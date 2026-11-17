@@ -270,6 +270,8 @@
         3. Skipping construction changes nothing; loop exit does not destroy the instance.
         4. Scalar initialization/capture, readers, loop binders, conversion targets and collection construction share this rule.
         5. A scratch `readline` target is fresh even for an EOF attempt.
+        6. No extra `const` is required; typed declarations remain excluded from capture-conditions.
+        7. An initializer cannot read its own target, directly or through a helper.
     2. No later assignment, cell write, append, unset or mutation through an alias; value-preserving validation is allowed.
     3. `_` remains discard, not readable scratch. Function names do not acquire scratch semantics.
     4. Caught attest on immutable scratch
@@ -330,6 +332,8 @@
     6. Successful no-match is success with an empty batch; directory/read/current-directory failures are not empty success or relative fallback.
     7. Array literals, appends and word-list loops accept glob expansions in source order; quote a literal `=~` element.
         1. Assignment, append and iteration sugar use checked results; they do not acquire a status result.
+        2. Only bare literal words activate glob sugar; quoted stars and computed strings remain data.
+        3. Mixed words with an unquoted source star reject; use explicit `glob` for computed patterns.
 17. Array fills
     1. String-array fillers: `read`, `argv`, `keys`, `match`, `matchall`, `glob`, `rglob`.
     2. Ordinary destinations append a complete batch; eligible undeclared targets start empty.

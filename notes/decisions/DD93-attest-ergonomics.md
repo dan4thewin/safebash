@@ -184,7 +184,7 @@ predicate). On success it declassifies **both** names —
 The source may be **const** (DD#86, DG 2026-11-09): validation does not
 change its bytes or type. This applies to both standalone and legal
 caught conversions, just as to full and shorthand `[[ ]]` attests.
-Const-attest enforcement is pending in `q-attest-retag-of-const`.
+Const-attest support is implemented on `glob-scratch-trial` (journal 644).
 The target is different: conversion really writes it, so an existing
 const target remains SB4044. The distinction does not permit same-name
 retyping or replacement of a const source on failure.

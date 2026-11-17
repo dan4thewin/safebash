@@ -15,9 +15,11 @@ status: provisional
    success. Preserve DD130 failure classes and handling.
 6. Array fillers append complete batches to ordinary destinations.
    Leading-underscore introductions construct fresh immutable scratch;
-   existing bindings cannot be reused or shadowed. Bare `_` remains discard.
+   no extra `const` is required. Existing bindings cannot be reused or
+   shadowed. Bare `_` remains discard.
 7. Re-executing a construction site starts a new instance without old values,
    taint or proof. Skipping it changes nothing; block scope is unchanged.
+   An initializer cannot read its own target, directly or through a helper.
 8. Immutability survives aliases and collection slots. Validation may refine
    checked properties, not mutate the value.
 9. Failed array fills leave existing ordinary targets unchanged and fresh
@@ -25,6 +27,8 @@ status: provisional
    EOF/no-match result, independently of destination contents.
 10. Assignment replaces, append adds and iteration supplies items through
     checked fresh results; none gains a status or implicit argument globbing.
+    Only bare literal list words activate glob sugar. Quoted/computed strings
+    are data; mixed words containing an unquoted source star are errors.
 
 ---
 
@@ -149,12 +153,13 @@ or mutation through an alias. Validation may change its checked properties,
 not its value. Bare `_`'s discard/unused-variable exemptions do not apply.
 
 The model is uniform across scalar and collection scratch results, not
-an exception only for regex variables. Leading-underscore binding
-introductions are the working notation. The exact scalar declaration
-spelling (`_re=...` or an explicit `const _re=...`) remains a surface detail
-to settle before implementation; examples here and in DD132 illustrate
-semantics, not a shipped grammar. This does not add a `readonly` operation
-or generally legalize `const array` / `const map` declarations.
+an exception only for regex variables. DG selected the leading underscore
+itself as the construction notation on 2026-11-17: `_re=...`,
+`str _re=...`, readers and loop binders need no additional `const`.
+`if _out=$(...)` remains an untyped capture-condition; typed declarations
+still do not acquire a result under DD88. These are trial rules, not a claim
+that the grammar ships. This does not add a `readonly` operation or
+generally legalize `const array` / `const map` declarations.
 
 ### Scope, repeated execution and parameters
 
@@ -165,6 +170,11 @@ unresolved state and regex proof do not become the new instance's state.
 Neither construction nor its failure path may recover the preceding batch.
 This is a new lifetime rule, not permission for ordinary writes to clear
 taint or for an arbitrary second site to reinitialize a constant.
+
+An initializer may not read the scratch binding it is constructing, directly
+or through a helper (DG, 2026-11-17). It gets neither the previous instance
+nor the new instance's meaningful zero as an initializer input. Meaningful
+zeros outside that construction remain as specified below.
 
 Freshness is tied to execution of the construction site. It does not create
 block scope, reset every scratch name at every loop edge, or destroy a value
@@ -269,9 +279,15 @@ assignment condition or new suppression reach into an operand/body.
 Ordinary command arguments do not gain implicit glob expansion; the
 explicit selectors interpret their pattern operands themselves.
 Computed strings in ordinary array lists must not silently become
-patterns just because their bytes contain `*`. The exact sugar/quoting
-boundary must be made explicit in the trial; no new quote-dependent
-syntax rule or internal representation was selected in this discussion.
+patterns just because their bytes contain `*`.
+
+DG selected **bare literal words only** for sugar on 2026-11-17.
+`sub/*.sb` expands; `'*'`, `"*"`, `$'*'` and `$pattern` are ordinary data.
+A mixed word with an unquoted source star, such as `$dir/*.sb` or
+`"sub/"*.sb`, is a compile-time error rather than a partial glob language.
+Use explicit `glob files "$dir/*.sb"` for computed patterns. Explicit
+selectors continue to interpret their ordinary string operands as patterns
+regardless of quoting; list sugar does not.
 
 ## Evaluate before adoption
 
@@ -298,5 +314,6 @@ baseline. They are not silently rewritten as if this experiment already
 passed. Maintain `q-glob-semantics`' DD revision inventory through the
 trial. Record which parts DG adopts, revises or drops, and reconcile
 every affected contract in place rather than leaving contradictory
-addenda. No implementation branch, compiler change or new behavior
-measurement accompanies this provisional recording.
+addenda. The original recording had no implementation branch or compiler
+change. DG authorized implementation on 2026-11-17; `glob-scratch-trial`
+starts from `6c7b899f`, with adoption on main still requiring his evaluation.

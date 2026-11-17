@@ -110,8 +110,9 @@ loop binders as well as collections. They remain readable and subject
 to normal unused-variable and taint rules, with DD132's explicit
 caught-attest/proof restrictions; none inherits bare `_`'s exemptions.
 Bare `_` stays repeatable, write-only discard, not a fresh readable
-scratch binding. The proposed prefix rule is not shipped, and final
-scalar declaration spelling remains to be settled.
+scratch binding. The prefix rule is not shipped. DG selected the leading
+underscore alone, without extra `const`, for scalar as well as collection
+construction on 2026-11-17.
 
 ## The arithmetic hole this exposed
 

@@ -151,12 +151,12 @@ fn collect_const_names(stmt: &Statement, consts: &mut HashSet<String>) {
     }
 }
 
-/// One SB4044 per const that `stmt` binds, at `stmt` — the innermost
+/// One SB4044 per const that `stmt` writes, at `stmt` — the innermost
 /// statement that writes it. Sorted, so a statement that binds two reports
 /// them in a fixed order.
 fn flag_const_writes(stmt: &Statement, consts: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
     let mut hits = std::collections::BTreeSet::new();
-    stmt_bound_names(stmt, &mut |name| {
+    stmt_written_names(stmt, &mut |name| {
         if consts.contains(name) {
             hits.insert(name.to_string());
         }
@@ -166,21 +166,21 @@ fn flag_const_writes(stmt: &Statement, consts: &HashSet<String>, diags: &mut Vec
     }
 }
 
-/// Every name `stmt` itself binds — not those of the statements nested in it,
+/// Every name `stmt` itself writes — not those of the statements nested in it,
 /// which a statement walk reaches on its own.
 ///
 /// Statement-level arithmetic (`(( x=5 ))`, `(( x++ ))`) is an `Assignment` by
 /// the time it gets here, and an arithmetic *test* that writes is SB5007's or
 /// SB4020's, so an `ArithTest` normally binds nothing; it still answers. A
 /// declaration is the binding itself, and a second one is SB5049's
-/// redeclaration. Two channels are left out because every const is a scalar
+/// redeclaration. `unset` is left out because every const is a scalar
 /// (the parser has no `const array`/`const map`, and SB4064 refuses a
-/// collection value), and type_check rejects both on a scalar in either
-/// textual order: `unset` and the collection an `attest … in a` re-tags
-/// (SB4030 each).
+/// collection value), and type_check rejects it on a scalar in either
+/// textual order (SB4030). An attest retag validates unchanged bytes, not a
+/// write; its arithmetic conversion target is still a real binding.
 ///
 /// Total over `StmtKind`; do not add a wildcard.
-fn stmt_bound_names(stmt: &Statement, f: &mut impl FnMut(&str)) {
+fn stmt_written_names(stmt: &Statement, f: &mut impl FnMut(&str)) {
     match &stmt.kind {
         StmtKind::Assignment(a) => f(&a.name),
         StmtKind::For(fr) => f(&fr.variable),
@@ -188,7 +188,6 @@ fn stmt_bound_names(stmt: &Statement, f: &mut impl FnMut(&str)) {
         StmtKind::Command(c) => {
             let mut names = HashSet::new();
             command_bound_names(c, &mut names);
-            names.extend(attest_retag_target(c).map(str::to_string));
             for name in &names {
                 f(name);
             }
@@ -9547,10 +9546,11 @@ fn record_global_accesses(
 ) {
     let mut names = HashSet::new();
     collect_reads(std::slice::from_ref(stmt), &mut names);
-    stmt_bound_names(stmt, &mut |name| {
+    stmt_written_names(stmt, &mut |name| {
         names.insert(name.to_string());
     });
     if let StmtKind::Command(c) = &stmt.kind {
+        names.extend(attest_retag_target(c).map(str::to_string));
         collection_identity_uses(c, funcs, &mut names);
     }
     for name in names.intersection(globals) {

@@ -340,7 +340,7 @@ pub(super) fn push_attest_arith_convert(
         op: "i?".to_string(),
         operand: SsaValue::Var(source.clone()),
     };
-    let clean_source = state.define(source_name);
+    let clean_source = state.define_attested(source_name);
     ssa.block_mut(block).insts.push(SsaInst::Attest {
         target: clean_source,
         source,
@@ -410,7 +410,7 @@ fn handle_attest_stmt(
             // value being attested). emit_attest evaluates the test before
             // the target slot exists. See dispatch.rs::emit_attest.
             let ssa_test = test_to_ssa(&test, state);
-            let target = state.define(&var);
+            let target = state.define_attested(&var);
             ssa.block_mut(block).insts.push(SsaInst::Attest {
                 target,
                 source,
@@ -515,7 +515,7 @@ pub(super) fn push_attest_retag(
 ) {
     let subject = resolve_args_name(subject, state);
     let source = state.lookup(&subject);
-    let target = state.define(&subject);
+    let target = state.define_attested(&subject);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::AttestRetag { target, source });
