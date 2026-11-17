@@ -857,17 +857,17 @@ run_sash 'fn f {
 f a:1'
 [[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.19
 
-# 96.20 control: the advice actually works — joining first compiles and runs
+# Joining first compiles and runs; discard the boolean (formerly 96.20).
 run_sash 'array a=(x:1 y:2)
-t=$(gsub "$(join a " ")" ":" "-")
+t=$(- gsub "$(join a " ")" ":" "-")
 echo "[$t]"'
-[[ $rc = 0 && $out = "[x-1 y-2]" && -z $rerr ]]; chk 96.20
+[[ $rc = 0 && $out = "[x-1 y-2]" && -z $rerr ]]; chk migratea.100
 
-# 96.21 control: a scalar subject is untouched
+# A scalar subject keeps its text semantics (formerly 96.21).
 run_sash 's="x:1:2"
-t=$(gsub $s ":" "-")
+t=$(- gsub $s ":" "-")
 echo "[$t]"'
-[[ $rc = 0 && $out = "[x-1-2]" && -z $rerr ]]; chk 96.21
+[[ $rc = 0 && $out = "[x-1-2]" && -z $rerr ]]; chk migratea.101
 
 # 96.22 control: `len` and `join` take a collection by name, so a splat
 # there is NOT this error — they stay as they were (DD#75 open questions)

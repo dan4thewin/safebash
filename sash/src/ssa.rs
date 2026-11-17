@@ -230,6 +230,10 @@ impl BuiltinCmd {
         }
     }
 
+    pub fn is_regex_value(self) -> bool {
+        matches!(self, Self::Match | Self::Sub | Self::Gsub)
+    }
+
     /// Whether a trailing redirect may attach to this command (SB4046).
     ///
     /// **Not the authority for a command *name*** — ask
@@ -519,6 +523,13 @@ pub(crate) fn ice_unreachable_command(kind: &BuiltinCmd, name: &str) -> ! {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedirectClose {
+    Restore,
+    KeepOnSuccess,
+    KeepAndBindOnSuccess,
+}
+
 /// An SSA instruction — a versioned wrapper around an IR operation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaInst {
@@ -702,8 +713,13 @@ pub enum SsaInst {
     /// Close the redirect scope opened by `RedirectPush { site }`: restore
     /// each saved fd, in reverse. `fds` mirrors the pushed redirects (the
     /// resolved fd per saved slot), so the pop needs nothing from the push
-    /// beyond the site number.
-    RedirectPop { site: u32, fds: Vec<i64> },
+    /// beyond the site number. FD-only exec keeps the changes only after
+    /// every redirect succeeds, then rebinds the invoker at the outermost pop.
+    RedirectPop {
+        site: u32,
+        fds: Vec<i64>,
+        close: RedirectClose,
+    },
     /// Multi-stage pipeline: cmd1 | cmd2 | ...
     Pipeline {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
@@ -1355,13 +1371,14 @@ pub enum SsaValue {
     /// DD#63: `$(sub S P R)` / `$(gsub S P R)` — regex replace with
     /// ordinary value operands (interpolation is normal arg eval).
     /// `global` selects gsub (all matches) over sub (first match).
-    /// Distinct from the literal-only `regex_replace` ParamExpansion
-    /// operator used by the `${var:s/…}` / `var =~ s/…` sugar today.
+    /// DD132: `capture_status` publishes matched/no-match for a capture-condition;
+    /// explicit discard and text-only sugar leave the caller's status alone.
     RegexReplace {
         subject: Box<SsaValue>,
         pattern: Box<SsaValue>,
         replacement: Box<SsaValue>,
         global: bool,
+        capture_status: bool,
     },
     /// DD#63: `$(match S P)` — whole-match (`resub[0]`) capture with
     /// ordinary value operands. Value position only; the boolean
@@ -1369,6 +1386,7 @@ pub enum SsaValue {
     RegexMatch {
         subject: Box<SsaValue>,
         pattern: Box<SsaValue>,
+        capture_status: bool,
     },
     /// DD#65: `$(toupper s)` / `$(tolower s)` — ASCII case conversion of an
     /// ordinary value operand (reuses the `sash_toupper_all`/`sash_tolower_all`
@@ -1681,7 +1699,9 @@ impl SsaValue {
                 replacement,
                 ..
             } => vec![subject, pattern, replacement],
-            Self::RegexMatch { subject, pattern } => vec![subject, pattern],
+            Self::RegexMatch {
+                subject, pattern, ..
+            } => vec![subject, pattern],
             Self::DefaultValue { source, default } => vec![source, default],
             Self::RequireValue { source, message } => vec![source, message],
             Self::ArithBinOp { left, right, .. } => vec![left, right],
@@ -1755,7 +1775,9 @@ impl SsaValue {
                 replacement,
                 ..
             } => vec![subject, pattern, replacement],
-            SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
+            SsaValue::RegexMatch {
+                subject, pattern, ..
+            } => vec![subject, pattern],
             SsaValue::DefaultValue { source, default } => vec![source, default],
             SsaValue::RequireValue { source, message } => vec![source, message],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
@@ -2551,13 +2573,10 @@ pub struct VersionState {
     /// Next unused `RedirectPush`/`RedirectPop` scope number, handed out by
     /// `alloc_redirect_site`. Same rationale as `next_capture_site`.
     pub next_redirect_site: u32,
-    /// A redirect waiting for the user-function call it was written on
-    /// (`f > out.txt`) to be inlined. `lower_redirected_stmt` parks it here
-    /// and `inline_function_call` takes it, because the two are separated by
-    /// the whole command-dispatch path and only the inliner holds the blocks
-    /// the scope has to wrap. Always `None` outside that hand-off: the
-    /// inliner takes it before lowering the body, so a nested call inside the
-    /// body cannot pick it up.
+    /// Redirects waiting for command argument preparation before their scope
+    /// opens. Used for inlined calls and executable cell indices. The command
+    /// handler takes them before lowering any operand or body, so a nested
+    /// call cannot pick up the enclosing command's redirects.
     pub pending_redirect_scope: Option<Vec<crate::ir::Redirect>>,
     pub(crate) next_reader_site: u32,
     pub(crate) reader_regions: Vec<ReaderRegion>,
@@ -3363,10 +3382,12 @@ mod value_walk_tests {
                 pattern: word(),
                 replacement: word(),
                 global: false,
+                capture_status: false,
             },
             SsaValue::RegexMatch {
                 subject: word(),
                 pattern: word(),
+                capture_status: false,
             },
             SsaValue::CaseConvert {
                 subject: word(),

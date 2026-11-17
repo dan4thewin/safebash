@@ -299,6 +299,17 @@ their own boundaries. `--no-taint` disables ordinary-read enforcement;
 `--no-taint-cst` does not. Signal deferral protects acquisition through the
 caught predicate, then releases on failure without cleaning the instance.
 
-Substitution booleans and `rglob` remain implementation work. The predicate
-and consumers still compile separately; no compiled handle, retained cache
-or runtime ABI was added. The construction spelling is settled in DD131.
+Scalar `match`, `sub` and `gsub` text/Boolean results are implemented on the
+trial (journal 652). Direct capture-conditions consume both results; other
+value uses require explicit Boolean discard under SB4018. Empty matches
+and identity replacements are true. Substitution sugar projects text per
+edit, as do the regex-backed `basename`/`dirname` intrinsics. Neither
+projection replaces an enclosing result, and operand/body checks remain
+independent.
+
+The scalar match/replacement runtime ABI now has an optional final status
+pointer alongside its existing pointer/length return. Both backends pass
+storage when consuming the Boolean and null when discarding it. The predicate
+and consumers still compile separately: no compiled handle or retained cache
+was added. `rglob` and integrated utility/migration/cost evaluation remain
+implementation work. The construction spelling is settled in DD131.

@@ -46,7 +46,9 @@ dropped or moved into the awk-style string-builtin family
   adds a boolean beside substitution text: the sugar explicitly projects
   text and discards that boolean, while every dynamic pattern still needs
   proof for its final immutable value. Mutation sugar remains resultless
-  and cannot write immutable scratch. The trial is not implemented.
+  and cannot write immutable scratch. The text projection and immutable-value
+  checks are implemented on `glob-scratch-trial` (journals 650 and 652);
+  the package remains provisional, not adopted on main.
 
 (Implemented 2026-07-04: `${x:-$y}` now interpolates via the `:- ≡ "…"`
 model above — a `DoubleQuoted` operand lowered to `SsaValue::DefaultValue`

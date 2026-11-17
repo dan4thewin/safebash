@@ -74,7 +74,9 @@ SB5106 (journal 650), including collection presence, helper/process flow
 and the lexical boundary of currently caught scratch regex uses.
 Caught-scratch ordinary reads and failed-path relaxation are now enforced
 with SB5107 (journal 651), including negated/logical forms and handler/signal
-boundaries. `rglob` and regex result channels remain implementation work;
+boundaries. Scalar regex text-plus-Boolean results and their projections are
+implemented and gated (journal 652), together with guarded redirect-index
+lifting and its ordered scopes. `rglob` remains implementation work;
 this owner stays open through the integrated trial and DG's evaluation.
 
 This is the **single integrated implementation/evaluation owner**, including
@@ -398,6 +400,16 @@ The caught-scratch unit updates DD132's implementation boundary from
 `ebdf18bfac6f065f47b86b1f784f695918c0da0a`. It implements the recorded
 read/failure/signal contract without a new language rule or runtime ABI.
 
+The regex-result/redirect-index unit has baseline
+`a4f29d6528c3ae05f29fdfea34ee11a791858bb4`:
+
+| Exact DD file | Changed section / contract | Disposition |
+|---|---|---|
+| [DD119-redirect-target-provably-non-empty.md](../decisions/DD119-redirect-target-provably-non-empty.md) | Opening rule 3 and guarded-index clarification. | DG chose captures in guarded cell indices while retaining the direct-capture-target ban; the coupled repair follows existing DD86 ordering. |
+| [DD132-validated-regex-immutable-scratch.md](../decisions/DD132-validated-regex-immutable-scratch.md) | Implementation boundary. | Scalar regex text/Boolean results and projections are delivered on the trial; the new scalar ABI is explicit, without a cache/handle. |
+| [DD39-glob-regex.md](../decisions/DD39-glob-regex.md) | Engine delivery paragraph. | Reconcile caught-scratch and result delivery; `rglob` and integrated evaluation remain. |
+| [DD65-var-modifier-prune.md](../decisions/DD65-var-modifier-prune.md) | Kept substitution-sugar entry. | Record the implemented per-edit text projection on the trial, not main adoption. |
+
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
@@ -526,9 +538,9 @@ with 208 added and 40 deliberately retired mode IDs.
 The compiler/runtime/lock identities match the restored positive. This unit
 adds no runtime allocation or ABI, but a mutable builder now needs a fresh
 immutable candidate and validation before regex use, as the tour migration
-demonstrates. The caught ordinary-read/failure follow-up is recorded below;
-result channels, `rglob` and integrated migration/memory/time evaluation
-remain open. No main adoption or fresh coverage run is included.
+demonstrates. The caught ordinary-read/failure and result-channel follow-ups are recorded
+below; `rglob` and integrated migration/memory/time evaluation remain open.
+No main adoption or fresh coverage run is included.
 
 The caught-scratch unit follows `ebdf18bfac6f065f47b86b1f784f695918c0da0a`;
 [journal 651](../journal/651-caught-scratch-permissions.md) records SB5107,
@@ -546,9 +558,34 @@ redirect targets through their normal scalar spills.
 The gate adds exactly 120 mode IDs, with no flips or retirements:
 12331 checks, 12318 passing and 13 existing skips, native 6277 and C 6054.
 All 12211 accepted proof-baseline statuses are unchanged. The unit adds no
-runtime allocation, retained state or dependency. Regex result channels,
-`rglob` and the integrated useful-program/helper/converter/memory evaluation
-remain, followed by DG's adoption decision.
+runtime allocation, retained state or dependency. The result-channel follow-up
+is recorded below; `rglob` and the integrated
+useful-program/helper/converter/memory evaluation remain, followed by DG's
+adoption decision.
+
+The regex-result unit follows `a4f29d6528c3ae05f29fdfea34ee11a791858bb4`;
+[journal 652](../journal/652-regex-results-and-redirect-indices.md) records
+scalar text-plus-Boolean results, explicit discard, text-only sugar and the
+optional status-pointer ABI in both backends. DG's guarded-cell-index ruling
+also closes the redirect ICE through shared ordered scopes. Argument retention,
+stage-child ownership and whole-list FD-only `exec` completion are pinned;
+the broader ordering and file-recovery owners remain open.
+
+The regex file has 321 passing checks per backend. Original and intermediate
+before controls and ten independent reversions pin the result, projection,
+ordering and descriptor mechanisms. The first two full sweeps exposed omitted
+tour migration and diagnostic regressions; neither missing checks nor
+independent diagnostics were discarded to get a green gate. The final gate
+at rows 7221215-7233663 has 12449 checks, 12436 passing and 13 existing skips,
+with no final-retry additions, flips or retirements. Against the accepted
+caught-scratch baseline, all 12255 retained statuses are unchanged:
+194 added mode IDs and 76 intentional retirements.
+
+Final source/compiler/runtime/lock identities match the separate post-refactor
+snapshot. The ABI changes, but this unit adds no retained regex handle or cache;
+existing per-use compilation and integrated memory/time costs still need
+evaluation. All 56 tour snippets match their regenerated edition. `rglob`
+and the integrated evaluation remain before DG's adoption decision.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

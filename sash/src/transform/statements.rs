@@ -15,10 +15,16 @@ pub(super) fn lower_stmts(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    for stmt in stmts {
+    let Some((last, prefix)) = stmts.split_last() else {
+        return block;
+    };
+    // Only the last statement supplies the surrounding condition's result.
+    let in_condition = std::mem::replace(&mut state.in_condition, 0);
+    for stmt in prefix {
         block = lower_one(stmt, ssa, state, block);
     }
-    block
+    state.in_condition = in_condition;
+    lower_one(last, ssa, state, block)
 }
 
 /// Lower a single statement into SSA. The statement's span locates any error
@@ -388,7 +394,7 @@ fn lower_redirected_stmt(
     r: &Redirected,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
     // Most bodies that reach here attach their redirects to the single inst
     // they lower to. A compound body cannot reach here at all — the parser
@@ -402,11 +408,17 @@ fn lower_redirected_stmt(
     // `f > out.txt` is the sanctioned spelling of a compound redirect. Its
     // body is inlined across several blocks and has no single inst to carry
     // the list, so it gets a real scope — parked here and opened by
-    // `inline_function_call`, which holds those blocks. Without it the
-    // redirect attached to nothing and was silently dropped.
+    // `inline_function_call`, which holds those blocks. Executable indices
+    // likewise need a scope after argument preparation, not eager spilling.
     restart_scratch_statement(&r.body, ssa, state, block);
-    let redirects = spill_scalar_redirect_targets(&r.redirects, ssa, state, block);
-    let bracketed = body_calls_user_function(&r.body, state);
+    let (redirects, bracketed) = if redirect_targets_execute(&r.redirects) {
+        (r.redirects.clone(), true)
+    } else {
+        (
+            spill_scalar_redirect_targets(&r.redirects, ssa, state, &mut block),
+            body_calls_user_function(&r.body, state),
+        )
+    };
     if bracketed {
         state.pending_redirect_scope = Some(redirects.clone());
     }
@@ -415,7 +427,7 @@ fn lower_redirected_stmt(
     let result_block = lower_one(&r.body, ssa, state, block);
     state.pipe_reader = pipe_reader;
     // A rejected recursive call leaves its scope parked and emits no command.
-    // Discard it; only a non-function command needs per-instruction redirects.
+    // Discard it; only an unscoped command needs per-instruction redirects.
     state.pending_redirect_scope = None;
     if !bracketed {
         attach_redirects_to_last_inst(ssa, result_block, &redirects);
@@ -423,12 +435,114 @@ fn lower_redirected_stmt(
     result_block
 }
 
-/// Does this redirected body resolve to a call of a user function — the one
-/// shape whose lowering spans blocks and so needs a redirect *scope*?
+pub(super) fn redirect_targets_execute(redirects: &[Redirect]) -> bool {
+    let mut executes = false;
+    for redirect in redirects {
+        crate::ir::walk_expr_tree(&redirect.target, &mut |expr| {
+            executes |= matches!(
+                &expr.kind,
+                ExprKind::CommandSubstitution(_) | ExprKind::SlurpFile(_) | ExprKind::Arithmetic(_)
+            );
+        });
+    }
+    executes
+}
+
+/// Each target runs after the preceding open succeeded, in the same process
+/// and descriptor scope as the command whose arguments are already retained.
+pub(super) fn lower_redirect_scope(
+    redirects: &[Redirect],
+    checked: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
+) -> BlockId {
+    lower_redirects(
+        redirects,
+        checked,
+        RedirectClose::Restore,
+        ssa,
+        state,
+        block,
+        body,
+    )
+}
+
+fn lower_redirects(
+    redirects: &[Redirect],
+    checked: bool,
+    close: RedirectClose,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+    body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
+) -> BlockId {
+    let Some((redirect, rest)) = redirects.split_first() else {
+        return body(ssa, state, block);
+    };
+    let redirects =
+        spill_scalar_redirect_targets(std::slice::from_ref(redirect), ssa, state, &mut block);
+    let site = state.alloc_redirect_site();
+    let fds = vec![redirect.resolved_fd()];
+    ssa.block_mut(block).insts.push(SsaInst::RedirectPush {
+        site,
+        redirects,
+        checked,
+    });
+    let before = state.snapshot();
+    let opened = ssa.new_checkpoint_block("redirect_body");
+    let restore = ssa.new_checkpoint_block("redirect_restore");
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        condition: "redirect".to_string(),
+        true_block: opened,
+        false_block: restore,
+    };
+    let nested_close = match close {
+        RedirectClose::KeepAndBindOnSuccess => RedirectClose::KeepOnSuccess,
+        RedirectClose::Restore | RedirectClose::KeepOnSuccess => close,
+    };
+    let end = lower_redirects(rest, checked, nested_close, ssa, state, opened, body);
+    let after = state.snapshot();
+    ssa.block_mut(end).terminator = Terminator::Goto(restore);
+    ssa.block_mut(restore)
+        .insts
+        .push(SsaInst::RedirectPop { site, fds, close });
+    super::helpers::insert_phis_two_branch(state, ssa, restore, end, &after, block, &before);
+    restore
+}
+
+/// FD-only exec commits the complete list, not a successfully opened prefix.
+pub(super) fn lower_permanent_redirects(
+    redirects: &[Redirect],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    lower_redirects(
+        redirects,
+        state.in_condition == 0,
+        RedirectClose::KeepAndBindOnSuccess,
+        ssa,
+        state,
+        block,
+        |ssa, state, block| {
+            ssa.block_mut(block).insts.push(SsaInst::command(
+                "exec",
+                vec![],
+                vec![],
+                state.suppressed == 0,
+            ));
+            block
+        },
+    )
+}
+
+/// Does this redirected body resolve to a call of a user function, which
+/// needs a redirect scope even when its targets require no execution?
 ///
 /// Deliberately narrow: a bare `Command` whose name is a plain word already
-/// registered as a function. A builtin, an external, or anything wearing a
-/// sigil keeps the per-inst path. `function_bodies` is the same table
+/// registered as a function. `function_bodies` is the same table
 /// `handle_function_call_or_command` consults, so the two agree by
 /// construction.
 fn body_calls_user_function(body: &Statement, state: &VersionState) -> bool {
@@ -448,8 +562,8 @@ fn body_calls_user_function(body: &Statement, state: &VersionState) -> bool {
 /// (via `expr_to_value`, so it inherits the same default / subscript / string
 /// semantics as any other value position) to a synthetic scalar, then rewrite
 /// the target to read that scalar (`$__redir_target_N`), which codegen already
-/// handles. Command-substitution / arithmetic targets never reach here — they
-/// are rejected at parse (SB4049).
+/// handles. Direct command-substitution / arithmetic targets are rejected at
+/// parse (SB4049), but an allowed cell read can contain an index capture.
 ///
 /// `$$` and `$!` need the same treatment for the same reason: they are served
 /// by intrinsic codegen (`sash_getpid` / the last-child pid), not by a
@@ -476,18 +590,21 @@ pub(super) fn spill_scalar_redirect_targets(
     redirects: &[Redirect],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    block: &mut BlockId,
 ) -> Vec<Redirect> {
     let mut out = Vec::with_capacity(redirects.len());
     for redir in redirects {
         if target_needs_spill(&redir.target.kind) {
             let val = expr_to_value(&redir.target, state);
+            let val = super::functions::unsuppressed(state, |state| {
+                lift_int_func_calls(val, ssa, state, block)
+            });
             let name = state.reserve_temp_name(
                 format!("__redir_target_{}_{}", ssa.blocks.len(), out.len()),
                 VarType::String,
             );
             let target = state.define(&name);
-            ssa.block_mut(block)
+            ssa.block_mut(*block)
                 .insts
                 .push(SsaInst::Assign { target, value: val });
             out.push(Redirect {

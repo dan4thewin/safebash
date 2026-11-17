@@ -1210,8 +1210,8 @@ pub(super) fn emit_redirect_push(
     for (slot, s) in ctx.redirect_slots[site as usize].iter().zip(saved.iter()) {
         builder.def_var(*slot, s.saved_copy);
     }
-    // The sole producer brackets a redirected function call. Losing its list
-    // must not silently make an unredirected call succeed (DD#116, property 1).
+    // Losing the scope's list must not silently make an unredirected command
+    // succeed (DD#116, property 1).
     let rf = failure.expect("ICE: RedirectPush requires at least one redirect");
     let one = builder.ins().iconst(I64, 1);
     let fail_block = builder.create_block();
@@ -1263,6 +1263,7 @@ fn emit_scope_open_failure(
 pub(super) fn emit_redirect_pop(
     site: u32,
     fds: &[i64],
+    close: RedirectClose,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -1275,7 +1276,31 @@ pub(super) fn emit_redirect_pop(
             saved_copy: builder.use_var(*slot),
         })
         .collect();
+    if close == RedirectClose::Restore {
+        emit_restore(saved, builder, module, ctx.externs);
+        return;
+    }
+    let keep_block = builder.create_block();
+    let restore_block = builder.create_block();
+    let done_block = builder.create_block();
+    let succeeded = builder.use_var(ctx.test_result_var);
+    builder
+        .ins()
+        .brif(succeeded, keep_block, &[], restore_block, &[]);
+    builder.switch_to_block(keep_block);
+    builder.seal_block(keep_block);
+    emit_discard_saved(saved.clone(), builder, module, ctx.externs);
+    if close == RedirectClose::KeepAndBindOnSuccess {
+        let rebind = module.declare_func_in_func(ctx.externs.scope_bind, builder.func);
+        builder.ins().call(rebind, &[]);
+    }
+    builder.ins().jump(done_block, &[]);
+    builder.switch_to_block(restore_block);
+    builder.seal_block(restore_block);
     emit_restore(saved, builder, module, ctx.externs);
+    builder.ins().jump(done_block, &[]);
+    builder.switch_to_block(done_block);
+    builder.seal_block(done_block);
 }
 
 /// DD#55 (A)-channel: emit the implicit exit check. When `abort` is true

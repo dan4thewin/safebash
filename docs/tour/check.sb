@@ -204,7 +204,7 @@ while readline line {
         /usr/bin/printf '%-8s slide %2d line %4d  expect %-4s got %-4s  %s\n' \
             $result $slide $start $expected $actual $title
         if (( verbose == 1 )) || [[ $result != ok ]] {
-            echo '    | '$(gsub $output:! $'\n' $'\n    | ')
+            echo '    | '$(- gsub $output:! $'\n' $'\n    | ')
         }
         if (( render == 1 )) && [[ $result == ok ]] {
             echo $output:! > ${work:?}/output.raw

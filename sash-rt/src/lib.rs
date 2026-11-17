@@ -2701,12 +2701,15 @@ pub unsafe extern "C" fn sash_regex_match(
 /// Returns (ptr, len) of `resub[0]` (the whole match) as a slice of the
 /// original subject. No match → `(str_ptr, 0)` (empty string). Invalid
 /// regex is a runtime error (`sash_abort(2)`), mirroring `sash_regex_match`.
+/// A non-null `out_status` receives 0 for a match, including an empty match,
+/// or 1 for no match; null explicitly projects only the text.
 #[no_mangle]
 pub unsafe extern "C" fn sash_regex_match_str(
     str_ptr: *const u8,
     str_len: i64,
     pat_ptr: *const u8,
     pat_len: i64,
+    out_status: *mut i64,
 ) -> (*const u8, i64) {
     // Need null-terminated copies for the Plan 9 regex API.
     let pat_buf = sash_alloc((pat_len + 1) as usize);
@@ -2724,6 +2727,9 @@ pub unsafe extern "C" fn sash_regex_match_str(
     // Resub stride is 16 bytes (sp, ep); 10 entries, over-allocated to 320.
     let mut resub = [0u8; 320];
     let matched = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
+    if !out_status.is_null() {
+        *out_status = i64::from(matched <= 0);
+    }
     if matched <= 0 {
         return (str_ptr, 0);
     }
@@ -2958,6 +2964,8 @@ unsafe fn expand_replacement(rep: &[u8], resub: *const *const u8) -> (*mut u8, u
 /// Regex substitution: s/pattern/replacement/flags
 /// flags: 'g' for global replace
 /// Returns new string (ptr, len). Caller owns the memory.
+/// Non-null `out_status` receives matched/no-match (0/1), independently of
+/// whether replacement changed any bytes. Null explicitly discards that result.
 #[no_mangle]
 pub unsafe extern "C" fn sash_regex_replace(
     str_ptr: *const u8,
@@ -2967,6 +2975,7 @@ pub unsafe extern "C" fn sash_regex_replace(
     rep_ptr: *const u8,
     rep_len: i64,
     global: i64,
+    out_status: *mut i64,
 ) -> (*mut u8, i64) {
     let src = core::slice::from_raw_parts(str_ptr, str_len as usize);
     let rep = core::slice::from_raw_parts(rep_ptr, rep_len as usize);
@@ -2994,6 +3003,7 @@ pub unsafe extern "C" fn sash_regex_replace(
     let mut result_len: usize = 0;
     let mut result_cap: usize = str_len as usize + 256;
     let mut offset: usize = 0;
+    let mut matched_any = false;
 
     while offset <= total {
         // resub: 10 submatches, each is (start_ptr, end_ptr) = 2 pointers = 16 bytes
@@ -3003,6 +3013,7 @@ pub unsafe extern "C" fn sash_regex_replace(
         if matched <= 0 {
             break;
         }
+        matched_any = true;
 
         // Extract match start/end from resub[0] (first submatch = whole match)
         let match_start = resub[0];
@@ -3052,6 +3063,10 @@ pub unsafe extern "C" fn sash_regex_replace(
                 break;
             }
         }
+    }
+
+    if !out_status.is_null() {
+        *out_status = i64::from(!matched_any);
     }
 
     // Preserve all unconsumed bytes, including any interior NUL and its tail.

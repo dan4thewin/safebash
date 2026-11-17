@@ -1,5 +1,5 @@
 title: "ICE: a capture inside a redirect target's subscript (`>${m[$(f)]:-d}`)"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -66,11 +66,40 @@ dispositioned target into `__redir_target_N` through `expr_to_value`
 that path lifts a capture. So the `FuncCall` (a user function) or the raw
 command substitution (an external) reaches the backend, which panics.
 
-## Fix: a question for DG
+## Selected repair, 2026-11-17
+
+DG chose: "Allow captures in guarded cell indices; keep direct capture
+targets forbidden." DD119 now distinguishes selecting a guarded cell from
+using a capture directly as a filename. Reuse shared value lifting, preserve
+the resulting control-flow block, and retain ordinary taint, operand failure
+and DD86 argument/redirect ordering. The repair is implemented and gated
+with the DD132 regex-result unit on `glob-scratch-trial`
+([journal 652](../journal/652-regex-results-and-redirect-indices.md)).
+This closes the index ICE on that branch, not adoption of the provisional
+package on main.
+
+The shared scope builder evaluates and applies each target only after the
+preceding open succeeds. Arguments are retained first; executable stage
+indices run in the stage child. Temporary redirects restore descriptors,
+and FD-only `exec` commits the complete list or restores its opened prefix.
+The native/C before controls reproduce the old ICE, and the final regex
+file's 321 checks per mode cover the repair, its ordering/failure boundaries
+and the unchanged direct-target refusal. The full gate passes 12449 checks
+with 13 existing skips and no failures.
+
+General simple-stage redirect timing, inter-argument ordering and recoverable
+file handling remain with their independent owners. The stale SB4049 advice
+has its own task below; it was not repaired as part of this closeout.
+
+The original alternatives below are historical. The ordering question has
+since been settled by DD86; its independent general implementation owner is
+`q-stage-capture-redirect-order`.
+
+## Original alternatives
 
 The panic is a bug. How to fix it is a language-surface fork.
 
-**(a) Reject (recommended).** SB4049 for a `$( … )` anywhere in a redirect
+**(a) Reject (not selected).** SB4049 for a `$( … )` anywhere in a redirect
 target: in a subscript, a default, or a part of a concatenation. This
 extends DG's 2026-08-30 ruling in bug-redirect-nonsimple-target-empty
 ("support scalars, reject complex": a target is `$x`, `${x:-default}`,
@@ -86,19 +115,19 @@ inside a target is not that: it runs no command, and it works today (the
 control above). Under the port's rule (DG 2026-10-24: behaviour that is not
 obviously a bug stays unchanged), (a) leaves it legal.
 
-**(b) Lift.** Treat a subscript capture in a target as one in an argument
+**(b) Lift (selected).** Treat a subscript capture in a target as one in an argument
 (`echo ${m[$(f)]:-d}` works today) and lift it before the spill. That follows
 DD119's reframing: the target is provably non-empty, because it has a
-non-empty default. But it widens the redirect surface that DG narrowed on
-2026-08-30, and it raises a new evaluation-order question: is the target's
-capture lifted before or after the command's own argument captures?
+non-empty default. The original proposal raised the placement relative to the command's argument
+captures; DD86 subsequently selected arguments first.
 
-A related wording question in the same function: SB4049's advice ("Assign it
+A related wording defect in the same function: SB4049's advice ("Assign it
 to a variable first, then redirect to `$v`") predates DD119. Followed
-literally, it produces SB4030, and only `${v:?message}` compiles. Should the
-advice name the disposition?
+literally, it produces SB4030, and `${v:?message}` supplies the required
+guard. The current parser still contains that advice; its separate repair
+is owned by [bug-sb4049-redirect-advice](bug-sb4049-redirect-advice.md).
 
-## Specs to write
+## Original spec plan (historical)
 
 Specs go in the next free block of `spec/errors.sh`, or `spec/taint.sh` for
 p11. Check both collision checks and the database high-water mark first. All

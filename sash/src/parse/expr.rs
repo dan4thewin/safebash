@@ -1374,7 +1374,7 @@ fn split_sed_edit(body: &str) -> Option<(&str, &str, &str, &str)> {
     ))
 }
 
-/// Build `$(sub|gsub SUBJECT RE SUB)` from an `RE/SUB/flags` payload. RE/SUB
+/// Build `$(- sub|gsub SUBJECT RE SUB)` from an `RE/SUB/flags` payload. RE/SUB
 /// become interpolating double-quoted words (`$x` expands); regex
 /// metacharacters are ordinary literal bytes. `g` in the flags selects
 /// `gsub`. Returns `None` for a malformed (missing-delimiter) payload.
@@ -1411,7 +1411,7 @@ pub(crate) fn build_sed_sub(
     }
 }
 
-/// One `$(sub|gsub SUBJECT RE SUB)` call. RE/SUB become interpolating
+/// One text-only `$(- sub|gsub SUBJECT RE SUB)` call. RE/SUB become interpolating
 /// double-quoted words (`$x` expands); `g` in this edit's own flags selects
 /// `gsub`, so a flag binds to its edit rather than the whole chain. `origin`
 /// is where `re` starts in the program; `sub` follows it and one `/`.
@@ -1457,7 +1457,10 @@ fn build_one_sed_sub(
         span,
     };
     Ok(Expr {
-        kind: ExprKind::CommandSubstitution(vec![cmd]),
+        kind: ExprKind::CommandSubstitution(vec![Statement {
+            kind: StmtKind::Suppressed(Box::new(cmd)),
+            span,
+        }]),
         span,
     })
 }

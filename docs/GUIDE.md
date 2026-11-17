@@ -203,7 +203,8 @@ elements before later effects. The shared word-concatenation path also
 retains earlier component values, including their string conversion.
 This does not complete the separately tracked general argument-order work.
 Both backends use the same runtime status and publication protocol.
-The regex selector and DD132 result-channel rules are not implemented yet.
+The regex selector remains to be implemented; DD132's scalar result channels
+are described below.
 
 ## Taint analysis
 
@@ -378,8 +379,24 @@ states, not success-arm permissions or regex certificates. The proof/read and
 SSA taint analyses share pending-signal tracking. Fresh zero initialization
 does not finish an acquisition guard; a caught scratch predicate finishes it
 on either outcome, without cleaning failed data or deferring signals forever.
-Consumer result-kind changes and `rglob` remain pending. These analyses add no
-runtime storage or compiled-regex cache.
+These analyses add no runtime storage or compiled-regex cache.
+
+Scalar regex `match`, `sub` and `gsub` now carry text and a matched/no-match
+Boolean on the trial branch. Direct capture-conditions consume both;
+SB4018 requires explicit discard for text-only calls. Substitution sugar
+and `basename`/`dirname` project only text. Shared SSA values carry that
+choice, and both backends use an optional status pointer added to the
+runtime's existing pointer/length-returning APIs. No compiled pattern handle
+persists. `rglob` and integrated evaluation remain pending.
+
+Executable redirect indices use shared nested scopes: retain command
+arguments, evaluate and open each target in order, then run the body.
+Stage work stays in the child after plumbing; final readers stay parent-owned.
+Temporary scopes restore descriptors. FD-only `exec` keeps them only when
+all opens succeed, then rebinds diagnostic routing once; failure restores
+the opened prefix. DD119 still forbids a direct capture filename. This
+bounded repair does not complete the general stage-timing or inter-word
+capture-order tasks.
 
 EXIT and ERR are private generated callbacks over real global storage,
 with their own locals and entry status. Selection is by cause:

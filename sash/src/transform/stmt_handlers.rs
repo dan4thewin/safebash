@@ -877,8 +877,7 @@ fn dispatch_multistage_pipeline(
     if let Some(command) = lastpipe_read_command(last.body) {
         handle_lastpipe_read(p, command, last, ssa, state, block)
     } else {
-        handle_regular_pipeline(p, ssa, state, block);
-        block
+        handle_regular_pipeline(p, ssa, state, block)
     }
 }
 
@@ -999,7 +998,7 @@ fn build_pipeline_inst(
     cmds: &[Statement],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    block: &mut BlockId,
     reader_site: Option<u32>,
 ) -> SsaInst {
     let mut stages = vec![];
@@ -1038,17 +1037,13 @@ fn push_command_stage(
     idx: usize,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    block: &mut BlockId,
     stages: &mut Vec<(String, Vec<SsaValue>, Vec<Redirect>)>,
 ) {
-    // Spill `${x:-f}` / `$a[i]` stage-redirect targets to a synthetic scalar
-    // (assigned into `block`, before the Pipeline inst) exactly as a top-level
-    // redirect does, so codegen's stage-redirect lowering only sees scalar
-    // reads it can resolve (was: silently redirected to an empty filename).
-    let redirects = spill_scalar_redirect_targets(&redirects, ssa, state, block);
+    let (redirects, scoped) = prepare_stage_redirects(redirects, ssa, state, block);
     let name = literal_name_of(&c.name);
     if state.known_functions.contains(name) {
-        if let Some(stage) = build_function_pipeline_stage(name, c, ssa, state, idx) {
+        if let Some(stage) = build_function_pipeline_stage(name, c, &scoped, ssa, state, idx) {
             stages.push((stage, vec![], redirects));
             return;
         }
@@ -1071,8 +1066,24 @@ fn push_command_stage(
     // DD#99: a `write` stage is an `echo -n` stage (see rewrite_write_as_echo).
     let (name, args) = super::cmd_handlers::rewrite_write_as_echo(name, args);
     let command = resolve_pipeline_command(&name, state);
-    let (stage, args) = command_pipeline_stage(command, args, ssa, state, idx);
+    let (stage, args) = command_pipeline_stage(command, args, &scoped, ssa, state, idx);
     stages.push((stage, args, redirects));
+}
+
+fn prepare_stage_redirects(
+    redirects: Vec<Redirect>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> (Vec<Redirect>, Vec<Redirect>) {
+    if super::statements::redirect_targets_execute(&redirects) {
+        (vec![], redirects)
+    } else {
+        (
+            spill_scalar_redirect_targets(&redirects, ssa, state, block),
+            vec![],
+        )
+    }
 }
 
 /// `cmd1 | ... | while readline var` or `cmd1 | ... | read arr`, each
@@ -1083,7 +1094,7 @@ fn handle_pipe_while_or_array_read(
     last: FinalStage,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
     super::statements::restart_scratch_statement(last.body, ssa, state, block);
     let site = state.next_reader_site;
@@ -1092,7 +1103,7 @@ fn handle_pipe_while_or_array_read(
         &p.commands[..p.commands.len() - 1],
         ssa,
         state,
-        block,
+        &mut block,
         Some(site),
     );
     ssa.block_mut(block).insts.push(pipeline);
@@ -1154,13 +1165,13 @@ fn handle_lastpipe_read(
     last: FinalStage,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
     super::statements::restart_scratch_statement(last.body, ssa, state, block);
     let producers = &p.commands[..p.commands.len() - 1];
     let site = state.next_reader_site;
     state.next_reader_site += 1;
-    let pipeline = build_pipeline_inst(producers, ssa, state, block, Some(site));
+    let pipeline = build_pipeline_inst(producers, ssa, state, &mut block, Some(site));
     ssa.block_mut(block).insts.push(pipeline);
     lower_pipe_consumer(ssa, state, block, site, last, |ssa, state, block| {
         let target = state.define(&crate::ir::readline_target(&command.args));
@@ -1181,10 +1192,11 @@ fn handle_regular_pipeline(
     p: &Pipeline,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
-) {
-    let pipeline = build_pipeline_inst(&p.commands, ssa, state, block, None);
+    mut block: BlockId,
+) -> BlockId {
+    let pipeline = build_pipeline_inst(&p.commands, ssa, state, &mut block, None);
     ssa.block_mut(block).insts.push(pipeline);
+    block
 }
 
 /// Lower one pipeline stage `cmd` and extend the `stages`/`suppressed`/`negated`
@@ -1198,7 +1210,7 @@ fn push_pipeline_stage(
     idx: usize,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    block: &mut BlockId,
     stages: &mut Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
     suppressed: &mut Vec<bool>,
     negated: &mut Vec<bool>,
@@ -1223,7 +1235,7 @@ fn lower_one_pipeline_stage(
     idx: usize,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    block: &mut BlockId,
     stages: &mut Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
 ) {
     let (inner, redirects) = match &stmt.kind {
@@ -1271,6 +1283,7 @@ const COMPOUND_STAGE_IS_REJECTED_AT_PARSE: &str =
 fn build_function_pipeline_stage(
     name: &str,
     c: &Command,
+    redirects: &[Redirect],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     idx: usize,
@@ -1283,7 +1296,9 @@ fn build_function_pipeline_stage(
     }
     let entry = ssa.new_checkpoint_block(&format!("pipe_fn_{}_{}", name, idx));
     let parent = state.enter_forked_child();
+    let scope = state.pending_redirect_scope.replace(redirects.to_vec());
     let end = super::cmd_handlers::inline_function_call(name, &body, c, ssa, state, entry);
+    state.pending_redirect_scope = scope;
     ssa.block_mut(end).terminator = Terminator::ChildExit;
     state.exit_forked_child(parent);
     Some(ssa.compound_stages.record(entry, name))
@@ -1297,18 +1312,19 @@ fn build_function_pipeline_stage(
 /// [`SsaProgram::compound_stages`] as a function stage is, and takes no
 /// arguments. The child lifts the arguments and then runs the command as a
 /// direct stage would: `echo` and `:` in place, anything else by exec. The
-/// stage's redirects apply before the child's entry, so a capture among the
-/// arguments runs under them (a statement evaluates its captures before its
-/// redirects). A failure reports the command's resolved path, as a direct
-/// stage's does.
+/// Legacy simple stage redirects still apply before the child's entry.
+/// Executable target indices instead use the ordinary argument-first scope
+/// inside the child; they must never execute in the parent. The broader
+/// simple-redirect timing migration is owned by q-stage-capture-redirect-order.
 fn command_pipeline_stage(
     command: String,
     args: Vec<SsaValue>,
+    redirects: &[Redirect],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     idx: usize,
 ) -> (String, Vec<SsaValue>) {
-    if !args.iter().any(needs_lift) {
+    if redirects.is_empty() && !args.iter().any(needs_lift) {
         return (command, args);
     }
     // The label omits the command: a head too dynamic to judge (`*?[$`) may
@@ -1317,21 +1333,17 @@ fn command_pipeline_stage(
     let parent = state.enter_forked_child();
     let mut block = entry;
     let args = lift_int_func_args(args, ssa, state, &mut block);
-    let inst = if matches!(
+    let (name, args) = if matches!(
         BuiltinCmd::from_name(&command),
         BuiltinCmd::Echo | BuiltinCmd::Noop
     ) {
-        SsaInst::command(command.as_str(), args, vec![], state.suppressed == 0)
+        (command.as_str(), args)
     } else {
         let argv = std::iter::once(SsaValue::Literal(command.clone()));
-        SsaInst::command(
-            "exec",
-            argv.chain(args).collect(),
-            vec![],
-            state.suppressed == 0,
-        )
+        ("exec", argv.chain(args).collect())
     };
-    ssa.block_mut(block).insts.push(inst);
+    let block =
+        super::cmd_handlers::emit_prepared_command(name, args, redirects, ssa, state, block);
     ssa.block_mut(block).terminator = Terminator::ChildExit;
     state.exit_forked_child(parent);
     (ssa.compound_stages.record(entry, &command), vec![])
@@ -1558,7 +1570,7 @@ fn handle_plain_assign(
     ssa: &mut SsaProgram,
     mut block: BlockId,
 ) -> BlockId {
-    let val = expr_to_value(&a.value, state);
+    let val = assignment_value(a, state);
     if let Some(b) = maybe_capture_condition(a, &val, state, ssa, block) {
         return b;
     }
@@ -1578,16 +1590,22 @@ fn handle_plain_assign(
     block
 }
 
+fn assignment_value(a: &Assignment, state: &VersionState) -> SsaValue {
+    if state.in_condition > 0 && matches!(&a.value.kind, ExprKind::CommandSubstitution(_)) {
+        return super::expr_handlers::capture_value(&a.value, state);
+    }
+    expr_to_value(&a.value, state)
+}
+
 /// DD#88 capture-condition dispatch for `handle_plain_assign`. In a boolean
-/// context (`if x=$(cmd)` / `while x=$(cmd)`), a single external `$(cmd)` (or
-/// external pipeline) RHS is the CONDITION — capture its stdout into `x`
-/// (tainted) but branch on the command's exit status (no abort). Returns
+/// context (`if x=$(cmd)` / `while x=$(cmd)`), an eligible capture RHS is the
+/// CONDITION — bind its text into `x` but branch on its status or boolean.
+/// External stdout remains tainted; handling grants no validation. Returns
 /// `Some(block)` when it consumed the assignment. Guarded on a
 /// command-substitution source expr so an arithmetic mutation `x=1` inside
 /// `(( … ))` — also lowered via `handle_plain_assign` with `in_condition` set —
-/// is untouched. A `$(user_fn)` RHS (which `validate` couldn't exclude
-/// pre-resolution) is rejected with SB4025; returns `None` so the caller still
-/// produces a well-formed `Assign` (compilation fails on the diagnostic).
+/// is untouched. Rejected captures still lower their already-classified value,
+/// preserving independent recursion/arity errors without new handling advice.
 fn maybe_capture_condition(
     a: &Assignment,
     val: &SsaValue,
@@ -1605,13 +1623,8 @@ fn maybe_capture_condition(
     None
 }
 
-/// Capture-condition lowering (`if x=$(cmd)` / `while x=$(cmd)`): bind the
-/// command's captured stdout into `name` (tainted, via the `CmdSubst` value)
-/// while making the command's exit status the branch truth value. The capture
-/// is SUPPRESSED — a nonzero exit does not abort (the status is consumed by the
-/// condition, per DD#55's "binding the status" rule) — and `SetTestFromStatus`
-/// syncs `test_result` from `$?`. Returns `None` for a non-`CmdSubst` RHS (a
-/// literal/concat/user-fn value binding), which stays a validate-level SB4025.
+/// Bind one eligible producer's text and synchronize the branch truth from its
+/// status. Handling applies to the producer, never its evaluated operands.
 fn try_capture_condition(
     name: &str,
     val: &SsaValue,
@@ -1619,27 +1632,19 @@ fn try_capture_condition(
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> Option<BlockId> {
-    match val {
-        // Single external `$(cmd)` → a suppressed capture value, then sync
-        // test_result from $?.
-        SsaValue::CmdSubst { argv, .. } => {
-            let mut after = block;
-            let value = super::functions::lift_int_func_calls(
-                SsaValue::CmdSubst {
-                    argv: argv.clone(),
-                    suppressed: true,
-                },
-                ssa,
-                state,
-                &mut after,
-            );
-            let target = state.define_replacement(name);
-            ssa.block_mut(after)
-                .insts
-                .push(SsaInst::Assign { target, value });
-            push_set_test_from_status(ssa, after, state.suppressed == 0);
-            Some(after)
+    let value = match val {
+        SsaValue::CmdSubst { argv, .. } => SsaValue::CmdSubst {
+            argv: argv.clone(),
+            suppressed: true,
+        },
+        SsaValue::RegexReplace {
+            capture_status: true,
+            ..
         }
+        | SsaValue::RegexMatch {
+            capture_status: true,
+            ..
+        } => val.clone(),
         // A body capture — a pipeline `$(a | b)`, or any command carrying a
         // redirect, which `single_command_subst` deliberately declines so the
         // redirect is lowered by the ordinary statement machinery. Lower it
@@ -1647,10 +1652,18 @@ fn try_capture_condition(
         // unchecked: the branch consumes their status, so it must not abort.
         // Captures in their operands are lifted checked (DD#55 2026-10-30).
         SsaValue::CmdSubstBody { body, .. } if !capture_condition_head_is_user_fn(body, state) => {
-            capture_condition_body(name, body, state, ssa, block)
+            return capture_condition_body(name, body, state, ssa, block);
         }
-        _ => None,
-    }
+        _ => return None,
+    };
+    let mut after = block;
+    let value = super::functions::lift_int_func_calls(value, ssa, state, &mut after);
+    let target = state.define_replacement(name);
+    ssa.block_mut(after)
+        .insts
+        .push(SsaInst::Assign { target, value });
+    push_set_test_from_status(ssa, after, state.suppressed == 0);
+    Some(after)
 }
 
 fn capture_condition_body(
@@ -2014,7 +2027,7 @@ mod invariant_tests {
     #[test]
     #[should_panic(expected = "SB4022 rejects one at parse")]
     fn a_compound_pipeline_stage_is_a_loud_ice() {
-        let (mut ssa, mut state, block) = fixtures();
+        let (mut ssa, mut state, mut block) = fixtures();
         let mut stages = vec![];
         let stmt = Statement {
             kind: StmtKind::Pipeline(Pipeline {
@@ -2023,7 +2036,7 @@ mod invariant_tests {
             }),
             span: Span::new(1, 1),
         };
-        lower_one_pipeline_stage(&stmt, 0, &mut ssa, &mut state, block, &mut stages);
+        lower_one_pipeline_stage(&stmt, 0, &mut ssa, &mut state, &mut block, &mut stages);
     }
 
     /// `a | ! while …` is SB4022 at parse (`reject_nonconsuming_final_stage`),

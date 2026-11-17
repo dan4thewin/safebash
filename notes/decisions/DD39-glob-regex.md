@@ -100,8 +100,10 @@ faults remain fatal. The predicate is implemented on `glob-scratch-trial`
 (journal 648), as is the unconditional SB5105 refusal of trusted reads
 within pattern operands (journal 649). SB5106 now requires immutable-value
 proofs at every existing consumer (journal 650), independently of taint
-switches. Caught ordinary-read permissions, regex result channels and
-`rglob` remain part of the unfinished integrated trial.
+switches. Caught ordinary-read permissions are implemented in journal 651;
+scalar regex text/Boolean results and explicit projections follow in
+journal 652. `rglob` and integrated evaluation remain unfinished, and none
+of these trial deliveries adopts the package on main.
 
 ## Whole-subject anchors (DG, 2026-11-16)
 

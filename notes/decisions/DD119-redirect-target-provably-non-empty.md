@@ -8,6 +8,8 @@ status: accepted
    Concatenation does not let literal neighbors excuse an unguarded string read.
 3. Direct command captures and intrinsics are not redirect-target operands.
    Bind an eligible value first and satisfy the same target rules.
+   Cell indices may contain otherwise-legal captures: selecting a cell is
+   distinct from using a capture directly as the filename.
 4. Empty defaults and elision do not prove a usable filename. Target operand
    evaluation retains its own taint and failure checks.
 
@@ -60,6 +62,15 @@ A target is provably non-empty when it is:
    string read like any other, so it carries the same obligation.
 5. **A concatenation of the above**, with each variable part satisfying its own
    obligation independently.
+
+DG clarified on 2026-11-17: **allow captures in guarded cell indices; keep
+direct capture targets forbidden.** For example,
+`> "${paths[$(- sub aba a X)]:?missing}"` selects a cell and then requires
+that cell's filename to be nonempty. The index follows ordinary expression,
+taint and failure rules; neither the disposition nor handling the redirected
+command catches an index operand's failure. DD86's argument-before-redirect
+contract still applies. This does not admit a direct `> $(...)` target or
+an unguarded string-cell read.
 
 Everything else is rejected, in particular:
 

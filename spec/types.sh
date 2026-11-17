@@ -955,17 +955,17 @@ run_sash 'int n=6; int m=6
 # --- DD#65: per-element array ops dropped → `for x in @a` loop + sub/gsub ---
 # (the `${arr[@]OP}` forms now reject SB4034; see var_modifiers.sh vm.dr16-18)
 
-# 33.16 per-element substitution via loop + sub (was ${arr[@]/ba/BA})
-run_sash 'array a=(foo bar baz); for x in @a; do echo $(sub $x ba BA); done'
-[[ $rc = 0 && $out = $'foo\nBAr\nBAz' && -z $err ]]; chk 33.16
+# Per-element substitution via loop + sub (formerly 33.16).
+run_sash 'array a=(foo bar baz); for x in @a; do echo $(- sub $x ba BA); done'
+[[ $rc = 0 && $out = $'foo\nBAr\nBAz' && -z $err ]]; chk migratea.97
 
-# 33.17 per-element strip prefix via loop + sub `^pre_` (was ${arr[@]#pre_})
-run_sash 'array a=(pre_one pre_two three); for x in @a; do echo $(sub $x "^pre_" ""); done'
-[[ $rc = 0 && $out = $'one\ntwo\nthree' && -z $err ]]; chk 33.17
+# Per-element prefix stripping (formerly 33.17).
+run_sash 'array a=(pre_one pre_two three); for x in @a; do echo $(- sub $x "^pre_" ""); done'
+[[ $rc = 0 && $out = $'one\ntwo\nthree' && -z $err ]]; chk migratea.98
 
-# 33.18 per-element strip suffix via loop + sub `\.txt$` (was ${arr[@]%%.txt})
-run_sash 'array a=(file.txt doc.txt note.md); for x in @a; do echo $(sub $x "\.txt$" ""); done'
-[[ $rc = 0 && $out = $'file\ndoc\nnote.md' && -z $err ]]; chk 33.18
+# Per-element suffix stripping (formerly 33.18).
+run_sash 'array a=(file.txt doc.txt note.md); for x in @a; do echo $(- sub $x "\.txt$" ""); done'
+[[ $rc = 0 && $out = $'file\ndoc\nnote.md' && -z $err ]]; chk migratea.99
 
 # --- DD#62 section A: [[ ]] operands are pre-lowered SsaValues ---
 # Subscript operands carry their map-vs-indexed key-ness from transform

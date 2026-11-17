@@ -507,10 +507,10 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_regex_match", Linkage::Import, &regex_match_sig)
         .expect("declare sash_regex_match");
 
-    // sash_regex_match_str(str_ptr, str_len, pat_ptr, pat_len) -> (ptr, len)
+    // sash_regex_match_str(str_ptr, str_len, pat_ptr, pat_len, out_status) -> (ptr, len)
     // DD#63: whole-match capture for `$(match S P)`.
     let mut regex_match_str_sig = module.make_signature();
-    push_i64s(&mut regex_match_str_sig, 4, 2); // returns (ptr, len)
+    push_i64s(&mut regex_match_str_sig, 5, 2); // returns (ptr, len)
     let regex_match_str_func = module
         .declare_function(
             "sash_regex_match_str",
@@ -552,9 +552,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_argv_guard", Linkage::Import, &argv_guard_sig)
         .expect("declare sash_argv_guard");
 
-    // sash_regex_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, global) -> (ptr, len)
+    // sash_regex_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, global, out_status) -> (ptr, len)
     let mut regex_replace_sig = module.make_signature();
-    push_i64s(&mut regex_replace_sig, 7, 2); // returns (ptr, len)
+    push_i64s(&mut regex_replace_sig, 8, 2); // returns (ptr, len)
     let regex_replace_func = module
         .declare_function("sash_regex_replace", Linkage::Import, &regex_replace_sig)
         .expect("declare sash_regex_replace");

@@ -862,15 +862,19 @@ Capturing matches
 
 ```bash +exec:sash
 s=2026-11-13
-echo year: $(match $s ^\d+)
+if year=$(match $s ^\d+) { echo year: $year }
 if match $s '^(\d{4})-(\d{2})-(\d{2})$' parts {
   echo month: $parts[2], day: $parts[3]
 }
 if matchall $s \d+ numbers { echo $(join numbers ", ") }
 ```
 
-`$(match ...)` returns the whole matched text. With an output array,
-`match` puts the whole match at index 0 and capture groups at indices 1-9.
+`match` supplies a boolean and, when captured, the whole matched text.
+`if year=$(match ...)` binds the text and tests whether a match occurred.
+`$(- match ...)` keeps the text and explicitly discards that boolean.
+
+With an output array, `match` appends the whole match followed by capture
+groups 1-9. A newly introduced array starts empty.
 
 `matchall` collects successive whole matches when the pattern has no groups,
 or just the capture groups when it does.
@@ -883,7 +887,7 @@ A regex attest
 ```bash +exec:sash
 text=$(arg 2 "")
 attest text [[ $text =~ \d+ ]]
-echo first number: $(match $text \d+)
+echo first number: $(- match $text \d+)
 ```
 
 The guarantee is exactly what the predicate says: digits occur somewhere
@@ -900,16 +904,18 @@ Replacing with sub and gsub
 
 ```bash +exec:sash
 s=bananas
-echo first: $(sub $s a A)
-echo all: $(gsub $s a A)
+if first=$(sub $s a A) { echo first: $first }
+echo all: $(- gsub $s a A)
 echo original: $s
 ```
 
 The underlying operations are `sub SUBJECT PATTERN REPLACEMENT` and
 `gsub SUBJECT PATTERN REPLACEMENT`: replace the first match, or all matches.
 
-Both produce new text without changing `s`. Assign the result to change
-a binding. The call form needs no slash delimiters.
+Both produce text without changing `s`, plus a boolean saying whether a
+match occurred. An identity replacement still counts as a match; no match
+returns the original subject. Handle the boolean with a capture-condition
+or discard it with `$(- ...)`. The call form needs no slash delimiters.
 
 <!-- end_slide -->
 
@@ -925,8 +931,8 @@ s =~ s/a/A/g
 echo changed: $s
 ```
 
-`${s:s/a/A/}` is shorthand for `$(sub $s a A)`; adding `g` selects `gsub`.
-These expansions do not change the subject.
+`${s:s/a/A/}` is shorthand for `$(- sub $s a A)`; adding `g` selects `gsub`.
+These expansions keep only the text and do not change the subject.
 
 `s =~ s/a/A/g` writes the result back to `s`. Its left side is a binding
 name, not a `$s` read. The final slash is required.

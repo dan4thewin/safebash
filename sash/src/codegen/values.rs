@@ -122,11 +122,13 @@ pub(super) fn lower_value(
             pattern,
             replacement,
             global,
+            capture_status,
         } => lower_regex_replace_value(
             subject,
             pattern,
             replacement,
             *global,
+            *capture_status,
             builder,
             module,
             vars,
@@ -134,9 +136,14 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
-        SsaValue::RegexMatch { subject, pattern } => lower_regex_match_value(
+        SsaValue::RegexMatch {
             subject,
             pattern,
+            capture_status,
+        } => lower_regex_match_value(
+            subject,
+            pattern,
+            *capture_status,
             builder,
             module,
             vars,
@@ -401,13 +408,14 @@ pub(super) fn lower_literal_value(
 /// DD#63: lower `$(sub S P R)` / `$(gsub S P R)`. Each operand is an
 /// ordinary value (recursively lowered to a (ptr,len) pair), so quoting
 /// and interpolation are normal argument evaluation. Calls
-/// `sash_regex_replace(s, slen, p, plen, r, rlen, global) -> (ptr,len)`.
+/// `sash_regex_replace` returns the text and optionally publishes match status.
 #[allow(clippy::too_many_arguments)]
 fn lower_regex_replace_value(
     subject: &SsaValue,
     pattern: &SsaValue,
     replacement: &SsaValue,
     global: bool,
+    capture_status: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
@@ -443,20 +451,23 @@ fn lower_regex_replace_value(
         exit_status_var,
     );
     let global_val = builder.ins().iconst(I64, global as i64);
-    let replace_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
-    let call = builder.ins().call(
-        replace_ref,
-        &[s_ptr, s_len, p_ptr, p_len, r_ptr, r_len, global_val],
-    );
-    (builder.inst_results(call)[0], builder.inst_results(call)[1])
+    call_regex_value(
+        externs.regex_replace,
+        vec![s_ptr, s_len, p_ptr, p_len, r_ptr, r_len, global_val],
+        capture_status,
+        builder,
+        module,
+        exit_status_var,
+    )
 }
 
 /// DD#63: lower `$(match S P)` (whole-match capture) to a call to
-/// `sash_regex_match_str(s, slen, p, plen) -> (ptr, len)`.
+/// `sash_regex_match_str`, with an independent matched/no-match result.
 #[allow(clippy::too_many_arguments)]
 fn lower_regex_match_value(
     subject: &SsaValue,
     pattern: &SsaValue,
+    capture_status: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
@@ -482,9 +493,41 @@ fn lower_regex_match_value(
         externs,
         exit_status_var,
     );
-    let match_ref = module.declare_func_in_func(externs.regex_match_str, builder.func);
-    let call = builder.ins().call(match_ref, &[s_ptr, s_len, p_ptr, p_len]);
-    (builder.inst_results(call)[0], builder.inst_results(call)[1])
+    call_regex_value(
+        externs.regex_match_str,
+        vec![s_ptr, s_len, p_ptr, p_len],
+        capture_status,
+        builder,
+        module,
+        exit_status_var,
+    )
+}
+
+fn call_regex_value(
+    function: cranelift_module::FuncId,
+    mut args: Vec<cranelift_codegen::ir::Value>,
+    capture_status: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    exit_status_var: Variable,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let out = capture_status.then(|| {
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3))
+    });
+    let status_ptr = match out {
+        Some(slot) => builder.ins().stack_addr(I64, slot, 0),
+        None => builder.ins().iconst(I64, 0),
+    };
+    args.push(status_ptr);
+    let function = module.declare_func_in_func(function, builder.func);
+    let call = builder.ins().call(function, &args);
+    let ptr = builder.inst_results(call)[0];
+    let len = builder.inst_results(call)[1];
+    if let Some(slot) = out {
+        let status = builder.ins().stack_load(I64, slot, 0);
+        builder.def_var(exit_status_var, status);
+    }
+    (ptr, len)
 }
 
 fn lower_var_value(

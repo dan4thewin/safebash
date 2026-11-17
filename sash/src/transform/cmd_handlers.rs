@@ -20,8 +20,18 @@ pub(super) fn handle_read(
     if literal_name_of(&c.name) == "read" {
         return lower_newread(c, ssa, state, block);
     }
-    emit_readline_inst(&crate::ir::readline_target(&c.args), ssa, state, block);
-    block
+    let scope = state.pending_redirect_scope.take().unwrap_or_default();
+    super::statements::lower_redirect_scope(
+        &scope,
+        state.in_condition == 0,
+        ssa,
+        state,
+        block,
+        |ssa, state, block| {
+            emit_readline_inst(&crate::ir::readline_target(&c.args), ssa, state, block);
+            block
+        },
+    )
 }
 
 /// DD#99 `read`: one arg reads stdin, two split the first (a value) into
@@ -30,8 +40,9 @@ fn lower_newread(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
+    let scope = state.pending_redirect_scope.take().unwrap_or_default();
     let (source, target) = match c.args.as_slice() {
         [only] => (None, super::expressions::fill_target_name(only, state)),
         [src, dst] => (
@@ -42,8 +53,33 @@ fn lower_newread(
             "SB5057 requires one or two read operands; a malformed read must not disappear"
         ),
     };
-    let destination = target;
-    let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
+    let source = source.map(|source| {
+        if scope.is_empty() {
+            return source;
+        }
+        let source = super::functions::unsuppressed(state, |state| {
+            super::functions::lift_int_func_calls(source, ssa, state, &mut block)
+        });
+        super::functions::retain_scalar(source, ssa, state, block)
+    });
+    super::statements::lower_redirect_scope(
+        &scope,
+        state.in_condition == 0,
+        ssa,
+        state,
+        block,
+        |ssa, state, block| emit_newread(source, &target, ssa, state, block),
+    )
+}
+
+fn emit_newread(
+    source: Option<SsaValue>,
+    destination: &str,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let array = super::statements::collection_fill_target(destination, false, ssa, state, block);
     // The completed fill is a separate definition from the empty initialization.
     let target = state.define_replacement(&array);
     let fd = state.pipe_reader.unwrap_or(0);
@@ -56,7 +92,7 @@ fn lower_newread(
         },
     };
     ssa.block_mut(block).insts.push(inst);
-    super::statements::publish_collection(&destination, &array, ssa, state, block);
+    super::statements::publish_collection(destination, &array, ssa, state, block);
     block
 }
 
@@ -269,7 +305,7 @@ pub(super) fn inline_function_call(
     // `f > out.txt`: the redirect parked by `lower_redirected_stmt`. Taken
     // before the body is lowered, so a nested redirected call inside the body
     // opens its own scope rather than re-opening this one.
-    let scope = state.pending_redirect_scope.take();
+    let scope = state.pending_redirect_scope.take().unwrap_or_default();
 
     // Lower the call arguments ONCE in the caller's scope (before `args` is
     // redefined), so a side-effecting `$( … )` arg is not executed twice and
@@ -287,70 +323,41 @@ pub(super) fn inline_function_call(
 
     check_callee_arity(name, body, &arg_values, state);
     let arg_values = lift_int_func_args(arg_values, ssa, state, &mut block);
+    let args = super::functions::materialize_args(&arg_values, ssa, state, block);
+    let checked = state.in_condition == 0 || state.call_class(name) != Some(FnClass::Status);
+    super::statements::lower_redirect_scope(
+        &scope,
+        checked,
+        ssa,
+        state,
+        block,
+        |ssa, state, block| {
+            inline_prepared_function(name, body, args, &coll_args, ssa, state, block)
+        },
+    )
+}
+
+fn inline_prepared_function(
+    name: &str,
+    body: &[Statement],
+    args: VarRef,
+    coll_args: &[String],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
     state.inlining.push(name.to_string());
     let saved_args = super::functions::save_caller_args(state);
-    let saved_slots = super::functions::setup_callee_slots(&coll_args, state);
+    let saved_slots = super::functions::setup_callee_slots(coll_args, state);
     let saved_ro = super::functions::enter_fn_body_scope(state);
-    super::functions::setup_callee_args(&arg_values, ssa, state, block);
-
-    // Open the redirect scope last, so everything that only computes values
-    // (the spilled targets, the argument bindings) has already run on the
-    // caller's own fds. `pre_state` is the version map the skip path carries
-    // into the restore block.
-    let bracket = scope.map(|redirects| {
-        let site = state.alloc_redirect_site();
-        let fds: Vec<i64> = redirects.iter().map(|r| r.resolved_fd()).collect();
-        // Only a status result can represent an open failure. Void and integer
-        // forwarding must not turn that failure into a result of another kind.
-        let checked = state.in_condition == 0 || state.call_class(name) != Some(FnClass::Status);
-        ssa.block_mut(block).insts.push(SsaInst::RedirectPush {
-            site,
-            redirects,
-            checked,
-        });
-        (site, fds)
-    });
-    let pre_state = state.snapshot();
+    state.current_args_name = args.name;
 
     // Inline the function body
     let call_block = ssa.new_checkpoint_block(&format!("call_{}", name));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
 
     let restore_block = ssa.new_checkpoint_block(&format!("ret_{}", name));
-    let exit_block =
-        super::functions::lower_inlined_body(name, body, call_block, restore_block, ssa, state);
-
-    if let Some((site, fds)) = bracket {
-        // Close the scope first thing in the restore block, so it also runs
-        // for a `return` out of the body (which targets this block) and for
-        // the skip path below.
-        ssa.block_mut(restore_block)
-            .insts
-            .push(SsaInst::RedirectPop { site, fds });
-        // DD#55: a failed `open(2)` must not run the body on the wrong fds.
-        // The scope sets the test result, so branching on it here skips
-        // straight to the restore — the cross-block equivalent of the
-        // if/else a plain command's redirect guard emits around itself. The
-        // skip edge is only *taken* in condition position (elsewhere the
-        // scope has already aborted), but emitting it unconditionally keeps
-        // the shape independent of the later `checked` rewrites that
-        // `mark_unchecked_in_conditions` applies.
-        let body_state = state.snapshot();
-        ssa.block_mut(block).terminator = Terminator::Branch {
-            condition: "redirect".to_string(),
-            true_block: call_block,
-            false_block: restore_block,
-        };
-        super::helpers::insert_phis_two_branch(
-            state,
-            ssa,
-            restore_block,
-            exit_block,
-            &body_state,
-            block,
-            &pre_state,
-        );
-    }
+    super::functions::lower_inlined_body(name, body, call_block, restore_block, ssa, state);
 
     super::functions::exit_fn_body_scope(state, saved_ro);
     super::functions::restore_caller_slots(saved_slots, state);
@@ -553,6 +560,7 @@ fn emit_external_command(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
+    let scope = state.pending_redirect_scope.take().unwrap_or_default();
     let raw: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
     // DD#99: `write` IS `echo` without the trailing newline. Both lower through
     // `lower_echo`, which reads the suppression from a leading `-n`, so the
@@ -573,13 +581,47 @@ fn emit_external_command(
     } else {
         args
     };
-    ssa.block_mut(block).insts.push(SsaInst::command(
-        resolve_pipeline_command(name, state),
-        args,
-        Vec::new(),
-        state.suppressed == 0,
-    ));
-    block
+    emit_prepared_command(name, args, &scope, ssa, state, block)
+}
+
+pub(super) fn emit_prepared_command(
+    name: &str,
+    args: Vec<SsaValue>,
+    redirects: &[Redirect],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    if redirects.is_empty() {
+        ssa.block_mut(block).insts.push(SsaInst::command(
+            resolve_pipeline_command(name, state),
+            args,
+            vec![],
+            state.suppressed == 0,
+        ));
+        return block;
+    }
+    if name == "exec" && args.is_empty() {
+        return super::statements::lower_permanent_redirects(redirects, ssa, state, block);
+    }
+    let args = super::functions::retain_args(args, ssa, state, block);
+    let checked = state.suppressed == 0 && state.in_condition == 0;
+    super::statements::lower_redirect_scope(
+        redirects,
+        state.in_condition == 0,
+        ssa,
+        state,
+        block,
+        |ssa, state, block| {
+            ssa.block_mut(block).insts.push(SsaInst::command(
+                resolve_pipeline_command(name, state),
+                args,
+                vec![],
+                checked,
+            ));
+            block
+        },
+    )
 }
 
 /// Rewrite an `exec` target (args[0]) to its resolved external absolute path

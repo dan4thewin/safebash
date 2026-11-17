@@ -22,16 +22,90 @@ pub(super) fn setup_callee_args(
     state: &mut VersionState,
     block: BlockId,
 ) {
+    state.current_args_name = materialize_args(arg_values, ssa, state, block).name;
+}
+
+pub(super) fn materialize_args(
+    arg_values: &[SsaValue],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> VarRef {
     let name = state.reserve_temp_name(format!("__args{}", state.args_counter), VarType::String);
     state.args_counter += 1;
     let v = state.define(&name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target: v,
+        target: v.clone(),
         value: SsaValue::IndexedArray(arg_values.to_vec()),
     });
     state.collections.insert(name.clone());
     ssa.immutable_bindings.insert(name.clone());
-    state.current_args_name = name;
+    v
+}
+
+/// Retain command words before a redirect index can change their sources.
+/// Total over `SsaValue`; do not add a wildcard.
+pub(super) fn retain_args(
+    args: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Vec<SsaValue> {
+    args.into_iter()
+        .map(|arg| match arg {
+            SsaValue::Literal(_) => arg,
+            SsaValue::ArraySplat { .. } => SsaValue::ArraySplat {
+                array: materialize_args(&[arg], ssa, state, block),
+                disposition: None,
+            },
+            SsaValue::ElideEmpty { source, taint_off } => SsaValue::ElideEmpty {
+                source: Box::new(retain_scalar(*source, ssa, state, block)),
+                taint_off,
+            },
+            SsaValue::Expr(_)
+            | SsaValue::Var(_)
+            | SsaValue::ArgvIndex(_)
+            | SsaValue::FuncCall { .. }
+            | SsaValue::IntFuncCall { .. }
+            | SsaValue::CmdSubst { .. }
+            | SsaValue::CmdSubstBody { .. }
+            | SsaValue::SlurpFile(_)
+            | SsaValue::ArithExpr { .. }
+            | SsaValue::ParamExpansion { .. }
+            | SsaValue::Concat(_)
+            | SsaValue::ArithBinOp { .. }
+            | SsaValue::RegexReplace { .. }
+            | SsaValue::RegexMatch { .. }
+            | SsaValue::CaseConvert { .. }
+            | SsaValue::StrLen { .. }
+            | SsaValue::DefaultValue { .. }
+            | SsaValue::RequireValue { .. }
+            | SsaValue::Substring { .. }
+            | SsaValue::Subscript { .. }
+            | SsaValue::AssocArray(_)
+            | SsaValue::IndexedArray(_)
+            | SsaValue::IntCell(_)
+            | SsaValue::Ternary { .. }
+            | SsaValue::Trusted { .. }
+            | SsaValue::TableValue { .. }
+            | SsaValue::TableKey { .. } => retain_scalar(arg, ssa, state, block),
+        })
+        .collect()
+}
+
+pub(super) fn retain_scalar(
+    value: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> SsaValue {
+    let name = state.reserve_temp_name("__redirect_arg".to_string(), VarType::String);
+    let target = state.define(&name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: target.clone(),
+        value: SsaValue::Concat(vec![value]),
+    });
+    SsaValue::Var(target)
 }
 
 /// DD#100: bind the callee's collection slots `A`..`E` from the call's
@@ -304,16 +378,25 @@ pub(super) fn lift_int_func_calls(
                 false_val,
             }
         }
-        SsaValue::RegexMatch { subject, pattern } => {
+        SsaValue::RegexMatch {
+            subject,
+            pattern,
+            capture_status,
+        } => {
             let subject = lift_boxed(*subject, ssa, state, block);
             let pattern = lift_boxed(*pattern, ssa, state, block);
-            SsaValue::RegexMatch { subject, pattern }
+            SsaValue::RegexMatch {
+                subject,
+                pattern,
+                capture_status,
+            }
         }
         SsaValue::RegexReplace {
             subject,
             pattern,
             replacement,
             global,
+            capture_status,
         } => {
             let subject = lift_boxed(*subject, ssa, state, block);
             let pattern = lift_boxed(*pattern, ssa, state, block);
@@ -323,6 +406,7 @@ pub(super) fn lift_int_func_calls(
                 pattern,
                 replacement,
                 global,
+                capture_status,
             }
         }
         SsaValue::RequireValue { source, message } => {
@@ -465,15 +549,19 @@ pub(super) fn suppressed_capture_value(
 /// evaluates on the way (DD#55 2026-10-30). An external capture is lifted
 /// unchecked, its arguments checked. A body capture — a statement builtin,
 /// or a capture whose arguments run value calls — is lowered with the
-/// counter raised, which its operand lifts clear again. A value intrinsic or
-/// function capture leaves the capture no status to check, so it is lifted
-/// with suppression cleared.
+/// counter raised, which its operand lifts clear again. Regex values explicitly
+/// discard their boolean; other values are lifted with suppression cleared.
 fn lift_suppressed_capture(
-    value: SsaValue,
+    mut value: SsaValue,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
+    if let SsaValue::RegexReplace { capture_status, .. }
+    | SsaValue::RegexMatch { capture_status, .. } = &mut value
+    {
+        *capture_status = false;
+    }
     match value {
         SsaValue::CmdSubst { argv, .. } => lift_cmdsub(argv, true, ssa, state, block),
         body @ SsaValue::CmdSubstBody { .. } => {

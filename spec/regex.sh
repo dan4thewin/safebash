@@ -6,50 +6,50 @@
 set -eu
 . common.sh
 setup regex
-plan=262
+plan=321
 echo "1..$plan" >&3
 
 set +e
 
 # ── A. sub / gsub function forms (primitives) ────────────────────────
 
-# 63.4 sub replaces the FIRST match, prints result
-run_sash 'echo $(sub abab "b" "B")'
-[[ $rc = 0 && $out = "aBab" && -z $err ]]; chk 63.4
+# sub replaces the FIRST match; discard only its boolean (formerly 63.4).
+run_sash 'echo $(- sub abab "b" "B")'
+[[ $rc = 0 && $out = "aBab" && -z $err ]]; chk migratea.65
 
-# 63.5 gsub replaces ALL matches
-run_sash 'echo $(gsub abab "b" "B")'
-[[ $rc = 0 && $out = "aBaB" && -z $err ]]; chk 63.5
+# gsub replaces ALL matches (formerly 63.5).
+run_sash 'echo $(- gsub abab "b" "B")'
+[[ $rc = 0 && $out = "aBaB" && -z $err ]]; chk migratea.66
 
-# 63.b3 a literal slash is just an argument byte — no delimiter parsing
-run_sash 'echo $(sub "a/b/c" "/" "_")'
-[[ $rc = 0 && $out = "a_b/c" && -z $err ]]; chk 63.b3
+# A literal slash is just an argument byte, not a delimiter (formerly 63.b3).
+run_sash 'echo $(- sub "a/b/c" "/" "_")'
+[[ $rc = 0 && $out = "a_b/c" && -z $err ]]; chk migratea.67
 
-# 63.f1 empty replacement deletes the match
-run_sash 'echo $(sub abc "b" "")'
-[[ $rc = 0 && $out = "ac" && -z $err ]]; chk 63.f1
+# An empty replacement deletes the match (formerly 63.f1).
+run_sash 'echo $(- sub abc "b" "")'
+[[ $rc = 0 && $out = "ac" && -z $err ]]; chk migratea.68
 
 # ── B. match — value form $(match S P) = whole match (resub[0]) ───────
 
-# 63.1a $(match S P) prints the whole match
-run_sash 'echo $(match "hello world" "world")'
-[[ $rc = 0 && $out = "world" && -z $err ]]; chk 63.1a
+# A scalar match capture returns the whole match (formerly 63.1a).
+run_sash 'echo $(- match "hello world" "world")'
+[[ $rc = 0 && $out = "world" && -z $err ]]; chk migratea.69
 
-# 63.1b a character class match returns exactly the matched span
-run_sash 'echo $(match "abc123def" "[0-9][0-9][0-9]")'
-[[ $rc = 0 && $out = "123" && -z $err ]]; chk 63.1b
+# A character class returns exactly the matched span (formerly 63.1b).
+run_sash 'echo $(- match "abc123def" "[0-9][0-9][0-9]")'
+[[ $rc = 0 && $out = "123" && -z $err ]]; chk migratea.70
 
-# Interpolation preserves a validated immutable pattern (formerly 63.b1).
+# Interpolation preserves a validated immutable pattern (formerly regexproof.41).
 run_sash 's=hello
 const p=ell
 attest p r?
-echo $(match "$s" "$p")'
-[[ $rc = 0 && $out = "ell" && -z $err ]]; chk regexproof.41
+echo $(- match "$s" "$p")'
+[[ $rc = 0 && $out = "ell" && -z $err ]]; chk migratea.71
 
-# 63.f2 no match → empty whole match, no error (assignment doesn't abort)
-run_sash 'x=$(match abc z)
+# Discarding no-match retains its empty text without aborting (formerly 63.f2).
+run_sash 'x=$(- match abc z)
 echo "[$x]"'
-[[ $rc = 0 && $out = "[]" && -z $err ]]; chk 63.f2
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk migratea.72
 
 # ── C. match — boolean command form (DD#63 primitive; DD#70 (B)) ──────
 # `match S P` is a boolean COMMAND: exit 0 if it matched, nonzero if not.
@@ -152,21 +152,21 @@ echo "$(len g):${g[0]}"'
 # DG, D6). Under DD#64 the replacement is a verbatim string (no
 # double-quote collapse): a literal backslash is `"\\"` (two bytes).
 
-# 63.cap8 group reorder via \1 \2
-run_sash 'echo $(sub "John Smith" "([A-Za-z]+) ([A-Za-z]+)" "\2 \1")'
-[[ $rc = 0 && $out = "Smith John" && -z $err ]]; chk 63.cap8
+# Group reorder via \1 \2 (formerly 63.cap8).
+run_sash 'echo $(- sub "John Smith" "([A-Za-z]+) ([A-Za-z]+)" "\2 \1")'
+[[ $rc = 0 && $out = "Smith John" && -z $err ]]; chk migratea.73
 
-# 63.cap9 whole-match \0 (per gsub match)
-run_sash 'echo $(gsub "a1b2" "[0-9]" "<\0>")'
-[[ $rc = 0 && $out = "a<1>b<2>" && -z $err ]]; chk 63.cap9
+# Whole-match \0 (per gsub match, formerly 63.cap9).
+run_sash 'echo $(- gsub "a1b2" "[0-9]" "<\0>")'
+[[ $rc = 0 && $out = "a<1>b<2>" && -z $err ]]; chk migratea.74
 
-# 63.cap10 `\\` = one literal backslash (DD#64: source is "\\", two bytes)
-run_sash 'echo $(sub "x" "x" "\\")'
-[[ $rc = 0 && $out = '\' && -z $err ]]; chk 63.cap10
+# `\\` = one literal backslash (source is two bytes, formerly 63.cap10).
+run_sash 'echo $(- sub "x" "x" "\\")'
+[[ $rc = 0 && $out = '\' && -z $err ]]; chk migratea.75
 
-# 63.cap11 backref to a non-participating group → empty
-run_sash 'echo $(sub "ac" "(a)(b)?(c)" "[\2]")'
-[[ $rc = 0 && $out = "[]" && -z $err ]]; chk 63.cap11
+# Backref to a non-participating group is empty (formerly 63.cap11).
+run_sash 'echo $(- sub "ac" "(a)(b)?(c)" "[\2]")'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk migratea.76
 
 # 63.cap12 invalid `\`-escape in a replacement (\ + non-digit) → SB4033
 run_sash 'echo $(sub x x "\a")'
@@ -712,9 +712,9 @@ echo "$x ${x:s/^a/Q/} ${a[0]:s/^a(b)/Q/}"'
 run_sash 'const p=b
 attest p r?
 str x=abcb
-str y=$(sub "$x" "$p" z)
+str y=$(- sub "$x" "$p" z)
 echo "[$y][${x:s/$p/Q/g}]"'
-[[ $rc = 0 && $out = "[azcb][aQcQ]" && -z $rerr ]]; chk regexproof.44
+[[ $rc = 0 && $out = "[azcb][aQcQ]" && -z $rerr ]]; chk migratea.77
 
 # 39.47 a regex dispatch's pattern (DD#66)
 run_sash 'str x=abc
@@ -753,9 +753,9 @@ run_sash 'for x in $(argv 1); do attest x [[ $x =~ a && $x =~ ( ]]; echo "got:$x
 
 # Unchecked malformed candidates cannot reach a consumer (formerly 39.53-.56).
 run_sash 'str p="("
-str x=$(sub abc "$p" z)
+str x=$(- sub abc "$p" z)
 echo "[$x]"'
-[[ $rc != 0 && -z $out && $err == *SB5106* ]]; chk regexproof.46
+[[ $rc != 0 && -z $out && $err == *SB5106* ]]; chk migratea.78
 
 # Through global substitution sugar too.
 run_sash 'str p="("
@@ -813,8 +813,8 @@ run_sash 's="ab
 cd"
 const p="(^cd)"
 attest p r?
-echo "[$(match "$s" "$p")]"'
-[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk regexproof.45
+echo "[$(- match "$s" "$p")]"'
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk migratea.79
 
 # Whole-subject anchors still return false, retaining the old destination.
 run_sash 'array g=(stale)
@@ -835,22 +835,22 @@ cd"
 
 run_sash 's="ab
 cd"
-first=$(sub "$s" "(^cd)" X)
-all=$(gsub "$s" "(ab$)" X)
+first=$(- sub "$s" "(^cd)" X)
+all=$(- gsub "$s" "(ab$)" X)
 if [[ $first == $s && $all == $s ]] { echo unchanged } else { echo wrong }'
-[[ $rc = 0 && $out = unchanged && -z $err && -z $rerr ]]; chk 39.63
+[[ $rc = 0 && $out = unchanged && -z $err && -z $rerr ]]; chk migratea.80
 
 # Advancing a global search does not create another beginning of subject.
 run_sash 'x=aaa
-echo "$(gsub "$x" "^a" X) ${x:s/^a/X/g}"
+echo "$(- gsub "$x" "^a" X) ${x:s/^a/X/g}"
 w=a-a-a
 w =~ s/^a-/X/g
 echo "$w"'
-[[ $rc = 0 && $out = $'Xaa Xaa\nXa-a' && -z $err && -z $rerr ]]; chk 39.64
+[[ $rc = 0 && $out = $'Xaa Xaa\nXa-a' && -z $err && -z $rerr ]]; chk migratea.81
 
 # Resumed captures and unmatched spans retain original-subject offsets.
-run_sash 'echo "$(gsub abab "(^a)|(b)" "<\1\2>")"'
-[[ $rc = 0 && $out = '<a><b>a<b>' && -z $err && -z $rerr ]]; chk 39.65
+run_sash 'echo "$(- gsub abab "(^a)|(b)" "<\1\2>")"'
+[[ $rc = 0 && $out = '<a><b>a<b>' && -z $err && -z $rerr ]]; chk migratea.82
 
 run_sash '- matchall aaa "^a" m
 echo "$(len m):${m[0]}"'
@@ -863,8 +863,8 @@ echo "$(len m):[$(join m ,)]"'
 # Zero-width anchors still advance, without re-anchoring at each byte.
 run_sash 's="ab
 cd"
-echo "[$(gsub "$s" "^" ">")]"'
-[[ $rc = 0 && $out = $'[>ab\ncd]' && -z $err && -z $rerr ]]; chk 39.68
+echo "[$(- gsub "$s" "^" ">")]"'
+[[ $rc = 0 && $out = $'[>ab\ncd]' && -z $err && -z $rerr ]]; chk migratea.83
 
 run_sash 's="ab
 cd"
@@ -873,22 +873,22 @@ echo "$(len m):[${m[0]}]"'
 [[ $rc = 0 && $out = '1:[]' && -z $err && -z $rerr ]]; chk 39.69
 
 # The empty subject and terminal position are real match positions.
-run_sash 'echo "[$(sub "" "^$" X)][$(gsub "" "^$" Y)]"'
-[[ $rc = 0 && $out = '[X][Y]' && -z $err && -z $rerr ]]; chk 39.70
+run_sash 'echo "[$(- sub "" "^$" X)][$(- gsub "" "^$" Y)]"'
+[[ $rc = 0 && $out = '[X][Y]' && -z $err && -z $rerr ]]; chk migratea.84
 
-run_sash 'echo "[$(gsub ab "" ".")]"
-echo "$(gsub a "a|$" X)"
+run_sash 'echo "[$(- gsub ab "" ".")]"
+echo "$(- gsub a "a|$" X)"
 - matchall a "a|$" m
 echo "$(len m):[${m[0]}][${m[1]}]"'
 [[ $rc = 0 && $out = $'[.a.b.]\nXX\n2:[a][]' \
-   && -z $err && -z $rerr ]]; chk 39.71
+   && -z $err && -z $rerr ]]; chk migratea.85
 
 # The retained first-NUL boundary also bounds resumed and zero-width searches.
 run_sash 's=$'"'"'a\x00b'"'"'
 want=$'"'"'aX\x00b'"'"'
-got=$(gsub "$s" "$" X)
+got=$(- gsub "$s" "$" X)
 if [[ $got == $want ]] { echo retained } else { echo wrong }'
-[[ $rc = 0 && $out = retained && -z $err && -z $rerr ]]; chk 39.72
+[[ $rc = 0 && $out = retained && -z $err && -z $rerr ]]; chk migratea.86
 
 run_sash 's=$'"'"'a\x00b'"'"'
 - matchall "$s" "$" m
@@ -899,11 +899,11 @@ echo "$(len m)"'
 
 run_sash 's=$'"'"'\x00b'"'"'
 want=$'"'"'X\x00b'"'"'
-got=$(gsub "$s" "" X)
+got=$(- gsub "$s" "" X)
 if [[ $got == $want ]] { echo retained } else { echo wrong }
 - matchall "$s" "" m
 echo "$(len m)"'
-[[ $rc = 0 && $out = $'retained\n1' && -z $err && -z $rerr ]]; chk 39.74
+[[ $rc = 0 && $out = $'retained\n1' && -z $err && -z $rerr ]]; chk migratea.87
 
 # The still-built standalone helper must use the same subject/cursor contract.
 run_sash "sash-regex captures-all aaa '^a' | /usr/bin/od -An -tx1
@@ -950,10 +950,10 @@ for p in \$'\\x00a' \$'a\\x00b' \$'a\\x00' {
 echo \$rejected"
 [[ $rc = 0 && $out = 3 && -z $err && -z $rerr ]]; chk regexvalid.4
 
-run_sash 'str text="a("; str prefix=$(match "$text" a)
+run_sash 'str text="a("; str prefix=$(- match "$text" a)
 if [[ r? $prefix ]] { echo prefix } else { echo wrong }
 if [[ r? $text ]] { echo wrong } else { echo whole }'
-[[ $rc = 0 && $out = $'prefix\nwhole' && -z $err && -z $rerr ]]; chk regexvalid.5
+[[ $rc = 0 && $out = $'prefix\nwhole' && -z $err && -z $rerr ]]; chk migratea.88
 
 run_sash 'const p=$(arg 1); attest p r?; echo $p' '[a-z]+'
 [[ $rc = 0 && $out = '[a-z]+' && -z $err && -z $rerr ]]; chk regexvalid.6
@@ -1105,16 +1105,16 @@ run_sash 'str s=$(arg 1); str replacement=$(arg 2)
 if match ${s:!} a { echo match }
 if [[ ${s:!} =~ a ]] { echo test }
 [[ ${s:!} =~ a { echo dispatch } || { echo wrong } ]]
-echo $(sub ${s:!} a ${replacement:!})
-echo $(gsub ${s:!} a ${replacement:!})' aba X
+echo $(- sub ${s:!} a ${replacement:!})
+echo $(- gsub ${s:!} a ${replacement:!})' aba X
 [[ $rc = 0 && $out = $'match\ntest\ndispatch\nXba\nXbX' \
-   && -z $err && -z $rerr ]]; chk regextrust.19
+   && -z $err && -z $rerr ]]; chk migratea.89
 
 run_sash 'str s=":!"
 if match "$s" ":!" { echo literal }
 if [[ "$s" =~ ":!" ]] { echo test }
-echo $(sub ":!" ":!" yes)'
-[[ $rc = 0 && $out = $'literal\ntest\nyes' && -z $err && -z $rerr ]]; chk regextrust.20
+echo $(- sub ":!" ":!" yes)'
+[[ $rc = 0 && $out = $'literal\ntest\nyes' && -z $err && -z $rerr ]]; chk migratea.90
 
 run_sash 'str p=$(arg 1)
 if [[ r? ${p:!} ]] { echo candidate } else { echo invalid }
@@ -1128,11 +1128,11 @@ run_sash 'const p=a; if match a "$p" { echo matched }'
 run_sash 'const p=a; if matchall aa "$p" hits { echo "$(len hits)" }'
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.2
 
-run_sash 'const p=a; echo $(sub aba "$p" X)'
-[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.3
+run_sash 'const p=a; echo $(- sub aba "$p" X)'
+[[ $rc != 0 && $err == *SB5106* ]]; chk migratea.91
 
-run_sash 'const p=a; echo $(gsub aba "$p" X)'
-[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.4
+run_sash 'const p=a; echo $(- gsub aba "$p" X)'
+[[ $rc != 0 && $err == *SB5106* ]]; chk migratea.92
 
 run_sash 'const p=a; if [[ a =~ "$p" ]] { echo matched }'
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.5
@@ -1205,10 +1205,10 @@ if matchall aba "$p" hits { echo "$(len hits)" }
 if [[ aba =~ "$p" ]] { echo test }
 [[ aba =~ "$p" { echo dispatch } || { echo no } ]]
 str s=aba; array a=(aba)
-echo $(sub aba "$p" X) $(gsub aba "$p" X)
+echo $(- sub aba "$p" X) $(- gsub aba "$p" X)
 echo "${s:s/$p/X/}" "${a[0]:s/$p/X/}"' a
 [[ $rc = 0 && $out = $'match\n2\ntest\ndispatch\nXba XbX\nXba Xba' \
-   && -z $err && -z $rerr ]]; chk regexproof.21
+   && -z $err && -z $rerr ]]; chk migratea.93
 
 run_sash 'const p=$(toupper a)
 if [[ r? "$p" && A =~ "$p" ]] { echo matched }'
@@ -1479,11 +1479,11 @@ if match a "$copy" { echo matched }'
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.80
 
 run_sash 'const p="("
-if [[ r? $p ]]; _directory=$(mkdtemp) {
+if [[ r? $p ]] || :; _directory=$(mkdtemp) {
     /bin/rmdir "$_directory"
     if match a "$p" { echo matched }
 }'
-[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.81
+[[ $rc != 0 && $err == *SB5106* ]]; chk migratea.102
 
 run_sash 'array _patterns=("(" a)
 if /bin/false { exit 1 } else {
@@ -1540,14 +1540,14 @@ if select a again { : }'
 
 run_sash 'fn emit { echo payload }
 map paths=([Xba]=filename); const p=a
-emit > "${paths[$(sub aba "$p" X)]:?missing}"'
-[[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.94
+emit > "${paths[$(- sub aba "$p" X)]:?missing}"'
+[[ $rc != 0 && $err == *SB5106* ]]; chk migratea.94
 
 run_sash 'fn emit { echo payload }
 map paths=([Xba]=filename); const p=a; attest p r?
-emit > "${paths[$(sub aba "$p" X)]:?missing}"
+emit > "${paths[$(- sub aba "$p" X)]:?missing}"
 /bin/cat filename'
-[[ $rc == 0 && $out == payload && -z $err && -z $rerr ]]; chk regexproof.95
+[[ $rc == 0 && $out == payload && -z $err && -z $rerr ]]; chk migratea.95
 
 run_sash 'str _p=a
 if ! attest _p r? { exit 1 } else { : }
@@ -1567,6 +1567,328 @@ if match a "$_p" { echo escaped }'
 run_sash 'array _patterns=(a); attest p in _patterns [[ r? $p ]]
 if match b "${_patterns[5]}" { echo matched }'
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.99
+
+# DD132: regex captures carry text and a separately consumed Boolean.
+run_sash 'if out=$(sub abc b B) { echo "$?:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = '0:[aBc]' && -z $err && -z $rerr ]]; chk regexresult.1
+
+run_sash 'str out=old
+if out=$(sub abc z X) { echo wrong } else { echo "$?:[$out]" }'
+[[ $rc = 0 && $out = '1:[abc]' && -z $err && -z $rerr ]]; chk regexresult.2
+
+run_sash 'if out=$(sub abc b b) { echo "matched:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = 'matched:[abc]' && -z $err && -z $rerr ]]; chk regexresult.3
+
+run_sash 'if out=$(gsub abab b B) { echo "$?:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = '0:[aBaB]' && -z $err && -z $rerr ]]; chk regexresult.4
+
+run_sash 'if out=$(gsub abc z X) { echo wrong } else { echo "$?:[$out]" }'
+[[ $rc = 0 && $out = '1:[abc]' && -z $err && -z $rerr ]]; chk regexresult.5
+
+run_sash 'if out=$(sub "" "^$" "") { echo "matched:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = 'matched:[]' && -z $err && -z $rerr ]]; chk regexresult.6
+
+run_sash 'if out=$(gsub ab "^" X) { echo "matched:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = 'matched:[Xab]' && -z $err && -z $rerr ]]; chk regexresult.7
+
+run_sash 'if out=$(match abc123 "[0-9]+") { echo "$?:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = '0:[123]' && -z $err && -z $rerr ]]; chk regexresult.8
+
+run_sash 'if out=$(match abc "^") { echo "matched:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = 'matched:[]' && -z $err && -z $rerr ]]; chk regexresult.9
+
+run_sash 'str out=old
+if out=$(match abc z) { echo wrong } else { echo "$?:[$out]" }'
+[[ $rc = 0 && $out = '1:[]' && -z $err && -z $rerr ]]; chk regexresult.10
+
+run_sash 'str out=$(sub abc a X); echo "$out"'
+[[ $rc != 0 && $err == *SB4018* && $err == *'`sub`'* && $err == *boolean* ]]; chk regexresult.11
+
+run_sash 'echo "[$(gsub aba a A)]"'
+[[ $rc != 0 && $err == *SB4018* && $err == *'`gsub`'* && $err == *boolean* ]]; chk regexresult.12
+
+run_sash 'out=$(match abc b); echo "$out"'
+[[ $rc != 0 && $err == *SB4018* && $err == *'`match`'* && $err == *boolean* ]]; chk regexresult.13
+
+run_sash 'if [[ $(sub abc a X) == Xbc ]] { echo wrong }'
+[[ $rc != 0 && $err == *SB4018* && $err == *'`sub`'* && $err == *boolean* ]]; chk regexresult.14
+
+run_sash 'echo $(- sub $(gsub aba a A) A X)'
+[[ $rc != 0 && $err == *SB4018* && $err == *'`gsub`'* && $err == *boolean* ]]; chk regexresult.15
+
+run_sash 'fn f { echo "$(sub abc a X)" }
+echo $(- sub "$(f)" X Y)'
+[[ $rc != 0 && $err == *SB4018* && $err == *'`sub`'* && $err == *boolean* ]]; chk regexresult.16
+
+run_sash '_out=$(- sub abc z X); echo "[$_out]"'
+[[ $rc = 0 && $out = '[abc]' && -z $err && -z $rerr ]]; chk regexresult.17
+
+run_sash '_out=$(- match abc z); echo "[$_out]"'
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk regexresult.18
+
+run_sash 'if out=$(- sub abc a X) { echo "$out" }'
+[[ $rc != 0 && $err == *SB4025* ]]; chk regexresult.19
+
+run_sash 'if str out=$(sub abc a X) { echo "$out" }'
+[[ $rc != 0 && $err == *SB4025* ]]; chk regexresult.20
+
+run_sash 'out=$(sub abc z X) || echo "miss:[$out]"'
+[[ $rc = 0 && $out = 'miss:[abc]' && -z $err && -z $rerr ]]; chk regexresult.21
+
+run_sash 'if ! out=$(match abc z) { echo "$?:[$out]" } else { echo wrong }'
+[[ $rc = 0 && $out = '0:[]' && -z $err && -z $rerr ]]; chk regexresult.22
+
+run_sash 'str text=aa
+while _out=$(sub "$text" a "") { echo "[$_out]"; text=$_out }
+echo "done:[$_out]"'
+[[ $rc = 0 && $out = $'[a]\n[]\ndone:[]' && -z $err && -z $rerr ]]; chk regexresult.23
+
+run_sash 'const re="^a"
+attest re r?
+if _out=$(sub abc "$re" X) { echo "$_out" } else { echo wrong }'
+[[ $rc = 0 && $out = Xbc && -z $err && -z $rerr ]]; chk regexresult.24
+
+SASH_CFLAGS='--no-taint --no-taint-cst' run_sash 'str re=a
+if out=$(sub abc "$re" X) { echo "$out" }'
+[[ $rc != 0 && $err == *SB5106* ]]; chk regexresult.25
+
+SASH_CFLAGS=--no-taint run_sash 'if out=$(sub "$(/bin/false)" a X) { echo "$out" } else { echo caught }'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk regexresult.26
+
+SASH_CFLAGS=--no-taint run_sash 'echo $(- sub "$(/bin/false)" a X)'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk regexresult.27
+
+# A text projection must not replace the program's completion status.
+run_sash 'str text=abc
+EXIT { echo "$text" }
+text=${text:s/z/X/}'
+[[ $rc = 0 && $out = abc && -z $err && -z $rerr ]]; chk regexresult.28
+
+run_sash 'str name=abc parent=abc
+EXIT { echo "$name,$parent" }
+name=$(basename "$name")
+parent=$(dirname "$parent")'
+[[ $rc = 0 && $out = abc,abc && -z $err && -z $rerr ]]; chk regexresult.29
+
+run_sash 'str text=abc
+_out=${text:s/a/A/,s/z/Z/}
+echo "$_out"'
+[[ $rc = 0 && $out = Abc && -z $err && -z $rerr ]]; chk regexresult.30
+
+run_sash $'if out=$(sub $\'ab\\x00tail\' tail X) { echo wrong } else {\nif [[ $out == $\'ab\\x00tail\' ]] { echo "retained:$(strlen $out)" }\n}'
+[[ $rc = 0 && $out = retained:7 && -z $err && -z $rerr ]]; chk regexresult.31
+
+printf -v _regex_large '%32768s' ''
+SASH_CFLAGS='--heap-size=4096' run_sash "str text='$_regex_large'
+echo ready
+if out=\$(sub \"\$text\" x X) { echo \"\$out\" } else { echo caught }"
+[[ $rc = 2 && $out = ready && -z $err && $rerr == *'regexp error: out of memory'* ]]; chk regexresult.32
+
+SASH_CFLAGS=--no-taint run_sash 'fn f { /bin/false; echo data }
+if out=$(sub "$(f)" a X) { echo "$out" } else { echo caught }'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk regexresult.33
+
+run_sash 'if out=$(sub abc z X); true { echo "$out" }'
+[[ $rc != 0 && $err == *SB4018* && $err == *sub* && $err == *boolean* ]]; chk regexresult.34
+
+run_sash 'if out=$(/bin/false); true { echo "wrong:${out:!}" }'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk regexresult.35
+
+run_sash 'sub abc a X'
+[[ $rc != 0 && $err == *SB5073* && $err == *'x=$(- sub …)'* ]]; chk regexresult.36
+
+run_sash 'array m=(); x=$(match abc a m); echo "$x:${m[0]}"'
+[[ $rc != 0 && $err == *SB4045* && $err == *'x=$(- match S P)'* ]]; chk regexresult.37
+
+# Index captures must finish lowering before the redirected operation, including
+# the three pipeline consumers and a capture that creates additional SSA blocks.
+run_sash 'fn key { echo aba }
+map paths=([Xba]=filename)
+echo direct > "${paths[$(- sub "$(key)" a X)]:?missing}"
+/bin/cat filename
+/bin/echo regular | /bin/cat > "${paths[$(- sub "$(key)" a X)]:?missing}"
+/bin/cat filename
+echo lastpipe > filename
+/bin/cat < "${paths[$(- sub "$(key)" a X)]:?missing}" | readline line
+attest line p?
+echo "$line"
+echo loop > filename
+/bin/cat < "${paths[$(- sub "$(key)" a X)]:?missing}" | while readline entry {
+attest entry p?
+echo "$entry"
+}'
+[[ $rc = 0 && $out = $'direct\nregular\nlastpipe\nloop' && -z $err && -z $rerr ]]; chk regexresult.38
+
+run_sash 'str text=aba; map paths=([Xba]=filename)
+echo sugar > "${paths[${text:s/a/X/}]:?missing}"
+/bin/cat filename'
+[[ $rc = 0 && $out = sugar && -z $err && -z $rerr ]]; chk regexresult.39
+
+SASH_CFLAGS=--no-taint run_sash 'map paths=([X]=filename)
+- echo wrong > "${paths[$(- sub "$(/bin/false)" a X)]:?missing}"
+echo after'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk regexresult.40
+
+# Guarded index captures follow the arguments and each preceding redirect.
+run_sash 'str key=before
+map paths=([before]=arg-before [after]=arg-after)
+fn argument { key=after; echo argument }
+fn index { echo "$key" }
+echo "$(argument)" > "${paths[$(index)]:?missing}"
+/bin/cat arg-after'
+[[ $rc = 0 && $out = argument && -z $err && -z $rerr ]]; chk regexresult.41
+
+run_sash 'str where=parent
+fn index { where=child; echo key }
+fn emit { echo function }
+map paths=([key]=stage-index)
+/bin/echo external | /bin/cat > "${paths[$(index)]:?missing}"
+echo "$where"
+/bin/cat stage-index
+emit > "${paths[$(index)]:?missing}" | /bin/cat
+echo "$where"
+/bin/cat stage-index'
+[[ $rc = 0 && $out = $'parent\nexternal\nparent\nfunction' && -z $err && -z $rerr ]]; chk regexresult.42
+
+run_sash 'str marker=old
+fn index { marker=new; echo key }
+map paths=([key]=skipped-index)
+if /bin/echo wrong > missing/first > "${paths[$(index)]:?missing}" {
+    echo wrong
+} else { echo caught }
+echo "$marker"'
+[[ $rc = 0 && $out = $'caught\nold' && -z $err && -z $rerr && ! -e skipped-index ]]; chk regexresult.43
+
+run_sash 'str text=before optional=""
+str trusted=$(arg 99 "trusted")
+array words=("one two" "" last)
+fn index { text=after; words[0]=changed; optional=present; trusted=changed; echo key }
+map paths=([key]=retained-words)
+/usr/bin/printf "<%s>\n" "$text" @{words:?empty} ${optional:~} ${trusted:!~} tail > "${paths[$(index)]:?missing}"
+/bin/cat retained-words
+echo "$text:$optional"'
+[[ $rc = 0 && $out = $'<before>\n<one two>\n<>\n<last>\n<trusted>\n<tail>\nafter:present' && -z $err && -z $rerr ]]; chk regexresult.44
+
+run_sash 'str text=before
+map values=([data]=before)
+fn index { text=after; values[data]=after; echo key }
+fn emit { echo "$1:${A[data]}" }
+map paths=([key]=retained-call)
+emit "$text" =values > "${paths[$(index)]:?missing}"
+/bin/cat retained-call'
+[[ $rc = 0 && $out = before:after && -z $err && -z $rerr ]]; chk regexresult.45
+
+run_sash 'fn emit { echo "$1:${A[data]}" }
+fn outer {
+    emit payload =B > "${A[$(echo "$1")]:?missing}"
+}
+map paths=([key]=caller-index)
+map values=([data]=from-slot)
+outer key =paths =values
+/bin/cat caller-index'
+[[ $rc = 0 && $out = payload:from-slot && -z $err && -z $rerr ]]; chk regexresult.46
+
+run_sash 'fn index { echo key }
+map paths=([key]=permanent-index)
+exec 7>&1
+exec > "${paths[$(index)]:?missing}"
+echo permanent
+exec 1>&7
+close 7
+/bin/cat permanent-index'
+[[ $rc = 0 && $out = permanent && -z $err && -z $rerr ]]; chk regexresult.47
+
+run_sash 'str marker=old
+fn index { marker=new; echo key }
+map paths=([key]=skipped-exec-index)
+if exec > missing/first > "${paths[$(index)]:?missing}" {
+    echo wrong
+} else { echo caught }
+echo "$marker"'
+[[ $rc = 0 && $out = $'caught\nold' && -z $err && -z $rerr && ! -e skipped-exec-index ]]; chk regexresult.48
+
+run_sash 'echo 0 > index-input
+array paths=(ordered-index)
+fn index -> int {
+    if readline value { attest value (( number = value )); return $number }
+    return 1
+}
+/bin/echo ordered < index-input > "${paths[$(( (index) ))]:?missing}"
+/bin/cat ordered-index'
+[[ $rc = 0 && $out = ordered && -z $err && -z $rerr ]]; chk regexresult.49
+
+run_sash 'array paths=(index-output)
+fn argument -> int { echo argument >&2; return 7 }
+fn index -> int { echo index >&2; return 0 }
+echo "$(argument)" 2> index-stderr > "${paths[$(( (index) ))]:?missing}"
+/bin/cat index-output index-stderr'
+[[ $rc = 0 && $out = $'7\nindex' && -z $err && $rerr = argument ]]; chk regexresult.50
+
+run_sash 'write line > reader-input
+map paths=([key]=reader-input)
+fn index { echo key }
+if readline line < "${paths[$(index)]:?missing}" {
+    attest line p?
+    echo "$line"
+}
+array lines=()
+if read lines < "${paths[$(index)]:?missing}" {
+    attest item in lines p?
+    echo "${lines[0]}"
+}'
+[[ $rc = 0 && $out = $'line\nline' && -z $err && -z $rerr ]]; chk regexresult.51
+
+run_sash 'map paths=([key]=external-index)
+echo payload > "${paths[$(/bin/echo key)]:?missing}"'
+[[ $rc != 0 && $err == *SB5020* ]]; chk regexresult.52
+
+SASH_CFLAGS=--no-taint run_sash 'map paths=([key]=external-index)
+echo payload > "${paths[$(/bin/echo key)]:?missing}"
+/bin/cat external-index'
+[[ $rc = 0 && $out = payload && -z $err && -z $rerr ]]; chk regexresult.53
+
+run_sash 'fn key { echo key }
+map paths=([key]=concat-index)
+echo default > "${paths[$(echo absent)]:-default-index}"
+echo concat > "./${paths[$(key)]:?missing}.suffix"
+/bin/cat default-index concat-index.suffix'
+[[ $rc = 0 && $out = $'default\nconcat' && -z $err && -z $rerr ]]; chk regexresult.54
+
+SASH_CFLAGS=--no-taint run_sash 'map paths=([key]=operand-index)
+if echo wrong > "${paths[$(/bin/false)]:-operand-index}" {
+    echo wrong
+} else { echo caught }'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk regexresult.55
+
+run_sash 'fn index { echo key }
+fn verdict { return 3 }
+map paths=([key]=condition-index)
+if /bin/false > "${paths[$(index)]:?missing}" {
+    echo wrong
+} else { echo "external:$?" }
+if verdict > "${paths[$(index)]:?missing}" {
+    echo wrong
+} else { echo "function:$?" }'
+[[ $rc = 0 && $out = $'external:1\nfunction:3' && -z $err && -z $rerr ]]; chk regexresult.56
+
+run_sash 'map paths=([key]=unchecked-exec-index)
+echo before
+exec > missing/first > "${paths[$(echo key)]:?missing}"
+echo after'
+[[ $rc = 1 && $out = before && -z $err && $rerr == *missing/first* && ! -e unchecked-exec-index ]]; chk regexresult.57
+
+run_sash 'fn index { echo key }
+map paths=([key]=failed-exec-stdout)
+if exec > "${paths[$(index)]:?missing}" 2> failed-exec-stderr > missing/last {
+    echo wrong
+} else { echo caught }
+/bin/false'
+[[ $rc = 1 && $out = caught && -z $err && $rerr == *'/bin/false: command failed'* && ! -s failed-exec-stdout && ! -s failed-exec-stderr ]]; chk regexresult.58
+
+run_sash 'map paths=([key]=exec-diagnostics)
+exec 2> "${paths[$(echo key)]:?missing}"
+/bin/false'
+[[ $rc = 1 && -z $out && -z $err && -z $rerr ]] && grep -qF '/bin/false: command failed' exec-diagnostics; chk regexresult.59
 
 set -e
 tally

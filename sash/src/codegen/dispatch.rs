@@ -201,8 +201,8 @@ impl SsaInst {
                     *site, redirects, *checked, builder, module, ctx,
                 );
             }
-            SsaInst::RedirectPop { site, fds } => {
-                super::inst_handlers::emit_redirect_pop(*site, fds, builder, module, ctx);
+            SsaInst::RedirectPop { site, fds, close } => {
+                super::inst_handlers::emit_redirect_pop(*site, fds, *close, builder, module, ctx);
             }
             SsaInst::Test(test_expr, _) => {
                 let result = lower_test_expr(

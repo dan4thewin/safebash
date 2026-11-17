@@ -844,7 +844,7 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 /// Two names are both a value intrinsic and a legal statement, and the generic
 /// "exact arity" sentence denies the second form exists for either:
 ///
-/// - `$(match S P)` captures the matched text; `match S P ARR` fills `ARR`.
+/// - `$(- match S P)` captures text and discards the boolean; `match S P ARR` fills `ARR`.
 /// - `$(keys m)` splats the keys; `keys m k` snapshots them into `k` (DD#75).
 ///
 /// For `match` the misdirection was costly: the repair a reader infers from
@@ -853,7 +853,7 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 /// runs — and captures the empty string silently. So each gets text steering
 /// to the repair that is actually right.
 ///
-/// The rest (`sub`, `gsub`, `len`, `strlen`) are value-only — a bare statement
+/// The rest (`sub`, `gsub`, `len`, `strlen`) require capture — a bare statement
 /// draws SB5073 — so the generic sentence is accurate for them.
 fn cmdsub_arity_diag(
     name: &str,
@@ -880,7 +880,9 @@ fn cmdsub_arity_diag(
             "`match` in `$( )` is the capturing form and takes `S P` — got 3 \
              arguments. `match S P ARR` is the statement form: it fills `ARR` and \
              yields a status, so `$( )` would capture the empty string. Drop `ARR` \
-             to capture the matched text, or use the statement form outside `$( )`"
+             and use `x=$(- match S P)` to capture text and discard the boolean, \
+             or handle both with a capture-condition. To fill `ARR`, use the \
+             statement form outside `$( )`"
                 .to_string(),
         );
     }
@@ -1566,8 +1568,10 @@ fn is_intrinsic_capture_condition(stmt: &Statement, c: &crate::ir::Command) -> b
     };
     let has_status = match name.as_str() {
         "getenv" => true,
-        "mkdtemp" => !matches!(stmt.kind, StmtKind::Suppressed(_)),
-        _ => false,
+        _ => {
+            !matches!(stmt.kind, StmtKind::Suppressed(_))
+                && (name == "mkdtemp" || crate::ssa::BuiltinCmd::from_name(name).is_regex_value())
+        }
     };
     has_status
         && crate::ssa::value_intrinsic_arity(name)
@@ -1604,9 +1608,9 @@ fn stmt_is_external_command(stmt: &Statement) -> bool {
 fn nonstatus_in_condition_diag(span: Span, what: &str, is_capture: bool) -> Diagnostic {
     let advice = if is_capture {
         format!(
-            "{what} captures a value, but a capture-condition branches on an exit status — a \
-             single external command (`if x=$(cmd) {{ … }}`), `$(getenv NAME)` or `$(mkdtemp)`. \
-             Use a direct untyped binding with an available status, not a typed declaration, \
+            "{what} captures a value, but a capture-condition needs a status or boolean — a \
+             single external command (`if x=$(cmd) {{ … }}`), `$(getenv NAME)`, `$(mkdtemp)`, \
+             or a `match`/`sub`/`gsub` capture. Use a direct untyped binding with an available result, not a typed declaration, \
              discarded status, value-only intrinsic or concatenation. Bind it, then test: \
              `x=…; if [[ … ]]`."
         )
@@ -4347,28 +4351,38 @@ enum CmdPos {
 /// for a body statement, because that one *is* inside a command substitution.
 /// Same rule, same code, different explanation.
 ///
-/// Every name here is scalar-valued, so the generic advice — capture it with
-/// `x=$(name …)` — always names a form that works. The two **collection**
+/// Every name here is scalar-valued; the capture advice explicitly discards
+/// a regex operation's separate boolean. The two **collection**
 /// intrinsics are not in `VALUE_ONLY_INTRINSICS` and do not reach this
 /// function; `keys` once was, and inherited a suggestion SB5025 rejects in as
 /// many words. If a collection-valued name is ever added to that list, it
 /// needs its own wording, not this one.
 fn value_intrinsic_diag(name: &str, c: &Command, pos: CmdPos) -> Option<Diagnostic> {
-    let ellipsis = if c.args.is_empty() { "" } else { " …" };
+    let capture = value_intrinsic_capture_spelling(name, c);
     let complaint = match pos {
         CmdPos::CmdsubSole => return None,
         CmdPos::Statement => format!(
             "`{name}` is a value intrinsic — it produces a value and is only \
-             valid inside a command substitution, e.g. `x=$({name}{ellipsis})`. \
+             valid inside a command substitution, e.g. `{capture}`. \
              A bare statement would discard the value"
         ),
         CmdPos::CmdsubOther => format!(
             "`{name}` is a value intrinsic — inside `$( … )` it is recognised \
              only when it is the whole substitution, not one statement among \
-             several. Capture it first (`x=$({name}{ellipsis})`) and use `$x` here"
+             several. Capture it first (`{capture}`) and use `$x` here"
         ),
     };
     Some(Diagnostic::error_span(c.name.span, "SB5073", complaint))
+}
+
+fn value_intrinsic_capture_spelling(name: &str, c: &Command) -> String {
+    let ellipsis = if c.args.is_empty() { "" } else { " …" };
+    let discard = if crate::ssa::BuiltinCmd::from_name(name).is_regex_value() {
+        "- "
+    } else {
+        ""
+    };
+    format!("x=$({discard}{name}{ellipsis})")
 }
 
 fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
@@ -7776,13 +7790,13 @@ fn capture_in_predicate(body: &[Statement], functions: &HashSet<&str>) -> String
     let [stmt] = body else {
         return BODY.to_string();
     };
-    if matches!(stmt.kind, StmtKind::Suppressed(_)) {
+    let head = single_value_command(body).map(|c| expr_literal_str(&c.name));
+    if matches!(stmt.kind, StmtKind::Suppressed(_)) && !matches!(head, Some("sub" | "gsub")) {
         return "`$(- …)` is a suppressed capture".to_string();
     }
-    let StmtKind::Command(c) = &stmt.kind else {
+    let Some(head) = head else {
         return BODY.to_string();
     };
-    let head = expr_literal_str(&c.name);
     if functions.contains(head) {
         return format!("`$({head} …)` calls function `{head}`");
     }

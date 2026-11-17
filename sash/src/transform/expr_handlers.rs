@@ -6,7 +6,26 @@ use crate::ssa::*;
 
 pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> SsaValue {
     check_function_capture(expr, state);
+    if let Some(c) = regex_capture(expr) {
+        let name = literal_name_of(&c.name);
+        let call = call_spelling(name, c);
+        let at = expr.span;
+        state.expr_diagnostics.borrow_mut().push((
+            at,
+            format!(
+                "{}:{}: error [SB4018] `{name}` returns text and a boolean — consume the boolean \
+                 with `if x=$({call}) {{ … }}`, or discard it with `$(- {call})`",
+                at.line, at.col
+            ),
+        ));
+    }
     capture_value(expr, state)
+}
+
+fn regex_capture(expr: &Expr) -> Option<&Command> {
+    let (stmt, name, command) = single_command_subst(expr)?;
+    (!matches!(stmt.kind, StmtKind::Suppressed(_)) && BuiltinCmd::from_name(&name).is_regex_value())
+        .then_some(command)
 }
 
 /// DD#55: a capture of a user function. The capture binds what the function
@@ -60,8 +79,8 @@ fn call_spelling(name: &str, c: &Command) -> String {
     }
 }
 
-/// [`handle_command_substitution`] without its function-capture check, for a
-/// capture rebuilt from one already checked (`suppressed_capture_value`).
+/// Build a capture whose result use is already accounted for. Operand captures
+/// still go through `expr_to_value` and retain their own result obligations.
 pub(super) fn capture_value(expr: &Expr, state: &VersionState) -> SsaValue {
     let Some((stmt, name, c)) = single_command_subst(expr) else {
         // Multi-statement / pipeline body (`$(x=1; echo $x)`, `$(a | b)`):
@@ -404,6 +423,7 @@ fn path_sugar_intrinsic(c: &Command, state: &VersionState, pattern: &str) -> Ssa
         pattern: Box::new(SsaValue::Literal(pattern.to_string())),
         replacement: Box::new(SsaValue::Literal(String::new())),
         global: false,
+        capture_status: false,
     }
 }
 
@@ -426,6 +446,7 @@ fn regex_replace_intrinsic(c: &Command, state: &VersionState, global: bool) -> S
         pattern: Box::new(expr_to_value(&c.args[1], state)),
         replacement: Box::new(expr_to_value(&c.args[2], state)),
         global,
+        capture_status: true,
     }
 }
 
@@ -435,6 +456,7 @@ fn regex_match_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     SsaValue::RegexMatch {
         subject: Box::new(expr_to_value(&c.args[0], state)),
         pattern: Box::new(expr_to_value(&c.args[1], state)),
+        capture_status: true,
     }
 }
 

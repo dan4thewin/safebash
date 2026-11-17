@@ -1161,6 +1161,7 @@ fn check_value_use(
         | SsaValue::RegexMatch {
             subject: left,
             pattern: right,
+            ..
         }
         | SsaValue::DefaultValue {
             source: left,

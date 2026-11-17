@@ -230,12 +230,12 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern sash_pair sash_regex_replace(const char* sp, i64 sl, const char* pp, i64 pl, const char* rp, i64 rl, i64 global);"
+        "extern sash_pair sash_regex_replace(const char* sp, i64 sl, const char* pp, i64 pl, const char* rp, i64 rl, i64 global, i64* out_status);"
     )
     .unwrap();
     writeln!(
         out,
-        "extern sash_pair sash_regex_match_str(const char* sp, i64 sl, const char* pp, i64 pl);"
+        "extern sash_pair sash_regex_match_str(const char* sp, i64 sl, const char* pp, i64 pl, i64* out_status);"
     )
     .unwrap();
     writeln!(
@@ -1214,7 +1214,7 @@ fn emit_redirect_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
             redirects,
             checked,
         } => emit_redirect_push(e, *site, redirects, *checked, types),
-        SsaInst::RedirectPop { site, fds } => emit_redirect_pop(e, *site, fds),
+        SsaInst::RedirectPop { site, fds, close } => emit_redirect_pop(e, *site, fds, *close),
         _ => return false,
     }
     true
@@ -1468,9 +1468,22 @@ fn lower_string_transform_c(e: &mut Emit, value: &SsaValue, types: &VarTypes) ->
             pattern,
             replacement,
             global,
-        } => emit_regex_replace_c(e, subject, pattern, replacement, *global, types),
+            capture_status,
+        } => emit_regex_replace_c(
+            e,
+            subject,
+            pattern,
+            replacement,
+            *global,
+            *capture_status,
+            types,
+        ),
         // $(match S P) — whole match via sash_regex_match_str.
-        SsaValue::RegexMatch { subject, pattern } => emit_regex_match_c(e, subject, pattern, types),
+        SsaValue::RegexMatch {
+            subject,
+            pattern,
+            capture_status,
+        } => emit_regex_match_c(e, subject, pattern, *capture_status, types),
         // $(toupper s) / $(tolower s) — reuse the case-conversion runtime.
         SsaValue::CaseConvert { subject, upper } => {
             let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
@@ -3227,6 +3240,7 @@ fn emit_regex_replace_c(
     pattern: &SsaValue,
     replacement: &SsaValue,
     global: bool,
+    capture_status: bool,
     types: &VarTypes,
 ) -> CStr {
     let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
@@ -3235,7 +3249,7 @@ fn emit_regex_replace_c(
     let t = e.fresh();
     writeln!(
         e.out,
-        "    sash_pair {t} = sash_regex_replace({sp}, {sl}, {pp}, {pl}, {rp}, {rl}, {g});",
+        "    sash_pair {t} = sash_regex_replace({sp}, {sl}, {pp}, {pl}, {rp}, {rl}, {g}, {status});",
         t = t,
         sp = s_ptr,
         sl = s_len,
@@ -3244,6 +3258,7 @@ fn emit_regex_replace_c(
         rp = r_ptr,
         rl = r_len,
         g = global as i64,
+        status = if capture_status { "&__exit_status" } else { "(i64*)0" },
     )
     .unwrap();
     (format!("{}.ptr", t), format!("{}.len", t))
@@ -3255,6 +3270,7 @@ fn emit_regex_match_c(
     e: &mut Emit,
     subject: &SsaValue,
     pattern: &SsaValue,
+    capture_status: bool,
     types: &VarTypes,
 ) -> CStr {
     let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
@@ -3262,12 +3278,17 @@ fn emit_regex_match_c(
     let t = e.fresh();
     writeln!(
         e.out,
-        "    sash_pair {t} = sash_regex_match_str({sp}, {sl}, {pp}, {pl});",
+        "    sash_pair {t} = sash_regex_match_str({sp}, {sl}, {pp}, {pl}, {status});",
         t = t,
         sp = s_ptr,
         sl = s_len,
         pp = p_ptr,
         pl = p_len,
+        status = if capture_status {
+            "&__exit_status"
+        } else {
+            "(i64*)0"
+        },
     )
     .unwrap();
     (format!("{}.ptr", t), format!("{}.len", t))
@@ -3952,7 +3973,7 @@ fn emit_scope_open_failure(
 
 /// Close the scope `RedirectPush { site }` opened. Mirrors native
 /// `emit_redirect_pop`.
-fn emit_redirect_pop(e: &mut Emit, site: u32, fds: &[i64]) {
+fn emit_redirect_pop(e: &mut Emit, site: u32, fds: &[i64], close: RedirectClose) {
     let saved: Vec<SavedFdC> = fds
         .iter()
         .enumerate()
@@ -3961,7 +3982,18 @@ fn emit_redirect_pop(e: &mut Emit, site: u32, fds: &[i64]) {
             original_fd: *fd,
         })
         .collect();
+    if close == RedirectClose::Restore {
+        emit_restore(e, &saved);
+        return;
+    }
+    writeln!(e.out, "    if (__test_result) {{").unwrap();
+    emit_discard_saved(e, &saved);
+    if close == RedirectClose::KeepAndBindOnSuccess {
+        writeln!(e.out, "    sash_scope_bind();").unwrap();
+    }
+    writeln!(e.out, "    }} else {{").unwrap();
     emit_restore(e, &saved);
+    writeln!(e.out, "    }}").unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -602,7 +602,7 @@ echo "$s"'
 # 71.6 an `if` declaration with a capture
 run_sash 'if int n=$(/bin/echo 1) { echo "$n" }'
 [[ $rc != 0 && -z $out \
-   && $err == *':1:4: error [SB4025] a declaration captures a value, but a capture-condition branches on an exit status'* ]]; chk 71.6
+   && $err == *':1:4: error [SB4025] a declaration captures a value, but a capture-condition needs a status or boolean'* ]]; chk 71.6
 # 71.7 a `while` declaration without one
 run_sash 'while int n=1 { break }'
 [[ $rc != 0 && -z $out \
@@ -610,7 +610,7 @@ run_sash 'while int n=1 { break }'
 # 71.8 an `elif` header
 run_sash 'if /bin/false { echo a } elif str s=$(/bin/echo 1) { echo "$s" }'
 [[ $rc != 0 && -z $out \
-   && $err == *':1:31: error [SB4025] a declaration captures a value, but a capture-condition branches on an exit status'* ]]; chk 71.8
+   && $err == *':1:31: error [SB4025] a declaration captures a value, but a capture-condition needs a status or boolean'* ]]; chk 71.8
 # 71.9 (control) outside a header the `{` does not end a declaration, so this
 #      is still SB4014. Whether it should split into a declaration and a
 #      block, as `n=1 { … }` splits into an assignment and a block and
@@ -1213,15 +1213,15 @@ echo $d'
 
 # ── via.21-26: `match` is the one value intrinsic that is ALSO a statement ──
 # The table above says "none is a statement". `match` is the exception:
-# `$(match S P)` captures the matched text, while `match S P ARR` fills ARR and
+# `$(- match S P)` captures text and discards the boolean; `match S P ARR` fills ARR and
 # yields a status. They are one token apart and their results are INVERTED —
-# via.23 gives `[b][]`, via.26 gives `[][b]`.
+# migratea.96 (formerly via.23) gives `[b][]`, via.26 gives `[][b]`.
 #
 # SB4045's generic "exact arity" sentence denied the second form existed, and
 # the repair a reader infers from it — consume the status with `|| :` — is
 # precisely the spelling that captures nothing (via.26). `match` is the only
 # name needing this: every other name in both tables (`sub`, `gsub`, `len`,
-# `strlen`, `keys`) is value-only and draws SB5073 as a statement (via.6-9).
+# `strlen`, `keys`) requires capture and draws SB5073 as a statement.
 # Front-end — all modes.
 
 # via.21 the bare 3-arg form stays rejected, but names the statement form
@@ -1235,12 +1235,12 @@ echo "${m[0]}"'
 # the empty capture instead of inviting it
 [[ $err != *"exact arity"* && $err == *"capture the empty string"* ]]; chk via.22
 
-# via.23 the first repair it offers: drop ARR and capture the matched text
+# Drop ARR, capture text and discard its boolean (formerly via.23).
 run_sash 'array m=()
 s=abc
-r=$(match "$s" b)
+r=$(- match "$s" b)
 echo "[$r][${m[0]}]"'
-[[ $rc = 0 && $out = "[b][]" && -z $err ]]; chk via.23
+[[ $rc = 0 && $out = "[b][]" && -z $err ]]; chk migratea.96
 
 # via.24 the second: use the statement form outside `$( )`
 run_sash 'array m=()
@@ -1254,7 +1254,7 @@ echo "$r"'
 [[ $rc != 0 && -z $out && $err == *SB4045* && $err == *"exact arity"* ]]; chk via.25
 
 # via.26 the `|| :` spelling the old text invited: it COMPILES, and captures
-# the empty string while filling ARR — via.23 inverted. This is the footgun
+# the empty string while filling ARR — migratea.96 inverted. This is the footgun
 # the new wording steers away from, so pin it: if it ever becomes an error,
 # that is a deliberate change and this spec must be updated with it.
 run_sash 'array m=()
