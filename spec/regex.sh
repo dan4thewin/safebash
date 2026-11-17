@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=114
+plan=135
 echo "1..$plan" >&3
 
 set +e
@@ -779,6 +779,157 @@ run_sash 'str p="("
 str x=$(- sub abc "$p" z)
 echo "after [$x]"'
 [[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.56
+
+# Whole-subject anchors must not attest just one acceptable line.
+run_sash 'x=$(arg 1)
+attest x [[ $x =~ ^[a-z]{1,32}$ ]]
+echo "$x"' $'abc\nadmin=true'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'attest: x = '* \
+   && $rerr == *'failed the gate'* ]]; chk 39.57
+
+run_sash 'x=$(arg 1)
+attest x [[ $x =~ ^[a-z]{1,32}$ ]]
+echo "$x"' $'admin=true\nabc'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'attest: x = '* \
+   && $rerr == *'failed the gate'* ]]; chk 39.58
+
+# No line boundaries or trailing-newline exception; ordinary search stays unanchored.
+run_sash 's="ab
+cd"
+trailing="ab
+"
+plain=ab
+empty=""
+if [[ $s =~ ab$ ]] { echo wrong } else { echo end }
+if [[ $s =~ ^cd ]] { echo wrong } else { echo start }
+if [[ $trailing =~ ^ab$ ]] { echo wrong } else { echo trailing }
+if [[ $plain =~ ^ab$ ]] { echo whole }
+if [[ $empty =~ ^$ ]] { echo empty }
+if [[ $s =~ cd ]] { echo search }
+if [[ $s =~ ^ab.cd$ || $s =~ ^ab[^x]cd$ ]] { echo wrong }
+if [[ $s =~ ^ab\x0acd$ ]] { echo newline }'
+[[ $rc = 0 && $out = $'end\nstart\ntrailing\nwhole\nempty\nsearch\nnewline' \
+   && -z $err && -z $rerr ]]; chk 39.59
+
+# A grouped anchor bypasses the engine's first-instruction fast path.
+run_sash 's="ab
+cd"
+p="(^cd)"
+echo "[$(match "$s" "$p")]"'
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk 39.60
+
+# The out-array boolean and clear-on-no-match agree with the other match forms.
+run_sash 'array g=(stale)
+s="ab
+cd"
+if match "$s" "(ab$)" g { echo wrong } else { echo "miss $(len g)" }'
+[[ $rc = 0 && $out = 'miss 0' && -z $err && -z $rerr ]]; chk 39.61
+
+run_sash 's="ab
+cd"
+[[ $s =~
+    ^cd { echo wrong-start }
+    ab$ { echo wrong-end }
+    ^ab\x0acd$ { echo whole }
+    || { echo wrong-default }
+]]'
+[[ $rc = 0 && $out = whole && -z $err && -z $rerr ]]; chk 39.62
+
+run_sash 's="ab
+cd"
+first=$(sub "$s" "(^cd)" X)
+all=$(gsub "$s" "(ab$)" X)
+if [[ $first == $s && $all == $s ]] { echo unchanged } else { echo wrong }'
+[[ $rc = 0 && $out = unchanged && -z $err && -z $rerr ]]; chk 39.63
+
+# Advancing a global search does not create another beginning of subject.
+run_sash 'x=aaa
+echo "$(gsub "$x" "^a" X) ${x:s/^a/X/g}"
+w=a-a-a
+w =~ s/^a-/X/g
+echo "$w"'
+[[ $rc = 0 && $out = $'Xaa Xaa\nXa-a' && -z $err && -z $rerr ]]; chk 39.64
+
+# Resumed captures and unmatched spans retain original-subject offsets.
+run_sash 'echo "$(gsub abab "(^a)|(b)" "<\1\2>")"'
+[[ $rc = 0 && $out = '<a><b>a<b>' && -z $err && -z $rerr ]]; chk 39.65
+
+run_sash '- matchall aaa "^a" m
+echo "$(len m):${m[0]}"'
+[[ $rc = 0 && $out = '1:a' && -z $err && -z $rerr ]]; chk 39.66
+
+run_sash '- matchall abab "(^a)|(b)" m
+echo "$(len m):[$(join m ,)]"'
+[[ $rc = 0 && $out = '6:[a,,,b,,b]' && -z $err && -z $rerr ]]; chk 39.67
+
+# Zero-width anchors still advance, without re-anchoring at each byte.
+run_sash 's="ab
+cd"
+echo "[$(gsub "$s" "^" ">")]"'
+[[ $rc = 0 && $out = $'[>ab\ncd]' && -z $err && -z $rerr ]]; chk 39.68
+
+run_sash 's="ab
+cd"
+- matchall "$s" "^" m
+echo "$(len m):[${m[0]}]"'
+[[ $rc = 0 && $out = '1:[]' && -z $err && -z $rerr ]]; chk 39.69
+
+# The empty subject and terminal position are real match positions.
+run_sash 'echo "[$(sub "" "^$" X)][$(gsub "" "^$" Y)]"'
+[[ $rc = 0 && $out = '[X][Y]' && -z $err && -z $rerr ]]; chk 39.70
+
+run_sash 'echo "[$(gsub ab "" ".")]"
+echo "$(gsub a "a|$" X)"
+- matchall a "a|$" m
+echo "$(len m):[${m[0]}][${m[1]}]"'
+[[ $rc = 0 && $out = $'[.a.b.]\nXX\n2:[a][]' \
+   && -z $err && -z $rerr ]]; chk 39.71
+
+# The retained first-NUL boundary also bounds resumed and zero-width searches.
+run_sash 's=$'"'"'a\x00b'"'"'
+want=$'"'"'aX\x00b'"'"'
+got=$(gsub "$s" "$" X)
+if [[ $got == $want ]] { echo retained } else { echo wrong }'
+[[ $rc = 0 && $out = retained && -z $err && -z $rerr ]]; chk 39.72
+
+run_sash 's=$'"'"'a\x00b'"'"'
+- matchall "$s" "$" m
+echo "$(len m)"
+- matchall "$s" "" m
+echo "$(len m)"'
+[[ $rc = 0 && $out = $'1\n2' && -z $err && -z $rerr ]]; chk 39.73
+
+run_sash 's=$'"'"'\x00b'"'"'
+want=$'"'"'X\x00b'"'"'
+got=$(gsub "$s" "" X)
+if [[ $got == $want ]] { echo retained } else { echo wrong }
+- matchall "$s" "" m
+echo "$(len m)"'
+[[ $rc = 0 && $out = $'retained\n1' && -z $err && -z $rerr ]]; chk 39.74
+
+# The still-built standalone helper must use the same subject/cursor contract.
+run_sash "sash-regex captures-all aaa '^a' | /usr/bin/od -An -tx1
+sash-regex captures-all abab '(^a)|(b)' | /usr/bin/od -An -tx1"
+[[ $rc = 0 && $out = $' 61\n 61 00 00 00 62 00 00 62' \
+   && -z $err && -z $rerr ]]; chk 39.75
+
+run_sash "sash-regex gsub aaa '^a' X
+echo .
+sash-regex gsub abab '(^a)|(b)' '<\1\2>'
+echo ."
+[[ $rc = 0 && $out = $'Xaa.\n<a><b>a<b>.' \
+   && -z $err && -z $rerr ]]; chk 39.76
+
+run_sash "sash-regex sub '' '^$' X
+echo .
+sash-regex gsub '' '^$' Y
+echo .
+sash-regex gsub ab '' .
+echo /
+sash-regex gsub a 'a|$' X
+echo ."
+[[ $rc = 0 && $out = $'X.\nY.\n.a.b./\nXX.' \
+   && -z $err && -z $rerr ]]; chk 39.77
 
 set -e
 tally

@@ -10,6 +10,18 @@ gates:
   - "the unsupported surface is listed (lookahead/lookbehind)"
   - "each claim is verified against the binary, not against DD text"
 
+## Historical delivery and current references
+
+The September delivery below describes the former long manual section.
+The compiler-command manual replaced it in journal 623; the
+[specification task](specification-document.md) preserves its reusable
+material. DD39/DD63 now own the current regex contract.
+
+Journal 642's whole-subject repair is the first local `regexec.c` change;
+the earlier byte-identical claim is historical. `regaux.c` and the upstream
+reference remain unchanged. The first-NUL boundary is deliberately retained,
+not an outstanding request to match the suffix.
+
 ## What
 
 DG, 2026-09-11:
@@ -29,7 +41,7 @@ already did (`bug-regex-literal-dash-in-bracket`, closed as not-a-bug), filed
 P1 with a three-way fork for DG — all of which dissolved once the posture was
 stated. A documented dialect converts that whole class of report into a lookup.
 
-## Source material
+## Original source material, 2026-09-11
 
 - `notes/decisions/DD39-glob-regex.md` — the engine section plus three
   clarifications (2026-05-24 runtime abort, 2026-07-08 `{`/`[`, 2026-09-11
@@ -49,9 +61,8 @@ the DDs.
 ## Related
 
 - `notes/tasks/bug-regex-rhs-space-quote.md`
-- `notes/tasks/bug-regex-blind-past-interior-nul.md` — a real bug (wrong
-  answers past an interior NUL), not a dialect question
-- `notes/tasks/limitation-regex-stops-at-interior-nul.md`
+- `notes/tasks/limitation-regex-stops-at-interior-nul.md` — the former
+  interior-NUL bug record, retained as a deliberate limitation
 
 ## Closed 2026-09-13
 
@@ -119,7 +130,7 @@ Every one of those claims was probed against the binary, per the task's own
 caution. Rendering checked with `man -P cat`; the one `groff` warning in the
 file (`table wider than line width`) is pre-existing and unrelated.
 
-## Corrections to the source material
+## Corrections to the source material at delivery, 2026-09-14
 
 - DD#39's top section still says there is no `{n,m}`. There is; the
   clarification further down is the current text. Not edited here (a DD

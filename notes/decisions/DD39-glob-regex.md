@@ -9,6 +9,10 @@ status: accepted
    normalized absolute paths (DD69/DD73); directory failures follow DD130.
 4. Regex operations use the chosen Plan 9 dialect, not Bash/POSIX equivalence.
    Construct-opening metacharacters must be escaped to denote literals.
+   1. `^` and `$` anchor the original regex subject, including during global
+      searches; neither internal nor trailing newlines create boundaries.
+   2. Matching remains leftmost-longest. Dot and negated classes exclude
+      newline; the regex subject still ends at its first NUL (DD63).
 5. Validate every static regex at compile time and identify the offending
    pattern; validated literals are to be compiled once for runtime reuse.
 6. Dynamic invalid-pattern failures retain DD55/DD70's ordinary operational
@@ -94,6 +98,32 @@ runtime regex operands must be immutable and successfully checked with
 actual literal regex use retains static validation, and allocation
 faults remain fatal. The integrated trial is not yet implemented.
 
+## Whole-subject anchors (DG, 2026-11-16)
+
+DG chose to retain Plan 9 and fix the default anchors now, deferring
+multiline syntax. `^` matches only the beginning of the original regex
+subject; `$` matches only its end, without an exception before a trailing
+newline. Resuming a global search does not create another beginning.
+This applies to tests, attests, dispatch, every `match` form, `matchall`,
+`sub`/`gsub` and their substitution sugar.
+
+The regex-visible subject still ends at the first NUL. Whole-subject
+anchors are therefore not a proof that a counted string contains no NUL;
+validation that needs that property must also reject it, using `0?`.
+Leftmost-longest matching, capture layout, bytewise advancement and the
+newline exclusions of `.` and negated classes remain unchanged. An
+explicit newline in a pattern can still match one.
+
+The AI implementation changes the BOL fast path and BOL/EOL instructions
+in the vendored matcher. Both global runtime wrappers and the still-built
+`sash-regex` helper retain the original subject and supply the search cursor
+through the existing `Resub[0].s.sp` input.
+DD63 defines empty/terminal matches and the first-NUL iteration limit.
+No new engine API, dependency, flag or dynamic-pattern failure policy is
+introduced. [Journal 642](../journal/642-regex-subject-boundaries.md)
+records the repair; [regex-multiline-mode](../tasks/regex-multiline-mode.md)
+owns the deferred syntax decision.
+
 ## Clarification (2026-05-24): Runtime regex abort (shipped baseline)
 
 ~~When a dynamic pattern (containing $variables) fails regcomp9 at
@@ -162,7 +192,9 @@ accepts pattern P and sash does not, therefore sash is broken." The premise is
 wrong. Where the engine's language differs from POSIX ERE or from bash's
 glibc `regcomp`, the difference is **deliberate** unless it produces a wrong
 *answer* (a match that should not match, or data mis-handled — those remain
-bugs, e.g. `bug-regex-blind-past-interior-nul`).
+bugs, ~~e.g. `bug-regex-blind-past-interior-nul`~~).
+The first-NUL boundary was subsequently retained deliberately (DD63);
+violating that boundary or the whole-subject anchor contract remains a bug.
 
 Note this is a *different* justification from the 2026-07-08 `{`/`[` ruling
 above. There, strictness was defended because **bash errors too**. Here, bash
@@ -207,11 +239,17 @@ Lookahead/lookbehind remain unsupported, and that part is not stale.
 
 ### What is actually vendored
 
-`sash-rt/csrc/regexec.c` and `regaux.c` are **byte-identical** to
+~~`sash-rt/csrc/regexec.c` and `regaux.c` are **byte-identical** to
 `contrib/plan9port-regexp/`. Every local change lives in `regcomp.c` (~223
 lines): `parsecounted` (`{n,m}` + the cap) and `bldshortclass` (the six
 shorthand classes). Both are pure additions to the parser — the matcher is
-untouched upstream code.
+untouched upstream code.~~
+
+The upstream reference under `contrib/plan9port-regexp/` is unchanged.
+`regaux.c` remains byte-identical to it; `regexec.c` now has the
+whole-subject anchor changes above. The existing parser additions include
+counted repetition and its cap, shorthand classes and hex escapes, with
+local bounds/group-repeat checks. Integration headers also differ.
 
 ### Follow-up
 

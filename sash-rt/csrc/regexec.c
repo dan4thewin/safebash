@@ -53,12 +53,8 @@ regexec1(Reprog *progp,	/* program to run */
 				s = p;
 				break;
 			case BOL:
-				if(s == bol)
-					break;
-				p = utfrune(s, '\n');
-				if(p == 0 || s == j->eol)
+				if(s != bol)
 					return match;
-				s = p+1;
 				break;
 			}
 		}
@@ -105,11 +101,11 @@ regexec1(Reprog *progp,	/* program to run */
 							return -1;
 					break;
 				case BOL:
-					if(s == bol || *(s-1) == '\n')
+					if(s == bol)
 						continue;
 					break;
 				case EOL:
-					if(s == j->eol || r == 0 || r == '\n')
+					if(s == j->eol || r == 0)
 						continue;
 					break;
 				case CCLASS:

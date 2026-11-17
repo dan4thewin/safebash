@@ -4,6 +4,11 @@ status: accepted
 1. Regex builtins take ordinary string arguments. Matching is unanchored;
    `sub` replaces the first match and `gsub` all matches. Quoting controls
    string evaluation, not regex literalization.
+   1. `^`/`$` refer to the original regex subject, not individual lines or
+      a resumed suffix; `$` has no trailing-newline exception.
+   2. Global operations resume at the previous match's end. After a
+      zero-width match, advance one byte, or stop at the subject's end.
+      Empty subjects and terminal positions are valid match positions.
 2. Literal patterns are checked at compile time; dynamic patterns compile
    at runtime under the ordinary recoverable-failure contract. Patterns
    support exact two-digit `\xNN` escapes; replacements support only
@@ -96,6 +101,36 @@ proof for the original pattern or for a substring does not certify it.
 **no other flags** — `regcomp9` takes only a pattern and the vendored
 Plan 9 engine has no `REG_ICASE`; case-insensitive is unsupported (would
 need vendored-engine work, deliberately punted).
+
+## Subject boundaries and global iteration (2026-11-16)
+
+DG chose whole-subject default anchors and deferred multiline syntax.
+`^` means the beginning of the original regex subject; `$` means its end,
+not the position before an internal or trailing newline. The subject ends
+at its first NUL, as retained below. This is shared by every regex form,
+including attest predicates and dispatch.
+
+`matchall` and `gsub` keep that same subject while moving a search cursor.
+A nonempty match resumes at its end. A zero-width match resumes one byte
+later, except at the terminal position, where iteration ends. The empty
+subject has one such position. The terminal position is also searched
+after a nonempty match ending there: `matchall a 'a|$' m` finds `"a"` and
+an empty match; `$(gsub a 'a|$' X)` is `XX`. An empty pattern on `ab`
+therefore gives `.a.b.` when globally replaced by `.`.
+
+These are the existing "every match" and byte-advancement rules, now applied
+consistently to substitution as well as collection. The repair also makes
+both loops stop at the first NUL rather than resuming beyond it after an
+empty match. Substitution preserves the NUL and every later byte.
+Non-global `sub` still replaces just the first match.
+
+Plan 9's leftmost-longest choice and capture layouts are unchanged. Dot
+and negated classes still exclude newline; a literal newline in a pattern
+can match one. There is no new multiline flag or inline modifier.
+[DD39](DD39-glob-regex.md) records the engine choice and local matcher
+changes; [journal 642](../journal/642-regex-subject-boundaries.md) records
+the native/C evidence. The
+[multiline syntax task](../tasks/regex-multiline-mode.md) remains deferred.
 
 ## Captures
 
@@ -353,6 +388,8 @@ forms differ only in which runtime symbol is called, so splitting them would
 mean two of every downstream arm to keep in step. Runtime:
 `sash_regex_matchall_into`; the janet helper gains a `captures-all`
 subcommand. A zero-width match advances one byte, or the loop would spin.
+At the subject's terminal position it ends iteration instead; see the
+shared subject-boundary contract above.
 
 Specs: `regex.sh` 63.ar1-ar4 (arity), 63.ma1-ma9.
 
@@ -381,13 +418,15 @@ Specs: `regex.sh` 63.mi1-63.mi5.
 ## Addendum (2026-09-13) — the subject stops at its first interior NUL
 
 Documenting a boundary DG decided to keep (2026-09-10, YAGNI). Not a change
-in behavior; it has always been this way.
+in the intended contract. The 2026-11-16 global-loop repair closes
+zero-width cases that had incorrectly resumed past it.
 
 Every regex operation in this family — `[[ =~ ]]`, `match`, `matchall`,
 `sub`, `gsub`, `${x:s/…/…/}`, `x =~ s/…/…/` — reads its subject as a **C
 string** and examines it only **up to the first interior NUL**. Bytes past
 that are neither matched nor replaced, and are preserved unchanged. The
-operation reports success.
+boundary itself is not an error; match forms retain their ordinary
+matched/no-match verdict.
 
 <del>
 
@@ -410,10 +449,10 @@ correct slice. The truncation is one level down, in the Plan 9
 `regcomp9`/`regexec9` API, which takes a `char *` and has no length parameter.
 
 **Like the POSIX bracket classes, this boundary does not announce itself.**
-Everything else the engine cannot do is rejected (SB5023); this returns a
-wrong answer quietly. That is why it is stated here and in
-`docs/sash.1` (§REGULAR EXPRESSIONS, "Interior NUL bytes") rather than left
-to be discovered.
+~~Everything else the engine cannot do is rejected (SB5023); this returns a
+wrong answer quietly.~~ The retained prefix-only contract is stated here
+and in `docs/sash.1`'s current limitations, rather than left to be discovered.
+The former long REGULAR EXPRESSIONS section is historical.
 
 Coherent with DD#99, where a NUL is the **record separator**: text within one
 record does not contain one, and a scalar that holds NULs is mid-split. The

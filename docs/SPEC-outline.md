@@ -281,6 +281,7 @@
 15. Regexes and substitution
     1. `[[ SUBJECT =~ PATTERN ]]` tests a regular expression (regex).
         1. Case-sensitive, unanchored matching; `^`/`$` anchor the complete subject.
+        2. Internal newlines and global resumption create no new boundaries; `$` has no trailing-newline exception.
     2. Operators: `. * + ? | ( ) [ ] [^ ]`, anchors and counted repetition with authored bounds at most 32; no lookaround or pattern backreferences.
         1. `\d` is ASCII digits, `\w` ASCII letters/digits/underscore, `\s` tab-through-CR plus space; uppercase forms negate.
         2. Dot and negated classes exclude newline; escape opening metacharacters for literal use and `\-` for a literal class hyphen.
@@ -311,6 +312,8 @@
         2. Comma-chained edits run left-to-right; a pending comma permits newline but requires another edit.
         3. Each edit projects text; no chain-wide boolean.
     8. Regex subjects stop at the first interior NUL; substitution preserves the unexamined suffix.
+        1. Empty subjects and terminal positions are valid match positions.
+        2. Global operations resume at the previous match's end; after a zero-width match advance one byte, or stop at the subject's end.
     9. Dispatch: `[[ SUBJECT == PAT { ... } ... || { ... } ]]`, or `=~` for regex.
         1. One mode; subject evaluated once, patterns lazily in source order; first matching arm only.
         2. Exact arms may list alternatives; regex arms take one pattern. Optional default; otherwise no match does nothing.

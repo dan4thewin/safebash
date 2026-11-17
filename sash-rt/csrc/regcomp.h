@@ -32,8 +32,8 @@ struct	Resublist
 #define	ANY		0300	/* Any character except newline, . */
 #define	ANYNL		0301	/* Any character including newline, . */
 #define	NOP		0302	/* No operation, internal use only */
-#define	BOL		0303	/* Beginning of line, ^ */
-#define	EOL		0304	/* End of line, $ */
+#define	BOL		0303	/* Beginning of subject, ^ */
+#define	EOL		0304	/* End of subject, $ */
 #define	CCLASS		0305	/* Character class, [] */
 #define	NCCLASS		0306	/* Negated character class, [] */
 #define	END		0377	/* Terminate: match found */

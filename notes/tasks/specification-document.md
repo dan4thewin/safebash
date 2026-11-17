@@ -101,9 +101,10 @@ Known exclusions and corrections from the assessment:
   `echo`/`write`; provisional scratch/accumulation policy is not implemented.
 - The regex additions preamble wrongly says Bash does not accept counted
   repetition. A Bash control accepts `^a{2}$`; do not reproduce that claim.
-- The whole-subject anchor promise contradicts the still-open
+- At the assessment, the whole-subject anchor promise contradicted the
   [anchor bug](bug-regex-line-anchors.md), including global-match resumption.
-  Do not turn the faulty implementation into an intentional dialect rule.
+  That repair is delivered in journal 642: use DD39/DD63's corrected
+  subject boundaries, not the historical faulty behavior or a new multiline flag.
 - The regex interior-NUL restriction (1066-1099) is instead a
   [deliberately documented limitation](limitation-regex-stops-at-interior-nul.md):
   matching stops at the first NUL although scalar storage retains the suffix.

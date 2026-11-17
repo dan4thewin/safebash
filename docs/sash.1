@@ -258,6 +258,10 @@ Compilation alone does not sign a binary or make it tamper-evident.
 .PP
 Regex operations stop at the first interior NUL even though scalar strings
 retain later bytes.
+Within that prefix, ^ and $ anchor the original subject, including during
+global searches; $ has no exception before a trailing newline.
+Dot and negated character classes exclude newline.
+There is no multiline-anchor flag.
 .SH BUGS
 Native builds use
 .I output.o
@@ -270,10 +274,6 @@ rather than a normal diagnostic.
 These include object-file writes, starting the linker, and stdout writes
 to a broken pipe or full device.
 A failed completion message can occur after an executable has been created.
-.PP
-Regex anchors have known bugs around internal newlines and global-match
-resumption.
-They are not reliable whole-subject validation boundaries.
 .SH SEE ALSO
 .BR sash-convert (1),
 .BR sash-expand (1),

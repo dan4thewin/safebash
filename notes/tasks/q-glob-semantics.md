@@ -80,9 +80,9 @@ Regexes match basenames using DD63 semantics, including leading-dot
 names when they match, but never the `.`/`..` entries. Do not split a
 directory out of regex syntax or impose the glob star limit. Its
 directory enumeration serves the pattern batches, which concatenate
-in pattern order without deduplication. Use the existing regex
-correctness owner (`bug-regex-line-anchors`), not a new selector-specific
-interpretation of its known faults.
+in pattern order without deduplication. The shared whole-subject anchor
+repair (`bug-regex-line-anchors`, journal 642) is complete. Use that
+DD39/DD63 contract, not a selector-specific interpretation of the old faults.
 
 Every runtime regex operand needs DD132's successful validity proof for
 its immutable final value. Literal use retains static validation.

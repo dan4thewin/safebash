@@ -1,19 +1,45 @@
 title: "bug: regex `^`/`$` anchor at lines, and a global match re-anchors after every match"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
 gates:
-  - "`x=$(arg 1); attest x [[ $x =~ ^[a-z]{1,32}$ ]]` fails the gate for `$'abc\\n;rm -rf x'` and for `$'x;y\\nabc'` (today both are blessed whole), native and C"
-  - "`[[ $'ab\\ncd' =~ ab$ ]]` and `[[ $'ab\\ncd' =~ ^cd ]]` are false"
-  - "`${x:s/^a/X/g}` on `aaa` is `Xaa` (today `XXX`); `${w:s/^a-/X/g}` on `a-a-a` is `Xa-a` (today `XXa`)"
-  - "`matchall` of `^a` on `aaa` finds one match (today 3)"
-  - "on `$'ab\\ncd'`, `${z:s/^/>/g}` is `>ab` / `cd` (today `>a>b>` / `>c>d`) and `${z:s/^c/X/g}` is unchanged (today `ab` / `Xd`)"
-  - "a non-global `${z:s/^c/X/}` and a `.`/`[^…]` across a newline keep today's answers (neither matches a newline)"
-  - "sash.1 says `[^…]` never matches a newline, beside the `.` sentence"
-  - "DD39 addendum: the first local change to the vendored matcher"
+  - "native and C reject multiline attest subjects whose first or last line alone matches the anchored pattern"
+  - "all regex consumer forms use original-subject anchors, including grouped anchors and trailing-newline cases"
+  - "anchored global substitutions and matchall do not re-anchor at resume points; captures and unmatched spans remain correct"
+  - "non-global substitutions obey the same subject anchors; dot and negated classes still exclude newline"
+  - "empty subjects and terminal matches work, with bytewise zero-width progress bounded by the first NUL"
+  - "substitution preserves the NUL and its suffix; matchall does not search that suffix"
+  - "the still-built sash-regex helper preserves the same global origin and empty/terminal positions"
+  - "DD39/DD63 and the current manual describe the repaired contract and deferred multiline syntax"
 
-Two bugs in how the runtime uses the vendored Plan 9 matcher. The first is
+## Completed 2026-11-17
+
+DG chose to keep Plan 9, fix the default anchors and defer multiline syntax.
+The matcher now uses whole-subject BOL/EOL; both global runtime wrappers
+and the retained `sash-regex` helper use its existing search-cursor input
+without replacing the original subject.
+The same repair closes empty/terminal substitution gaps and zero-width
+iteration past the deliberately retained first-NUL boundary.
+
+`regex.sh` 39.57-39.74 all fail on the original runtime and pass after the
+repair, in native and C modes. Helper checks 39.75-39.77 likewise fail
+against the frozen pre-repair helper and pass after its repair.
+Seven runtime/matcher reversions and three isolated helper reversions
+produce their exact predicted red sets; no working-tree stub remains.
+The two accepted gates record 36 then six first-ever IDs. The final gate
+has 11627 checks, no flips or retirements, and all 11585 pre-task statuses
+retained unchanged.
+[Journal 642](../journal/642-regex-subject-boundaries.md) records the evidence.
+[regex-multiline-mode](regex-multiline-mode.md) owns the deferred choice;
+no flag spelling was selected or implemented.
+
+## Historical discovery, 2026-10-31
+
+The source locations, binaries and observations below are the original
+filing, not claims about the repaired implementation.
+
+Two bugs were found in how the runtime uses the vendored Plan 9 matcher. The first is
 P1 because it lets a value past an attest gate. Neither is fixed on the
 `taint-walker-redesign` branch. Found during F10 of the batch-531 port
 (journal 552); DG 2026-10-31: "strict rule; file P1".
@@ -56,7 +82,7 @@ the remainder each iteration, :2746-2752) run the engine on the remainder
 as if it were a fresh string. So `^` matches again at every resume point.
 Measured on 3b96bc40 under `--no-taint`, native and C identical:
 
-| program | today | subject anchors (sash.1) |
+| program | 2026-10-31 result | subject anchors (sash.1) |
 |---|---|---|
 | `x=aaa; ${x:s/^a/X/g}` | `XXX` | `Xaa` (as sed and perl) |
 | `w=a-a-a; ${w:s/^a-/X/g}` | `XXa` | `Xa-a` (as sed and perl) |
@@ -64,7 +90,7 @@ Measured on 3b96bc40 under `--no-taint`, native and C identical:
 | `z=$'ab\ncd'; ${z:s/^/>/g}` | `>a>b>` / `>c>d` | `>ab` / `cd` (as perl without `/m`) |
 | `${z:s/^c/X/g}` | `ab` / `Xd` (bug 1) | unchanged |
 
-## Fix
+## Original fix sketch
 
 - In `regexec.c`, match BOL only at the subject's start and EOL only at its
   end, at all three places.
@@ -89,12 +115,15 @@ Converted bash moves closer to bash: bash's `=~` compiles without
 `REG_NEWLINE`, so its anchors are string anchors too. Its `.` matches a
 newline and sash's does not; that difference is unchanged.
 
-## Specs
+## Spec delivery
 
-Write them in `spec/regex.sh`, at fresh ids above the spec.db high-water
-mark for `39.` (take it from `runs`, not `grep`). Cover each gate above, in
-both modes. The fallout on existing specs is unmeasured, so predict FLIPS
-from a standalone run first.
+The historical `39.` high-water was 56. The twenty-one new checks use
+39.57-39.77, raising `regex.sh`'s per-mode plan from 114 to 135.
+All 114 old checks pass before and after the repair in both modes.
+The original proposed non-global `^c` preservation gate was incorrect:
+non-global substitution must obey the same repaired subject-anchor rule.
+The concise compiler manual records current limitations; its retired long
+regex section was not restored.
 
 Probes: `disc/p8.sh` and `anc/g1.sh` in `files/port-f10-probes.tar.gz` (session
 folder).

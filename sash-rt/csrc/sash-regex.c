@@ -205,10 +205,11 @@ static int do_captures_all(const char *subj, const char *pat) {
     int emitted = 0;
     while (off <= subj_len) {
         memset(resub, 0, (size_t)ms * 16);
-        if (regexec9(prog, buf + off, resub, ms) <= 0) {
+        char **ptrs = (char **)resub;
+        ptrs[0] = buf + off;
+        if (regexec9(prog, buf, resub, ms) <= 0) {
             break;
         }
-        char **ptrs = (char **)resub;
         char *wsp = ptrs[0], *wep = ptrs[1];
         if (!wsp) {
             break;
@@ -276,44 +277,35 @@ int main(int argc, char **argv) {
 
     size_t cap = subj_len + 256, rlen = 0, offset = 0;
     char *out = malloc(cap);
+    char *buf = malloc(subj_len + 1);
+    memcpy(buf, subj, subj_len + 1);
 
-    while (offset < subj_len) {
-        size_t rem = subj_len - offset;
-        char *buf = malloc(rem + 1);
-        memcpy(buf, subj + offset, rem);
-        buf[rem] = 0;
-
-        /* Resub: 10 entries x (sp, ep) = 16 bytes/entry on 64-bit. */
-        char resub[320];
-        memset(resub, 0, sizeof resub);
-        int matched = regexec9(prog, buf, resub, 10);
+    while (offset <= subj_len) {
+        char *ptrs[20] = {0};
+        ptrs[0] = buf + offset;
+        int matched = regexec9(prog, buf, ptrs, 10);
         if (matched <= 0) {
-            if (rlen + rem > cap) {
-                cap = (rlen + rem) * 2;
-                out = realloc(out, cap);
-            }
-            memcpy(out + rlen, subj + offset, rem);
-            rlen += rem;
-            free(buf);
             break;
         }
 
-        char **ptrs = (char **)resub; /* resub[0] = whole match (sp, ep) */
         size_t ms_off = (size_t)(ptrs[0] - buf);
         size_t me_off = (size_t)(ptrs[1] - buf);
+        size_t before = ms_off - offset;
 
         size_t exp_len = expanded_len(rep, rep_len, ptrs);
-        size_t need = rlen + ms_off + exp_len;
+        size_t need = rlen + before + exp_len;
         if (need > cap) {
             cap = need * 2;
             out = realloc(out, cap);
         }
-        memcpy(out + rlen, subj + offset, ms_off); /* pre-match text */
-        rlen += ms_off;
+        memcpy(out + rlen, subj + offset, before); /* pre-match text */
+        rlen += before;
         rlen += expand_rep(out + rlen, rep, rep_len, ptrs); /* expanded replacement */
-        free(buf);
 
-        offset += me_off;
+        offset = me_off;
+        if (!global) {
+            break;
+        }
         if (me_off == ms_off) {
             /* Zero-length match: copy one byte and advance to avoid a loop. */
             if (offset < subj_len) {
@@ -327,20 +319,17 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-
-        if (!global) {
-            size_t rem2 = subj_len - offset;
-            if (rlen + rem2 > cap) {
-                cap = (rlen + rem2) * 2;
-                out = realloc(out, cap);
-            }
-            memcpy(out + rlen, subj + offset, rem2);
-            rlen += rem2;
-            break;
-        }
     }
 
+    size_t rem = subj_len - offset;
+    if (rlen + rem > cap) {
+        cap = (rlen + rem) * 2;
+        out = realloc(out, cap);
+    }
+    memcpy(out + rlen, subj + offset, rem);
+    rlen += rem;
     fwrite(out, 1, rlen, stdout);
+    free(buf);
     free(out);
     return 0;
 }

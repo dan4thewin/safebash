@@ -2728,13 +2728,15 @@ pub unsafe extern "C" fn sash_regex_matchall_into(
 
     let mut slot: i64 = 0;
     let mut off: usize = 0;
-    let total = str_len as usize;
+    let total = strlen(str_buf);
+    let ptrs = resub.cast::<*const u8>();
     while off <= total {
         core::ptr::write_bytes(resub, 0, ms * 16);
-        if regexec9(prog, str_buf.add(off), resub, ms as i32) <= 0 {
+        // Match 0 supplies the search cursor without moving the anchor origin.
+        *ptrs = str_buf.add(off);
+        if regexec9(prog, str_buf, resub, ms as i32) <= 0 {
             break;
         }
-        let ptrs = resub as *const *const u8;
         let whole_sp = *ptrs;
         let whole_ep = *ptrs.add(1);
         if whole_sp.is_null() {
@@ -2865,59 +2867,38 @@ pub unsafe extern "C" fn sash_regex_replace(
         sash_abort(2);
     }
 
+    let str_buf = alloc_cstr(src.len());
+    core::ptr::copy_nonoverlapping(src.as_ptr(), str_buf, src.len());
+    let total = strlen(str_buf);
+
     // Build result incrementally
     let mut result = sash_alloc(str_len as usize + 256);
     let mut result_len: usize = 0;
     let mut result_cap: usize = str_len as usize + 256;
     let mut offset: usize = 0;
 
-    loop {
-        if offset >= src.len() {
-            break;
-        }
-
-        // Null-terminate the remaining string
-        let remaining_len = src.len() - offset;
-        let str_buf = sash_alloc(remaining_len + 1);
-        core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), str_buf, remaining_len);
-        *str_buf.add(remaining_len) = 0;
-
+    while offset <= total {
         // resub: 10 submatches, each is (start_ptr, end_ptr) = 2 pointers = 16 bytes
-        let mut resub = [0u8; 320];
-        let matched = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
+        let mut resub = [core::ptr::null::<u8>(); 20];
+        resub[0] = str_buf.add(offset);
+        let matched = regexec9(prog, str_buf, resub.as_mut_ptr().cast(), 10);
         if matched <= 0 {
-            // No match — copy remainder
-            let needed = result_len + remaining_len;
-            if needed > result_cap {
-                result_cap = needed * 2;
-                let new_buf = sash_alloc(result_cap);
-                core::ptr::copy_nonoverlapping(result, new_buf, result_len);
-                result = new_buf;
-            }
-            core::ptr::copy_nonoverlapping(
-                src.as_ptr().add(offset),
-                result.add(result_len),
-                remaining_len,
-            );
-            result_len += remaining_len;
             break;
         }
 
         // Extract match start/end from resub[0] (first submatch = whole match)
-        let ptrs = resub.as_ptr() as *const *const u8;
-        let match_start = *ptrs; // sp
-        let match_end = *ptrs.add(1); // ep
+        let match_start = resub[0];
+        let match_end = resub[1];
         let match_start_off = match_start as usize - str_buf as usize;
         let match_end_off = match_end as usize - str_buf as usize;
 
         // Expand the replacement template (\0-\9 backrefs, \\) against
         // this match's Resub (DD#63), then size the result for pre-match
         // text + the expanded replacement together.
-        let ptrs = resub.as_ptr() as *const *const u8;
-        let (exp_ptr, exp_len) = expand_replacement(rep, ptrs);
+        let (exp_ptr, exp_len) = expand_replacement(rep, resub.as_ptr());
 
         // Copy pre-match text
-        let pre_len = match_start_off;
+        let pre_len = match_start_off - offset;
         let needed = result_len + pre_len + exp_len;
         if needed > result_cap {
             result_cap = needed * 2;
@@ -2932,10 +2913,13 @@ pub unsafe extern "C" fn sash_regex_replace(
         core::ptr::copy_nonoverlapping(exp_ptr, result.add(result_len), exp_len);
         result_len += exp_len;
 
-        offset += match_end_off;
+        offset = match_end_off;
+        if global == 0 {
+            break;
+        }
         // Prevent infinite loop on zero-length match
         if match_end_off == match_start_off {
-            if offset < src.len() {
+            if offset < total {
                 // Copy one byte and advance
                 if result_len + 1 > result_cap {
                     result_cap = (result_len + 1) * 2;
@@ -2950,25 +2934,18 @@ pub unsafe extern "C" fn sash_regex_replace(
                 break;
             }
         }
-
-        if global == 0 {
-            // Non-global: copy remainder after first match
-            let remaining = src.len() - offset;
-            if result_len + remaining > result_cap {
-                result_cap = (result_len + remaining) * 2;
-                let new_buf = sash_alloc(result_cap);
-                core::ptr::copy_nonoverlapping(result, new_buf, result_len);
-                result = new_buf;
-            }
-            core::ptr::copy_nonoverlapping(
-                src.as_ptr().add(offset),
-                result.add(result_len),
-                remaining,
-            );
-            result_len += remaining;
-            break;
-        }
     }
+
+    // Preserve all unconsumed bytes, including any interior NUL and its tail.
+    let remaining = src.len() - offset;
+    if result_len + remaining > result_cap {
+        result_cap = (result_len + remaining) * 2;
+        let new_buf = sash_alloc(result_cap);
+        core::ptr::copy_nonoverlapping(result, new_buf, result_len);
+        result = new_buf;
+    }
+    core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), result.add(result_len), remaining);
+    result_len += remaining;
 
     // DD#87 invariant: NUL-terminate the grown result buffer at [result_len]
     // so it is a valid C string at the execve boundary. The grow buffers keep
