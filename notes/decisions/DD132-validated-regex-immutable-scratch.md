@@ -320,5 +320,7 @@ defaults; a known-empty list needs no pattern proof or directory work.
 Trusted copies and mutable intermediates cannot transfer validity. Each
 compiled selector regex is released after its pattern batch, including
 directory failures; execution-workspace exhaustion remains fatal rather than
-no-match. Integrated utility/migration/cost evaluation remains open, followed
-by DG's adoption decision. The construction spelling is settled in DD131.
+no-match. Journal 654 records the integrated utility/migration/cost evaluation,
+including working fresh-result idioms, required converter/helper adaptations,
+new append costs and pre-existing repeated-regex storage costs. DG's adoption
+decision remains pending. The construction spelling is settled in DD131.

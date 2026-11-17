@@ -14,10 +14,14 @@ the quiet actual-engine `r?` predicate, rejection of trusted pattern reads,
 mandatory immutable-pattern proofs, caught-scratch read/failure semantics
 and regex text-plus-Boolean results. Guarded redirect-cell indices now use
 shared ordered lowering rather than reaching an unlowered-value ICE.
-`rglob` and pattern-list splats are now complete too, including empty-list
-success without directory work. Next is the integrated
-useful-program/helper/converter/memory/time evaluation, followed by DG's
-adoption decision.
+`rglob` and pattern-list splats are complete too, including empty-list
+success without directory work. The integrated evaluation is now recorded in
+[journal 654](journal/654-glob-scratch-regex-evaluation.md): useful programs
+work, but unchanged sequential mapfile conversions silently retain old
+entries, and repeated append has substantial scan/clone costs. Hand
+adaptations are not a converter repair. Next is DG's evaluation of those
+tradeoffs and adoption/revision/withdrawal decision; no migration or
+optimization policy has been selected.
 DG settled underscore-only construction,
 initializer self-read rejection and bare-literal-only glob sugar.
 This is a current handoff,
@@ -53,6 +57,17 @@ and the distinction between literal word backslashes and necessary quoting.
 
 ## Just completed
 
+- **Integrated trial evaluated, not adopted.**
+  Eight practical scenarios run in both backends, with reviewed migration
+  examples and 58 resource configurations across 17 workloads. Two-cell
+  append at 4,000 iterations takes about 328 ms rather than main's 2.5-2.7 ms;
+  its 1,000-iteration configured-heap bracket roughly doubles. Repeated
+  scalar regex operations exhaust 64 MiB before 4,000 iterations on main
+  too, separately from the trial's append cost. All 29 affected DD paths
+  are accounted for; provisional dispositions remain pending.
+  [Journal 654](journal/654-glob-scratch-regex-evaluation.md) records the
+  evidence and recommendation to keep the package off main while reconciling
+  converter compatibility and addressing or accepting the append cost.
 - **Regex directory selection delivered on the trial.**
   `rglob` matches basenames with validated immutable regexes and shares
   sorted, atomic publication with `glob`. Both accept pattern-list splats;

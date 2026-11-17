@@ -24,6 +24,31 @@ SB5023 diagnostic improvement is separately owned by
 `q-sb5023-names-the-test-not-the-pattern`; its possible diagnostic catalogue
 does not select this runtime mechanism or depend on delivering it.
 
+## Measured repeated-use cost (2026-11-17)
+
+The DD131/DD132 evaluation compares original main `6c7b899f` with trial
+`76376c4e`, using matched compiler/runtime pairs and both native/C backends.
+A thousand Boolean matches of `abc` against `^a` fail with 34,471,936 bytes
+of configured heap and pass with 34,476,032 bytes, identically on both
+versions and backends. Four thousand matches exhaust a 64 MiB heap.
+Fresh match-group arrays similarly need about 35 MiB at 1,000 iterations
+and exhaust 64 MiB before 4,000. These are configured-heap sufficiency
+brackets, not measurements of peak or live allocation.
+
+Quiet `r?` validation frees its candidate/program but does not supply a
+cached program to consumers. Validating an immutable candidate once, or
+reconstructing and validating it on each iteration, has the same measured
+heap bracket as literal matching in the trial. `rglob` owns and releases
+its per-pattern program separately; that is not literal reuse across calls.
+
+[Journal 654](../journal/654-glob-scratch-regex-evaluation.md) records the
+sources, measurement bounds and evidence. The inspected ordinary Boolean
+match path recompiles and retains its program and terminated input copies.
+Literal reuse and temporary/result ownership are distinct: a cache alone
+does not establish that dynamic patterns or all operation-only storage
+are reclaimed. This task remains open, with no new cache representation
+or general ownership strategy selected by the evaluation.
+
 ## Original implementation sketch
 
 Retained as the earlier proposal, not a new implementation selection.

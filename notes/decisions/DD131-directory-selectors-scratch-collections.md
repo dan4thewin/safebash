@@ -339,5 +339,9 @@ The selector implementation is complete on that branch (journals 647 and
 empty-list success, immutable regex proofs and atomic publication use shared
 lowering and runtime traversal. Scratch and accumulating fillers are recorded
 in journals 645-646; DD132's proof/read/result units are in journals 648-652.
-The integrated utility, migration and memory/time evaluation remains open.
-These delivery records do not change this decision's provisional status.
+Journal 654 records the integrated utility, migration and memory/time
+evaluation. Sequential converted mapfile fills need reconciliation, and
+repeated append has substantial scan/clone costs in the current runtime.
+Hand adaptations are not a converter repair. DG's adoption decision remains
+pending; these delivery records do not change this decision's provisional
+status.
