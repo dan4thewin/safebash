@@ -375,6 +375,7 @@ impl<'a> Facts<'a> {
             | SsaInst::SplitValue { target, .. }
             | SsaInst::ArgvFill { target, .. }
             | SsaInst::KeysFill { target, .. }
+            | SsaInst::GlobFill { target, .. }
             | SsaInst::MapFromArray { target, .. } => {
                 self.collections.insert(target.name.clone());
             }
@@ -455,9 +456,10 @@ impl<'a> Facts<'a> {
             }
             | SsaInst::Attest { source, .. }
             | SsaInst::AttestRetag { source, .. } => self.variable(source),
-            SsaInst::ReadArray { .. } | SsaInst::SplitValue { .. } | SsaInst::ArgvFill { .. } => {
-                Proof::c_string()
-            }
+            SsaInst::ReadArray { .. }
+            | SsaInst::SplitValue { .. }
+            | SsaInst::ArgvFill { .. }
+            | SsaInst::GlobFill { .. } => Proof::c_string(),
             SsaInst::KeysFill { source, .. } => {
                 let mut proof = Proof::c_string();
                 proof.may_nul = self
@@ -717,6 +719,9 @@ fn instruction_failures(
             regex_failure(pattern, facts, &mut errors);
             values_failures([subject, pattern], facts, &mut errors);
         }
+        SsaInst::GlobFill {
+            patterns, checked, ..
+        } => glob_failures(patterns, *checked, facts, &mut errors),
         SsaInst::CaptureStart { buffered: true, .. }
         | SsaInst::CaptureEnd { buffered: true, .. }
         | SsaInst::AttestRetag { .. }
@@ -728,6 +733,18 @@ fn instruction_failures(
         | SsaInst::SourceOrigin(..) => {}
     }
     errors
+}
+
+fn glob_failures(
+    patterns: &[SsaValue],
+    checked: bool,
+    facts: &Facts<'_>,
+    errors: &mut Vec<String>,
+) {
+    if checked {
+        errors.push("an unchecked glob operation failure".to_string());
+    }
+    values_failures(patterns, facts, errors);
 }
 
 fn pipeline_failures(
@@ -814,6 +831,7 @@ fn command_failures(
         | BuiltinCmd::Read
         | BuiltinCmd::Mapfile
         | BuiltinCmd::Argv
+        | BuiltinCmd::Glob
         | BuiltinCmd::Break
         | BuiltinCmd::Continue
         | BuiltinCmd::Return

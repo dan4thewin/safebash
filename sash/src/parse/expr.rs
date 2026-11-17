@@ -32,7 +32,7 @@ fn parse_quoted_arm(
         Tok::DoubleQuoted(parts_tok) => {
             ExprKind::DoubleQuoted(string_parts_to_exprs(parts_tok, span, scanner)?)
         }
-        Tok::AnsiCQuoted(s) => ExprKind::Literal(s.clone()),
+        Tok::AnsiCQuoted(s) => ExprKind::SingleQuoted(s.clone()),
         _ => unreachable!("parse_quoted_arm called with non-quoted token"),
     };
     parts.push(Expr { kind, span });

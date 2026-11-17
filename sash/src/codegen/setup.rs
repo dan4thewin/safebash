@@ -791,13 +791,12 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_epochseconds", Linkage::Import, &getpid_sig)
         .expect("declare");
 
-    // sash_glob(dir_ptr, dir_len, pat_ptr, pat_len) -> table_ptr
+    // sash_glob(private_target, owned_patterns, checked) -> status
     let mut glob_sig = module.make_signature();
-    glob_sig.params.push(AbiParam::new(I64)); // dir_ptr
-    glob_sig.params.push(AbiParam::new(I64)); // dir_len
-    glob_sig.params.push(AbiParam::new(I64)); // pat_ptr
-    glob_sig.params.push(AbiParam::new(I64)); // pat_len
-    glob_sig.returns.push(AbiParam::new(I64)); // table_ptr
+    glob_sig.params.push(AbiParam::new(I64));
+    glob_sig.params.push(AbiParam::new(I64));
+    glob_sig.params.push(AbiParam::new(I64));
+    glob_sig.returns.push(AbiParam::new(I64));
     let glob_func = module
         .declare_function("sash_glob", Linkage::Import, &glob_sig)
         .expect("declare");
@@ -1075,9 +1074,9 @@ impl<'a> Interner<'a> {
             SsaValue::Literal(s) | SsaValue::Expr(s) => {
                 self.intern(s);
             }
-            SsaValue::ParamExpansion {
-                operator, operand, ..
-            } => self.intern_param_expansion(operator, operand),
+            SsaValue::ParamExpansion { operand, .. } => {
+                self.intern(operand);
+            }
             SsaValue::AssocArray(pairs) => {
                 for (k, _) in pairs {
                     self.intern(k);
@@ -1087,13 +1086,6 @@ impl<'a> Interner<'a> {
         }
         for child in v.child_values() {
             self.intern_value(child);
-        }
-    }
-
-    fn intern_param_expansion(&mut self, operator: &str, operand: &str) {
-        self.intern(operand);
-        if operator == "glob" {
-            self.intern(".");
         }
     }
 
@@ -1186,6 +1178,11 @@ impl<'a> Interner<'a> {
             } => {
                 self.intern_value(subject);
                 self.intern_value(pattern);
+            }
+            SsaInst::GlobFill { patterns, .. } => {
+                for pattern in patterns {
+                    self.intern_value(pattern);
+                }
             }
             SsaInst::ReadLine { redirects, .. }
             | SsaInst::ReadArray { redirects, .. }
@@ -1550,6 +1547,7 @@ fn map_inst_versioned(
         // and is now a compiler ICE naming this function.
         | SsaInst::ArgvFill { target, .. }
         | SsaInst::KeysFill { target, .. }
+        | SsaInst::GlobFill { target, .. }
         | SsaInst::ReadArray { target, .. }
         | SsaInst::SplitValue { target, .. }
         | SsaInst::MapFromArray { target, .. } => {

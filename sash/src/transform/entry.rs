@@ -203,6 +203,7 @@ pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
         return;
     };
     if let SsaInst::Command { checked, .. }
+    | SsaInst::GlobFill { checked, .. }
     | SsaInst::Pipeline { checked, .. }
     | SsaInst::PipelineFinish { checked, .. } = &mut insts[idx]
     {

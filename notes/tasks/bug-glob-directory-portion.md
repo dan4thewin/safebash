@@ -19,6 +19,21 @@ branch. The old completion task now explicitly limits its completed
 scope to cwd globs and points here. No compiler repair accompanied that
 record correction (journal 603).
 
+## Trial implementation, 2026-11-17
+
+Explicit `glob` and array/append/loop sugar now share directory extraction
+in `glob_pattern.rs` and private enumeration in `directory.rs`, on
+`glob-scratch-trial`. `globsel.1`, `.4` and `globsugar.1`, `.6`, `.7`
+cover literal relative, dot/parent-relative and absolute prefixes and
+composition. Static and computed wildcard-directory patterns reject;
+computed operands use the same boundary. Both native and C are gated.
+
+[Journal 647](../journal/647-coarse-directory-selectors.md) records the
+matched before controls, actual syscall failures and accepted full gate.
+This task stays open at the separate-branch adoption boundary; main has
+not received the repair. The causal description and outline below describe
+the pre-trial implementation, not the current trial ABI.
+
 ## Historical F13 observation
 
 Every glob whose literal part contains a `/` compiles cleanly and yields
@@ -48,7 +63,7 @@ day, but its original gate and Tests section listed `sub/*` →
 globs are cwd-only". The 2026-11-09 recording corrects those claims
 without closing this implementation gap.
 
-## Cause
+## Historical cause
 
 Both backends pass the directory `"."` to `sash_glob` and the whole pattern
 as the name pattern:
@@ -60,7 +75,7 @@ as the name pattern:
 A directory entry's name never contains `/`, so a pattern with a `/` can
 never match.
 
-## Fix
+## Earlier repair outline
 
 Split the glob pattern at the last `/` before the final component. The
 directory part goes to `sash_glob` as `dir` and the rest as the pattern. A leading `/`

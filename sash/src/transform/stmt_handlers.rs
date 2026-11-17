@@ -70,6 +70,7 @@ fn try_builtin(
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
         BuiltinCmd::Argv => Some(handle_argv(c, ssa, state, *block)),
         BuiltinCmd::Keys => Some(handle_keys(c, ssa, state, *block)),
+        BuiltinCmd::Glob => Some(handle_glob(c, ssa, state, *block)),
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
@@ -749,6 +750,41 @@ fn handle_keys(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::KeysFill { source, target });
+    super::statements::publish_collection(&destination, &array, ssa, state, block);
+    block
+}
+
+fn handle_glob(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    let destination = resolve_args_name(literal_name_of(&c.args[0]), state);
+    let patterns = super::functions::unsuppressed(state, |state| {
+        c.args
+            .iter()
+            .skip(1)
+            .map(|arg| {
+                let value = expr_to_value(arg, state);
+                let value = lift_int_func_calls(value, ssa, state, &mut block);
+                let name = state.reserve_temp_name("__globpattern".to_string(), VarType::String);
+                let target = state.define(&name);
+                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                    target: target.clone(),
+                    value,
+                });
+                SsaValue::Var(target)
+            })
+            .collect()
+    });
+    let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
+    let target = state.define_replacement(&array);
+    ssa.block_mut(block).insts.push(SsaInst::GlobFill {
+        target,
+        patterns,
+        checked: state.suppressed == 0,
+    });
     super::statements::publish_collection(&destination, &array, ssa, state, block);
     block
 }
@@ -1446,7 +1482,7 @@ fn save_subscript_operand(
     SsaValue::Var(target)
 }
 
-/// `var += val` — append form. An `( … )` literal appends element by element;
+/// `var += val` — append form. An `( … )` literal publishes a complete private batch;
 /// anything else is a scalar append (string concat, or arithmetic add for an
 /// int-typed var).
 ///
@@ -1469,12 +1505,16 @@ fn handle_append_assign(
     let val = super::statements::shape_collection_value(val, &a.name, state);
     match val {
         SsaValue::IndexedArray(elems) => {
-            for elem in elems {
-                ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
-                    array: a.name.clone(),
-                    value: elem,
-                });
-            }
+            autodeclare_bulk_target(&a.name, ssa, state, block);
+            let var_type = state.lookup(&a.name).var_type;
+            let array = state.reserve_temp_name(format!("__batch_{}", a.name), var_type);
+            state.collections.insert(array.clone());
+            let target = state.define(&array);
+            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                target,
+                value: SsaValue::IndexedArray(elems),
+            });
+            super::statements::publish_collection(&a.name, &array, ssa, state, block);
         }
         other => append_scalar(a, other, state, ssa, block),
     }

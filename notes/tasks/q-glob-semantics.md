@@ -62,9 +62,12 @@ The independently accepted const-validation prerequisite is implemented
 and gated on this branch (journal 644). Source-identity immutable scratch,
 fresh lifetime starts and private scratch collection publication are also
 implemented and gated (journal 645). Ordinary accumulating fillers and their
-atomic publication are implemented and gated too (journal 646). Selectors,
-caught-scratch permissions and regex proof remain implementation work; this
-owner stays open through the integrated trial and DG's evaluation.
+atomic publication are implemented and gated too (journal 646). Explicit
+coarse `glob` and source-provenance-aware list sugar are now implemented and
+gated (journal 647), including the coupled private-batch allocation repair.
+`rglob`, caught-scratch permissions and regex proof/result handling remain
+implementation work; this owner stays open through the integrated trial
+and DG's evaluation.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record
@@ -414,8 +417,31 @@ mode IDs. No source/artifact mutation remains active.
 Sparse append's next-index implementation uses one past the greatest live
 nonnegative key, or zero. This is the AI's reversible trial choice to avoid
 overwriting sparse entries, not a separate DG indexing ruling. Private
-batches and cloned metadata still need repeated-use memory/time evaluation;
-no consuming-batch ABI was selected. No DD was revised by this unit.
+batches and cloned metadata still needed repeated-use memory/time evaluation;
+that unit did not consume batches. No DD was revised by it.
+
+The coarse-selector unit follows `3a15ddce1e9fc2ad775ea29b65ab453e73f8801f`;
+[journal 647](../journal/647-coarse-directory-selectors.md) records the
+shared bounded-pattern authority, explicit command, ordered mixed-list
+sugar, quoting provenance, actual syscall failures and completed-batch
+publication. The final glob file has 79 cases per mode. Eleven selector
+reversions, three allocation reversions and a capture-bound reversion
+reprise are restored.
+
+The first full selector gate exposed three intentional contract migrations
+and an introduced append-allocation regression. The repair removes redundant
+literal initialization, consumes private-batch metadata without freeing
+borrowed values, and avoids a full clone for a single allocation-before-
+publication insertion. The existing late-OOM fixture is unchanged and again
+reaches its intended later growth. Other snapshot/value retention remains
+part of the integrated evaluation, not a solved general reclamation problem.
+
+The repaired gate has 11953 checks, zero failures, ten first-ever mode IDs,
+six retirements and two expected failure repairs. Against the accepted
+accumulation baseline, all 11821 retained statuses are unchanged, with
+132 added and six retired IDs. The independent directory-prefix and
+multi-star owners record this verified trial implementation but remain
+open pending adoption. No DD was revised by this unit.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

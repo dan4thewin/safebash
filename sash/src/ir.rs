@@ -25,6 +25,13 @@ impl Span {
 }
 
 impl Expr {
+    pub(crate) fn literal_glob(&self) -> Option<&str> {
+        match &self.kind {
+            ExprKind::Literal(s) if s.contains('*') => Some(s),
+            _ => None,
+        }
+    }
+
     /// Shorthand: literal string expression.
     pub fn literal(s: impl Into<String>, span: Span) -> Self {
         Self {

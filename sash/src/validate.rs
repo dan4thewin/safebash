@@ -1713,6 +1713,7 @@ fn is_read_command(stmt: &Statement) -> bool {
 fn validate_for(f: &For, diags: &mut Vec<Diagnostic>) {
     // Check glob patterns and unquoted expansions in for-loop words
     for w in &f.words {
+        check_glob_list_word(w, diags);
         check_for_word(w, diags);
     }
     for s in &f.body {
@@ -1916,6 +1917,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     check_attest_convert_names(name, c, span, diags);
     check_static_regex_operand(name, c, diags);
     check_inline_glob(c, diags);
+    check_glob_command(name, c, span, diags);
 }
 
 /// SB5053/SB5054 (DD#93 Part D): the shape rules for an arith attest predicate.
@@ -1959,6 +1961,9 @@ fn check_attest_convert_names(name: &str, c: &Command, span: Span, diags: &mut V
 /// (`array a=(*)`) and splat (`@a`) — there is no inline glob expansion.
 /// Quoted `"*"` is a literal asterisk and is unaffected.
 fn check_inline_glob(c: &Command, diags: &mut Vec<Diagnostic>) {
+    if expr_literal_str(&c.name) == "glob" {
+        return;
+    }
     for arg in &c.args {
         if arg_has_unquoted_star(&arg.kind) {
             diags.push(Diagnostic::error_span(
@@ -1982,6 +1987,46 @@ fn arg_has_unquoted_star(kind: &ExprKind) -> bool {
             .iter()
             .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s.contains('*'))),
         _ => false,
+    }
+}
+
+fn check_glob_command(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    if name != "glob" {
+        return;
+    }
+    if c.args.len() < 2 {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB4045",
+            "`glob` expects an array target and at least one pattern: `glob ARRAY PATTERN...`"
+                .to_string(),
+        ));
+    }
+    for pattern in c.args.iter().skip(1) {
+        let Some(text) = static_word_text(pattern) else {
+            continue;
+        };
+        check_glob_pattern(&text, pattern.span, diags);
+    }
+}
+
+fn check_glob_pattern(pattern: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if let Err(reason) = crate::glob_pattern::split(pattern.as_bytes()) {
+        diags.push(Diagnostic::error_span(span, "SB5006", reason.to_string()));
+    }
+}
+
+fn check_glob_list_word(word: &Expr, diags: &mut Vec<Diagnostic>) {
+    if let Some(pattern) = word.literal_glob() {
+        check_glob_pattern(pattern, word.span, diags);
+    } else if arg_has_unquoted_star(&word.kind) {
+        diags.push(Diagnostic::error_span(
+            word.span,
+            "SB5029",
+            "only a bare literal list word expands a glob; use `glob ARRAY PATTERN...` \
+             for a constructed pattern, or quote the star for literal data"
+                .to_string(),
+        ));
     }
 }
 
@@ -2513,15 +2558,12 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
         ExprKind::ParameterExpansion(pe) => {
             validate_var_name(&pe.name, expr.span, diags);
         }
-        // SB5006: ** globstar is always rejected (even quoted, it's never valid)
-        ExprKind::Literal(s) if s.contains("**") => {
-            diags.push(Diagnostic::error_span(
-                expr.span,
-                "SB5006",
-                format!("sash has only `*` globs — `**` is omitted: {}", s),
-            ));
+        ExprKind::Array(elems) => {
+            check_retired_regex_filter(elems, diags);
+            for word in elems {
+                check_glob_list_word(word, diags);
+            }
         }
-        ExprKind::Array(elems) => check_retired_regex_filter(elems, diags),
         ExprKind::CommandSubstitution(body) => check_capture_has_writer(body, expr.span, diags),
         _ => {}
     }
@@ -2824,7 +2866,7 @@ fn check_dispatch_regex_patterns(c: &Case, diags: &mut Vec<Diagnostic>) {
 /// SB5023 if `expr` is a static regex that the engine rejects. A dynamic
 /// pattern is left to the runtime regcomp (DD#71).
 fn check_static_regex(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diagnostic>) {
-    let Some(pattern) = static_regex_pattern(expr) else {
+    let Some(pattern) = static_word_text(expr) else {
         return;
     };
     if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
@@ -2836,16 +2878,14 @@ fn check_static_regex(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diagn
     }
 }
 
-/// The compile-time-constant string of a `=~` operand, or `None` if any part
-/// is a runtime expansion (dynamic — not statically checkable). Quotes are
-/// stripped (they are grouping, not literalisation — DD#71).
-fn static_regex_pattern(expr: &Expr) -> Option<String> {
+/// The decoded constant string, or `None` if any part is a runtime expansion.
+fn static_word_text(expr: &Expr) -> Option<String> {
     match &expr.kind {
         ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => Some(s.clone()),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             let mut out = String::new();
             for p in parts {
-                out.push_str(&static_regex_pattern(p)?);
+                out.push_str(&static_word_text(p)?);
             }
             Some(out)
         }
@@ -3998,6 +4038,7 @@ const BUILTINS: &[&str] = &[
     "cd",
     "close",
     "mkdtemp",
+    "glob",
     // Introspection
     "status",
     "getpid",
@@ -5284,6 +5325,7 @@ fn command_args_elidable(name: &str) -> bool {
         | B::Read
         | B::Mapfile
         | B::Argv
+        | B::Glob
         | B::Unset
         | B::Wait
         | B::Close
@@ -5858,6 +5900,7 @@ fn command_writes_args(c: &Command) -> bool {
             c.args.len() == 3 && c.args.last().map(expr_literal_str) == Some("args")
         }
         "argv" => argv_target_name(&c.args) == Some("args"),
+        "glob" => c.args.first().map(expr_literal_str) == Some("args"),
         // DD#75: `keys m k` — the target is the second argument. One argument
         // is the `$(keys m)` splat, which writes nothing.
         "keys" => c.args.len() == 2 && c.args.last().map(expr_literal_str) == Some("args"),
@@ -8628,6 +8671,7 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
         // two-arg `match S P` is the boolean form and binds nothing.
         "matchall" | "match" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         "argv" => insert_last_literal_arg(&c.args, set),
+        "glob" => insert_last_literal_arg(&c.args[..c.args.len().min(1)], set),
         // DD#75: `keys m k` snapshots the map's keys into the array named
         // last. One argument is the `$(keys m)` splat, which binds nothing.
         "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
@@ -9516,6 +9560,7 @@ fn insert_auto_collection_target(kind: &StmtKind, set: &mut HashSet<String>) {
         "match" | "matchall" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         // DD#60: `argv [N] ARR` snapshots into the array named last.
         "argv" => insert_last_literal_arg(&c.args, set),
+        "glob" => insert_last_literal_arg(&c.args[..c.args.len().min(1)], set),
         // DD#75: `keys m k` likewise. One argument is the splat form.
         "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
         _ => {}
@@ -11178,6 +11223,10 @@ fn check_fill_target_body(body: &[Statement], diags: &mut Vec<Diagnostic>) {
 fn fill_target_spec(c: &Command) -> Option<(Vec<&str>, bool)> {
     let spec = match expr_literal_str(&c.name) {
         "argv" => (argv_target_name(&c.args).into_iter().collect(), false),
+        "glob" => (
+            c.args.first().map(expr_literal_str).into_iter().collect(),
+            false,
+        ),
         // DD#75: `keys m k` — the out-array is the second argument. One
         // argument is the splat and has no target.
         "keys" if c.args.len() == 2 => (last_arg_target(c), false),

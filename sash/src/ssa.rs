@@ -134,6 +134,7 @@ pub enum BuiltinCmd {
     Mapfile,
     /// DD#60: `argv [N] a` fills array `a` with the program argv slice.
     Argv,
+    Glob,
     Break,
     Continue,
     Return,
@@ -207,6 +208,7 @@ impl BuiltinCmd {
             // Recognition only — see `BuiltinCmd::Mapfile`.
             "mapfile" | "readarray" => Self::Mapfile,
             "argv" => Self::Argv,
+            "glob" => Self::Glob,
             "break" => Self::Break,
             "continue" => Self::Continue,
             "return" => Self::Return,
@@ -284,6 +286,7 @@ impl BuiltinCmd {
             | Self::Attest
             | Self::Mapfile
             | Self::Argv
+            | Self::Glob
             | Self::Break
             | Self::Continue
             | Self::Return
@@ -360,9 +363,13 @@ impl BuiltinCmd {
             // Process state: cwd, descriptors, jobs, variables, dispositions.
             Self::Cd | Self::Close | Self::Wait | Self::Unset | Self::Signal => true,
             // Write a variable or collection of the process that runs them.
-            Self::Argv | Self::Read | Self::Keys | Self::Match | Self::MatchAll | Self::Attest => {
-                true
-            }
+            Self::Argv
+            | Self::Glob
+            | Self::Read
+            | Self::Keys
+            | Self::Match
+            | Self::MatchAll
+            | Self::Attest => true,
             // Replaces the process that runs it.
             Self::Exec => true,
 
@@ -519,7 +526,7 @@ pub enum SsaInst {
     SourceOrigin(Option<usize>, bool),
     /// Begin a fresh source lifetime without allocating or retaining old taint.
     LifetimeStart { target: VarRef, collection: bool },
-    /// Publish a complete table, or atomically append its batch to an existing array.
+    /// Consume a private batch: publish it, or atomically append it to an existing array.
     CollectionPublish {
         target: VarRef,
         source: VarRef,
@@ -634,6 +641,12 @@ pub enum SsaInst {
     /// a collection by name (`find_array_slot`), as every other
     /// collection-operand instruction here does.
     KeysFill { source: String, target: VarRef },
+    /// DD#131: fill a private clean batch; success is independent of population.
+    GlobFill {
+        target: VarRef,
+        patterns: Vec<SsaValue>,
+        checked: bool,
+    },
     /// Start capturing stdout (for $(func) capture). `site` identifies this
     /// capture uniquely within the program, so a `CaptureEnd` pairs with its
     /// own start rather than with whichever start ran most recently. Captures
@@ -980,6 +993,9 @@ impl SsaInst {
                     format!("the match pattern for '{}'", array),
                 ),
             ],
+            SsaInst::GlobFill { patterns, .. } => {
+                value_reads(patterns, "a glob pattern".to_string())
+            }
             // Propagation and definition sites. A tainted value here flows
             // into a target whose own taint is derived from it by
             // `classify_inst_def`; it does not escape. The last three read no
@@ -1068,6 +1084,7 @@ pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
         | SsaInst::CaptureEnd { target, .. }
         | SsaInst::ArgvFill { target, .. }
         | SsaInst::KeysFill { target, .. }
+        | SsaInst::GlobFill { target, .. }
         | SsaInst::SplitValue { target, .. }
         | SsaInst::MapFromArray { target, .. }
         | SsaInst::Attest { target, .. }
@@ -1109,6 +1126,7 @@ pub(crate) fn instruction_write(inst: &SsaInst) -> Option<&str> {
         | SsaInst::CaptureEnd { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
+        | SsaInst::GlobFill { .. }
         | SsaInst::SplitValue { .. }
         | SsaInst::MapFromArray { .. }
         | SsaInst::Pipeline { .. } => instruction_target(inst).map(|target| target.name.as_str()),
@@ -1691,6 +1709,7 @@ fn sets_condition_status(inst: &SsaInst) -> bool {
         | SsaInst::Test(..)
         | SsaInst::ReadLine { .. }
         | SsaInst::ReadArray { .. }
+        | SsaInst::GlobFill { .. }
         | SsaInst::MatchInto { .. }
         | SsaInst::AttestAll { .. }
         // A redirect scope (`f > out.txt`) ends its block with the Branch

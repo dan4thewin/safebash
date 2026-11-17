@@ -231,10 +231,8 @@ pub(super) fn lift_int_func_calls(
         }
 
         // ── collections ───────────────────────────────────────────────
-        SsaValue::Concat(parts) => SsaValue::Concat(lift_each(parts, ssa, state, block)),
-        SsaValue::IndexedArray(parts) => {
-            SsaValue::IndexedArray(lift_each(parts, ssa, state, block))
-        }
+        SsaValue::Concat(parts) => lift_concat(parts, ssa, state, block),
+        SsaValue::IndexedArray(parts) => lift_glob_list(parts, ssa, state, block),
         SsaValue::CmdSubst { argv, suppressed } => lift_cmdsub(argv, suppressed, ssa, state, block),
         SsaValue::AssocArray(pairs) => SsaValue::AssocArray(
             pairs
@@ -332,6 +330,31 @@ pub(super) fn lift_int_func_calls(
             SsaValue::RequireValue { source, message }
         }
 
+        SsaValue::ParamExpansion {
+            ref operator,
+            ref operand,
+            ..
+        } if operator == "glob" => {
+            let array = super::statements::private_collection_target(
+                "__glob".to_string(),
+                VarType::String,
+                false,
+                ssa,
+                state,
+                *block,
+            );
+            let target = state.define_replacement(&array);
+            ssa.block_mut(*block).insts.push(SsaInst::GlobFill {
+                target: target.clone(),
+                patterns: vec![SsaValue::Literal(operand.clone())],
+                checked: true,
+            });
+            SsaValue::ArraySplat {
+                array: target,
+                disposition: None,
+            }
+        }
+
         // ── leaves: nothing below them to walk ────────────────────────
         v @ (SsaValue::Literal(_)
         | SsaValue::Var(_)
@@ -342,6 +365,71 @@ pub(super) fn lift_int_func_calls(
         | SsaValue::TableValue { .. }
         | SsaValue::TableKey { .. }) => v,
     }
+}
+
+fn lift_concat(
+    parts: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    if !parts.iter().any(needs_lift) {
+        return SsaValue::Concat(parts);
+    }
+    let parts = parts
+        .into_iter()
+        .map(|part| {
+            let part = lift_int_func_calls(part, ssa, state, block);
+            if matches!(part, SsaValue::Literal(_)) {
+                return part;
+            }
+            let name = state.reserve_temp_name("__wordpart".to_string(), VarType::String);
+            let target = state.define(&name);
+            ssa.block_mut(*block).insts.push(SsaInst::Assign {
+                target: target.clone(),
+                value: SsaValue::Concat(vec![part]),
+            });
+            SsaValue::Var(target)
+        })
+        .collect();
+    SsaValue::Concat(parts)
+}
+
+fn lift_glob_list(
+    parts: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    let has_glob = parts.iter().any(
+        |part| matches!(part, SsaValue::ParamExpansion { operator, .. } if operator == "glob"),
+    );
+    if !has_glob {
+        return SsaValue::IndexedArray(lift_each(parts, ssa, state, block));
+    }
+    let values = parts
+        .into_iter()
+        .map(|part| {
+            let is_private_glob =
+                matches!(&part, SsaValue::ParamExpansion { operator, .. } if operator == "glob");
+            let part = lift_int_func_calls(part, ssa, state, block);
+            if is_private_glob || matches!(part, SsaValue::Literal(_)) {
+                return part;
+            }
+            let name = state.reserve_temp_name("__globword".to_string(), VarType::String);
+            state.collections.insert(name.clone());
+            let target = state.define(&name);
+            ssa.block_mut(*block).insts.push(SsaInst::Assign {
+                target: target.clone(),
+                value: SsaValue::IndexedArray(vec![part]),
+            });
+            SsaValue::ArraySplat {
+                array: target,
+                disposition: None,
+            }
+        })
+        .collect();
+    SsaValue::IndexedArray(values)
 }
 
 /// Preserve a sole command's value while its prefix scopes that command's
@@ -447,6 +535,7 @@ fn external_capture_head(argv: &[SsaValue]) -> Option<&str> {
 /// child it could have done without, which costs a fork and nothing more.
 pub(super) fn needs_lift(val: &SsaValue) -> bool {
     match val {
+        SsaValue::ParamExpansion { operator, .. } if operator == "glob" => true,
         SsaValue::IntFuncCall { .. }
         | SsaValue::FuncCall { .. }
         | SsaValue::CmdSubstBody { .. } => true,

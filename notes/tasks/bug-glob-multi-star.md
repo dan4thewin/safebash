@@ -16,8 +16,21 @@ DD39 now limits a glob to **at most one star**, and DD131 provisionally
 packages the command/sugar enforcement in a separate-branch experiment.
 This task owns rejection, not a general multi-star matcher.
 `q-glob-semantics` coordinates that trial with literal directory support,
-dynamic string patterns and recoverable errors. Implementation remains
-open; the policy recording did not change the compiler.
+dynamic string patterns and recoverable errors. The policy recording did
+not change the compiler.
+
+## Trial implementation, 2026-11-17
+
+The compiler and runtime now share `glob_pattern::split` on
+`glob-scratch-trial`. Known excess stars get SB5006, computed excess stars
+fail without publication, and ordinary quoted star data remains legal.
+`globsel.10`, `.24`-`.26`, `globsugar.3` and the migrated `cov.375`/`csc.41`
+pin those roles; independent bound and quote reversions establish sensitivity.
+
+[Journal 647](../journal/647-coarse-directory-selectors.md) records native/C
+before controls and the accepted full gate. The task remains open pending
+the trial's adoption boundary; main is unchanged. The cause below is
+historical, not a description of the current trial runtime.
 
 ## Historical F13 observation
 
@@ -30,7 +43,7 @@ for f in a*b*c { echo "$f" }
 This prints nothing, in both backends; it compiles cleanly and exits 0.
 Bash prints `ab.c`, `abc` and `axbxc`.
 
-## Cause
+## Historical cause
 
 `sash_glob` (`sash-rt/src/lib.rs`) splits the pattern at the **first** `*`
 and matches `starts_with(prefix) && ends_with(suffix)`. For `a*b*c` the

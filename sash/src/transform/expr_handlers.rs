@@ -204,6 +204,7 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         | BuiltinCmd::Read
         | BuiltinCmd::Mapfile
         | BuiltinCmd::Argv
+        | BuiltinCmd::Glob
         | BuiltinCmd::Break
         | BuiltinCmd::Continue
         | BuiltinCmd::Return

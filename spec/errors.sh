@@ -3502,12 +3502,12 @@ attest s [[ -n $s ]]
 echo "[$s]"'
 [[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk csc.32
 
-# csc.33 and for `**` (SB5006), which is a Literal arm — a different shape
-#        again, so the descent is not special-casing expansions
-run_sash 'str s=$(/bin/echo "a**b")
+# Static pattern bounds are checked inside capture bodies too. Quoted stars
+# in ordinary command arguments are now data; explicit glob interprets them.
+run_sash 'str s=$(glob a "a**b"; echo "$(len a)")
 attest s [[ -n $s ]]
 echo "[$s]"'
-[[ $rc != 0 && -z $out && $err == *SB5006* ]]; chk csc.33
+[[ $rc != 0 && -z $out && $err == *SB5006* ]]; chk csc.41
 
 # csc.34 the duplication guard. Bodies belong to exactly one side of the
 #        recursion now; if a wrapper statement took them BOTH from

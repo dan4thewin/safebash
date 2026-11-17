@@ -147,6 +147,20 @@ impl SsaInst {
                     ctx,
                 );
             }
+            SsaInst::GlobFill {
+                target,
+                patterns,
+                checked,
+            } => {
+                return super::inst_handlers::handle_glob_fill(
+                    &target.name,
+                    patterns,
+                    *checked,
+                    builder,
+                    module,
+                    ctx,
+                );
+            }
             SsaInst::CaptureStart {
                 site,
                 buffered: true,
@@ -349,6 +363,7 @@ impl SsaInst {
             | BuiltinCmd::Basename
             | BuiltinCmd::Dirname
             | BuiltinCmd::Argv
+            | BuiltinCmd::Glob
             | BuiltinCmd::Test
             | BuiltinCmd::Attest
             | BuiltinCmd::Read

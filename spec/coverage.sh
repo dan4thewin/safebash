@@ -93,9 +93,9 @@ run_sash 'array a=(1); echo @{a:x}'
 # cov.18 a `$var` in a for-loop source (no word-split by design) → SB5009
 run_sash 'y=a; for x in $y; do echo $x; done'
 [[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk cov.18
-# cov.19 the `**` globstar is always rejected (even quoted) → SB5006
+# Quoted stars are data, not a glob pattern (DD131).
 run_sash 'echo "**"'
-[[ $rc != 0 && -z $out && $err == *SB5006* ]]; chk cov.19
+[[ $rc = 0 && $out = '**' && -z $err && -z $rerr ]]; chk cov.375
 # cov.20 `read` takes NO flag, so a bogus one is the same error as a real one
 # — there is no unknown-flag category left (DD#99) → SB5057
 run_sash 'read -z x < /etc/hostname'

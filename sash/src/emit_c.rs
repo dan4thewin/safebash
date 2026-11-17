@@ -361,7 +361,7 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern void sash_array_append_batch(SashTable* table, const SashTable* batch);"
+        "extern void sash_array_append_batch(SashTable* table, SashTable* batch);"
     )
     .unwrap();
     writeln!(
@@ -400,7 +400,7 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern SashTable* sash_glob(const char* d, i64 dl, const char* p, i64 pl);"
+        "extern i64 sash_glob(SashTable* target, SashTable* patterns, i64 checked);"
     )
     .unwrap();
     writeln!(out,).unwrap();
@@ -1296,6 +1296,13 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         } => emit_match_into_c(e, subject, pattern, array, *all, types),
         SsaInst::ArgvFill { target, start } => emit_argv_fill_c(e, &target.name, *start),
         SsaInst::KeysFill { source, target } => emit_keys_fill_c(e, source, &target.name),
+        SsaInst::GlobFill {
+            target,
+            patterns,
+            checked,
+        } => {
+            emit_glob_fill_c(e, &target.name, patterns, *checked, types);
+        }
 
         // Exhaustive on purpose — no `_ =>`. These twelve are claimed by the
         // four sub-dispatchers above, which return true when they emit.
@@ -2300,6 +2307,7 @@ fn emit_command_body(
         | BuiltinCmd::Basename
         | BuiltinCmd::Dirname
         | BuiltinCmd::Argv
+        | BuiltinCmd::Glob
         | BuiltinCmd::Test
         | BuiltinCmd::Attest
         | BuiltinCmd::Read
@@ -3086,7 +3094,6 @@ fn emit_param_expansion(
         // The var's _ptr slot holds the table pointer; _len holds 0.
         "arrlen" => emit_arrlen(e, &s_ptr),
         "arrvals" | "arrjoin" => emit_arr_values_joined(e, operator, &s_ptr, operand),
-        "glob" => emit_glob_c(e, operand),
         // DD#65: only `substring` (`:off:len`) survives as a ParamExpansion
         // op here; `:-` is `SsaValue::DefaultValue`, the `:s/` sed op is a
         // `SsaValue::RegexReplace`, and every dropped op is given a distinct
@@ -3098,22 +3105,6 @@ fn emit_param_expansion(
         // string, which turned that bug into a silently empty expansion.
         other => panic!("ICE: unimplemented parameter expansion operator: {other}"),
     }
-}
-
-/// `array a=(*)` glob — mirrors emit_glob_expansion (codegen/value_handlers.rs:119).
-/// Calls sash_glob(".", pattern) which returns a SashTable*; the table
-/// pointer becomes the array var's _ptr (len 0), like the indexed-array path.
-fn emit_glob_c(e: &mut Emit, operand: &str) -> CStr {
-    let t = e.fresh();
-    writeln!(
-        e.out,
-        "    const char* {t}_p = (const char*)sash_glob(\".\", 1, \"{pat}\", {len});",
-        t = t,
-        pat = c_escape(operand),
-        len = operand.len()
-    )
-    .unwrap();
-    (format!("{}_p", t), "0".to_string())
 }
 
 /// Mirrors `load_var` (codegen/value_handlers.rs). Look up the slot for
@@ -3335,6 +3326,24 @@ fn emit_keys_fill_c(e: &mut Emit, source: &str, array: &str) {
         base = base
     )
     .unwrap();
+}
+
+fn emit_glob_fill_c(
+    e: &mut Emit,
+    array: &str,
+    patterns: &[SsaValue],
+    checked: bool,
+    types: &VarTypes,
+) {
+    let (patterns, _) = emit_indexed_array(e, patterns, types);
+    let base = c_var_name(array, 0);
+    writeln!(
+        e.out,
+        "    __exit_status = sash_glob((SashTable*){base}_ptr, (SashTable*){patterns}, {});",
+        i64::from(checked),
+    )
+    .unwrap();
+    writeln!(e.out, "    __test_result = __exit_status == 0;").unwrap();
 }
 
 /// DD#63: `match S P ARR` out-array form → `sash_regex_match_into`, which

@@ -16,6 +16,8 @@ use rustix::fs::{memfd_create, MemfdFlags};
 
 #[cfg(feature = "coverage")]
 mod coverage;
+mod directory;
+mod glob_pattern;
 mod linux_syscalls;
 
 // ═══════════════════════════════════════════════════════════════
@@ -2344,6 +2346,25 @@ pub unsafe extern "C" fn sash_array_next_index(t: *const SashTable) -> i64 {
     next
 }
 
+/// A private heap table owns its keys and metadata, not its values.
+struct TableBatch(*mut SashTable);
+
+impl Drop for TableBatch {
+    fn drop(&mut self) {
+        unsafe {
+            let table = &*self.0;
+            for i in 0..table.entry_count as usize {
+                sash_free_c((*table.entries.add(i)).key_ptr.cast_mut());
+            }
+            if table.entry_capacity != 0 {
+                sash_free_c(table.entries.cast());
+                sash_free_c(table.indices.cast());
+            }
+            sash_free_c(self.0.cast());
+        }
+    }
+}
+
 /// Clone only mutable table storage; keys and values keep their existing backing.
 unsafe fn table_clone_storage(t: *const SashTable) -> SashTable {
     if (*t).entry_capacity == 0 {
@@ -2359,14 +2380,7 @@ unsafe fn table_clone_storage(t: *const SashTable) -> SashTable {
     copy
 }
 
-/// Every allocation precedes publication, so ERR sees the original destination on failure.
-#[no_mangle]
-pub unsafe extern "C" fn sash_array_append_batch(t: *mut SashTable, batch: *const SashTable) {
-    if (*batch).live_count == 0 {
-        return;
-    }
-    let first = sash_array_next_index(t);
-    let mut merged = table_clone_storage(t);
+unsafe fn table_append_entries(t: *mut SashTable, batch: *const SashTable, first: i64) {
     let mut offset = 0;
     for i in 0..(*batch).entry_count as usize {
         let entry = &*(*batch).entries.add(i);
@@ -2377,7 +2391,7 @@ pub unsafe extern "C" fn sash_array_append_batch(t: *mut SashTable, batch: *cons
             .checked_add(offset)
             .unwrap_or_else(|| sash_arith_overflow());
         sash_table_set(
-            &mut merged,
+            t,
             (&key as *const i64).cast(),
             8,
             entry.val_ptr,
@@ -2385,6 +2399,24 @@ pub unsafe extern "C" fn sash_array_append_batch(t: *mut SashTable, batch: *cons
         );
         offset += 1;
     }
+}
+
+/// Every allocation precedes publication, so ERR sees the original destination on failure.
+/// Consumes the private batch's keys and metadata, retaining its borrowed values.
+#[no_mangle]
+pub unsafe extern "C" fn sash_array_append_batch(t: *mut SashTable, batch: *mut SashTable) {
+    let _batch = TableBatch(batch);
+    if (*batch).live_count == 0 {
+        return;
+    }
+    let first = sash_array_next_index(t);
+    if (*batch).live_count == 1 {
+        // A single table_set publishes its cell only after its last allocation.
+        table_append_entries(t, batch, first);
+        return;
+    }
+    let mut merged = table_clone_storage(t);
+    table_append_entries(&mut merged, batch, first);
     let previous = core::ptr::replace(t, merged);
     if previous.entry_capacity != 0 {
         sash_free_c(previous.indices.cast());
@@ -3671,187 +3703,6 @@ extern "C" fn sash_flag_handler(sig: i32) {
 extern "C" fn sash_exit_handler(sig: i32) {
     sash_flag_handler(sig);
     sash_exit_signum.store(sig as i64, core::sync::atomic::Ordering::Relaxed);
-}
-
-// ── Directory reading (glob support) ─────────────────────────
-
-/// DD#73: lexically normalize an absolute path (`input` must be absolute).
-/// Collapses `//`, `.`, and `..` segments textually — NO symlink
-/// resolution (lexical, not `realpath`). Writes into `out`, returns length.
-fn sash_normalize_abs(input: &[u8], out: &mut [u8; 4096]) -> usize {
-    let mut starts = [0usize; 256];
-    let mut nseg = 0usize;
-    let mut len = 0usize;
-    let mut i = 0usize;
-    while i < input.len() {
-        while i < input.len() && input[i] == b'/' {
-            i += 1;
-        }
-        let seg_start = i;
-        while i < input.len() && input[i] != b'/' {
-            i += 1;
-        }
-        let seg = &input[seg_start..i];
-        if seg.is_empty() || seg == b"." {
-            continue;
-        }
-        if seg == b".." {
-            if nseg > 0 {
-                nseg -= 1;
-                len = starts[nseg];
-            }
-            continue;
-        }
-        if nseg < 256 && len + 1 + seg.len() <= 4096 {
-            starts[nseg] = len;
-            nseg += 1;
-            out[len] = b'/';
-            len += 1;
-            out[len..len + seg.len()].copy_from_slice(seg);
-            len += seg.len();
-        }
-    }
-    if len == 0 {
-        out[0] = b'/';
-        len = 1;
-    }
-    len
-}
-
-/// DD#73: normalized absolute directory prefix (no trailing slash) for a
-/// glob whose directory portion is `dir`. A relative `dir` is resolved
-/// against `getcwd()`; a failed `getcwd` aborts through the DD#55 channel,
-/// like any syscall failure — NEVER a silent fallback to the bare
-/// (relative, injectable) form. Result written into `out`; returns length.
-fn sash_glob_abs_prefix(dir: &[u8], out: &mut [u8; 4096]) -> usize {
-    let mut raw = [0u8; 4096];
-    let mut n = 0usize;
-    if dir.first() != Some(&b'/') {
-        let mut cwd_len: i64 = 0;
-        let cwd_ptr = sash_getcwd(&mut cwd_len);
-        if cwd_ptr.is_null() {
-            let seg1 = b"glob";
-            let seg2 = b"getcwd";
-            sash_emsg(
-                seg1.as_ptr(),
-                seg1.len() as i64,
-                seg2.as_ptr(),
-                seg2.len() as i64,
-            );
-            sash_abort(1);
-        }
-        let cwd = unsafe { core::slice::from_raw_parts(cwd_ptr, cwd_len as usize) };
-        let cl = cwd.len().min(4095);
-        raw[..cl].copy_from_slice(&cwd[..cl]);
-        n = cl;
-    }
-    // Append the dir portion unless it is a bare "." (already == cwd).
-    if dir != b"." {
-        if n > 0 && n < 4095 {
-            raw[n] = b'/';
-            n += 1;
-        }
-        let dl = dir.len().min(4095 - n);
-        raw[n..n + dl].copy_from_slice(&dir[..dl]);
-        n += dl;
-    }
-    sash_normalize_abs(&raw[..n], out)
-}
-
-/// Read directory entries matching a star-glob pattern.
-/// Pattern supports: "*.ext", "prefix*", "prefix*suffix", "*".
-/// Returns a table (indexed array) of matching filenames.
-/// dir_ptr/dir_len: directory path (e.g. ".")
-/// pat_ptr/pat_len: glob pattern (e.g. "*.sh")
-#[no_mangle]
-pub extern "C" fn sash_glob(
-    dir_ptr: *const u8,
-    dir_len: usize,
-    pat_ptr: *const u8,
-    pat_len: usize,
-) -> *mut u8 {
-    use rustix::fd::IntoRawFd;
-    use rustix::fs::{open, Mode, OFlags, RawDir};
-
-    let dir = unsafe { core::slice::from_raw_parts(dir_ptr, dir_len) };
-    let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
-
-    // Parse pattern into prefix/suffix around '*'
-    let star_pos = pat.iter().position(|&b| b == b'*');
-    let (prefix, suffix) = match star_pos {
-        Some(pos) => (&pat[..pos], &pat[pos + 1..]),
-        None => (pat, &[] as &[u8]), // no star = exact match
-    };
-
-    // Open directory
-    let mut dir_path = [0u8; 4096];
-    let dlen = dir.len().min(4095);
-    dir_path[..dlen].copy_from_slice(&dir[..dlen]);
-    dir_path[dlen] = 0;
-
-    let path = unsafe { core::ffi::CStr::from_ptr(dir_path.as_ptr().cast()) };
-    let dir_fd = match open(path, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty()) {
-        Ok(fd) => fd,
-        Err(_) => return unsafe { sash_table_new(16) } as *mut u8,
-    };
-
-    let table = unsafe { sash_table_new(16) } as *mut u8;
-    let mut buf = [core::mem::MaybeUninit::uninit(); 4096];
-    let mut idx: i64 = 0;
-    // DD#73: every element is `<abs-dir>/name`, not the bare dirent name.
-    let mut prefix_buf = [0u8; 4096];
-    let prefix_len = sash_glob_abs_prefix(dir, &mut prefix_buf);
-
-    let mut entries = RawDir::new(&dir_fd, &mut buf);
-    while let Some(entry) = entries.next() {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => break,
-        };
-        let name = entry.file_name().to_bytes();
-
-        // Skip . and ..
-        if name != b"." && name != b".." {
-            // Match: prefix + * + suffix
-            let matches = if star_pos.is_none() {
-                name == pat
-            } else {
-                name.len() >= prefix.len() + suffix.len()
-                    && name.starts_with(prefix)
-                    && name.ends_with(suffix)
-            };
-            if matches {
-                // Key is raw i64 bytes (same format as codegen IndexedArray)
-                let idx_bytes = idx.to_ne_bytes();
-                // DD#73: store `<prefix>/name` (absolute), not the bare name.
-                let total = prefix_len + 1 + name.len();
-                let elem = unsafe { alloc_cstr(total) };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(prefix_buf.as_ptr(), elem, prefix_len);
-                    *elem.add(prefix_len) = b'/';
-                    core::ptr::copy_nonoverlapping(
-                        name.as_ptr(),
-                        elem.add(prefix_len + 1),
-                        name.len(),
-                    );
-                }
-                unsafe {
-                    sash_table_set(
-                        table as *mut SashTable,
-                        idx_bytes.as_ptr(),
-                        8,
-                        elem,
-                        total as i64,
-                    );
-                }
-                idx += 1;
-            }
-        }
-    }
-
-    // Close directory
-    sash_close(dir_fd.into_raw_fd() as i64);
-    table
 }
 
 #[allow(dead_code)]

@@ -151,12 +151,14 @@ The same SSA instructions feed both backends and the taint/handler analyses.
 
 Revisiting one construction site is allowed; skipped sites and zero-trip
 loop binders do not reset storage. This adds neither block scope nor automatic
-destruction at loop exit. Caught-attest permissions, regex proofs and selectors
+destruction at loop exit. Caught-attest permissions, regex proofs and `rglob`
 remain subsequent trial work.
 
 Ordinary array fillers now build private batches too. `CollectionPublish`
 carries the previous destination explicitly; the shared runtime prepares a
 merged table and publishes its header only after all fallible work succeeds.
+A one-cell batch uses the existing allocation-before-insertion table setter
+without a full clone.
 The header address remains stable for aliases and live iteration. Empty
 batches change nothing, and EOF/no-match truth belongs to the producer, not
 the accumulated population. Assignment, scalar `readline` and map conversion
@@ -168,8 +170,34 @@ with the next free index. Integer literal appends and replacements reuse
 the checked element types and normal integer-cell encoding. Source and SSA
 taint, terminal facts and ERR's NUL analysis all retain the old destination's
 contribution; appending clean data is not failed-attest replacement.
-Private batches and cloned index/entry storage cost memory. Repeated-use
-allocation and useful-program evaluation remain part of the trial.
+Append consumes the private batch's keys, header and index/entry storage,
+while retaining borrowed value backing. Replaced destination metadata is
+freed too. This is not general reclamation: other snapshots and retained
+strings still cost memory. Repeated-use allocation and useful-program
+evaluation remain part of the trial.
+
+### Directory selection on the trial branch
+
+Explicit `glob` and bare-word array/append/loop sugar share `GlobFill` and
+[`directory.rs`](../sash-rt/src/directory.rs). The compiler includes the
+runtime's small [`glob_pattern.rs`](../sash-rt/src/glob_pattern.rs) validator,
+so static and computed patterns have the same final-component, one-star
+bound. Quoted and computed list words remain data; source provenance, not
+the presence of a star in the evaluated value, selects sugar.
+
+Each pattern enumerates one directory through public rustix, builds
+lexically normalized absolute paths and sorts its own batch bytewise.
+All patterns complete before publication; duplicates and pattern order
+are retained. Successful emptiness differs from an open/read/getcwd failure.
+Handled errors release private paths and descriptors without changing an
+ordinary destination. Scratch failure leaves the fresh empty instance.
+
+Lowering snapshots completed pattern operands and earlier mixed-list
+elements before later effects. The shared word-concatenation path also
+retains earlier component values, including their string conversion.
+This does not complete the separately tracked general argument-order work.
+Both backends use the same runtime status and publication protocol.
+The regex selector and DD132 proof/result rules are not implemented yet.
 
 ## Taint analysis
 

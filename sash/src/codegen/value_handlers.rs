@@ -25,11 +25,6 @@ pub(super) fn handle_param_expansion(
     externs: &ExternFuncs,
     _exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // arr=(*.sh) bypasses the var load and goes straight to the glob syscall.
-    if operator == "glob" {
-        return emit_glob_expansion(operand, builder, module, literals, externs);
-    }
-
     let (s_ptr, s_len) = load_var(var, vars, builder);
 
     match operator {
@@ -66,31 +61,6 @@ fn emit_table_len(
     let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
     let call = builder.ins().call(len_ref, &[s_ptr]);
     builder.inst_results(call)[0]
-}
-
-fn emit_glob_expansion(
-    operand: &str,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let dir_str = ".";
-    let dir_id = intern_or_declare(literals, dir_str);
-    let dir_gv = module.declare_data_in_func(dir_id, builder.func);
-    let dir_ptr = builder.ins().global_value(I64, dir_gv);
-    let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
-    let pat_id = intern_or_declare(literals, operand);
-    let pat_gv = module.declare_data_in_func(pat_id, builder.func);
-    let pat_ptr = builder.ins().global_value(I64, pat_gv);
-    let pat_len = builder.ins().iconst(I64, operand.len() as i64);
-    let func_ref = module.declare_func_in_func(externs.glob, builder.func);
-    let call = builder
-        .ins()
-        .call(func_ref, &[dir_ptr, dir_len, pat_ptr, pat_len]);
-    let table_ptr = builder.inst_results(call)[0];
-    let zero = builder.ins().iconst(I64, 0);
-    (table_ptr, zero)
 }
 
 #[allow(clippy::too_many_arguments)]

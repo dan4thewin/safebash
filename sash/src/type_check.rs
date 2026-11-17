@@ -1250,9 +1250,7 @@ fn not_an_int(part: &str) -> Option<String> {
 
 /// How many **leading** arguments of a string intrinsic are string operands.
 ///
-/// Every string slot is a leading argument, so a count is enough: the only
-/// trailing operands are the array targets of the 3-arg `match`/`matchall`
-/// forms, which a count of 2 excludes.
+/// The number of leading string operands; `glob` instead skips its first target.
 ///
 /// `join` is absent deliberately — its first operand is a collection
 /// (SB4030 via `check_join_operand`) and its separator must already be a
@@ -1262,6 +1260,7 @@ fn string_operand_slots(name: &str) -> Option<usize> {
         "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "getenv" => Some(1),
         "match" | "matchall" => Some(2),
         "sub" | "gsub" => Some(3),
+        "glob" => Some(usize::MAX),
         _ => None,
     }
 }
@@ -1289,7 +1288,8 @@ fn check_string_intrinsic_operands(
     let Some(slots) = string_operand_slots(&name) else {
         return;
     };
-    for arg in c.args.iter().take(slots) {
+    let skip = usize::from(name == "glob");
+    for arg in c.args.iter().skip(skip).take(slots) {
         if expr_type(arg, env) != VarType::Int {
             continue;
         }
@@ -2261,6 +2261,7 @@ fn collection_fill_target(c: &Command) -> Option<&Expr> {
         "argv" | "read" => c.args.last(),
         "match" | "matchall" if c.args.len() == 3 => c.args.last(),
         "keys" if c.args.len() == 2 => c.args.last(),
+        "glob" => c.args.first(),
         _ => None,
     }
 }

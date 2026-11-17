@@ -122,7 +122,25 @@ pub(super) fn collection_fill_target(
         super::stmt_handlers::autodeclare_bulk_target(name, ssa, state, block);
     }
     let var_type = state.lookup(name).var_type;
-    let temporary = state.reserve_temp_name(format!("__batch_{name}"), var_type);
+    private_collection_target(
+        format!("__batch_{name}"),
+        var_type,
+        is_assoc,
+        ssa,
+        state,
+        block,
+    )
+}
+
+pub(super) fn private_collection_target(
+    preferred: String,
+    var_type: VarType,
+    is_assoc: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> String {
+    let temporary = state.reserve_temp_name(preferred, var_type);
     let value = empty_collection_value(&temporary, is_assoc, state);
     let target = state.define(&temporary);
     ssa.block_mut(block)
@@ -557,6 +575,7 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
         | SsaInst::MatchInto { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
+        | SsaInst::GlobFill { .. }
         | SsaInst::CaptureStart { .. }
         | SsaInst::CaptureEnd { .. }
         | SsaInst::RedirectPush { .. }

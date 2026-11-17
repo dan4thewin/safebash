@@ -72,6 +72,7 @@ impl Cursor {
             | SsaInst::SplitValue { .. }
             | SsaInst::ArgvFill { .. }
             | SsaInst::KeysFill { .. }
+            | SsaInst::GlobFill { .. }
             | SsaInst::MatchInto { .. }
             | SsaInst::CaptureStart { .. }
             | SsaInst::CaptureEnd { .. }
@@ -550,12 +551,13 @@ impl<'a, 'p> Prover<'a, 'p> {
                 ..
             } => Some(Value::binding(source)),
             SsaInst::Assign { value, .. } => self.value(value),
-            SsaInst::ReadArray { .. } | SsaInst::ArgvFill { .. } | SsaInst::SplitValue { .. } => {
-                Some(Value::leaf(Form::Known(Proof {
-                    keys_may_nul: true,
-                    ..Proof::c_string()
-                })))
-            }
+            SsaInst::ReadArray { .. }
+            | SsaInst::ArgvFill { .. }
+            | SsaInst::SplitValue { .. }
+            | SsaInst::GlobFill { .. } => Some(Value::leaf(Form::Known(Proof {
+                keys_may_nul: true,
+                ..Proof::c_string()
+            }))),
             SsaInst::KeysFill { source, .. } => {
                 Some(Value::apply(Form::Keys, vec![Value::named(source)]))
             }

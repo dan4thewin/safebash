@@ -608,38 +608,26 @@ fn try_dispatch_array(
     ))
 }
 
-/// DD#20/DD#69: `for f in *` is sugar for `array tmp=(*); for f in @tmp`.
-/// Materialise the glob into a temp array (the existing `glob`
-/// param-expansion → libc glob → table) and iterate it per-element. 0
-/// matches → empty table → body never runs (lower_for_array bound).
+/// Materialize a glob-containing list with the same composition as an array.
 fn try_dispatch_glob(
     f: &For,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> Option<BlockId> {
-    if f.words.len() != 1 {
+    if !f.words.iter().any(|word| word.literal_glob().is_some()) {
         return None;
     }
-    let ExprKind::Literal(s) = &f.words[0].kind else {
-        return None;
-    };
-    if !s.contains('*') {
-        return None;
-    }
-    let glob_val = SsaValue::ParamExpansion {
-        var: VarRef::new(".", 0),
-        operator: "glob".to_string(),
-        operand: s.clone(),
-    };
+    let value = super::expressions::lower_array_literal(&f.words, state);
+    let value = super::functions::lift_int_func_calls(value, ssa, state, &mut block);
     // DD#125: a fixed name would clobber a legal source `__forglob` and alias
     // a nested glob loop's array with this one.
     let tmp_name = state.reserve_temp_name("__forglob".to_string(), VarType::String);
+    state.collections.insert(tmp_name.clone());
     let target = state.define(&tmp_name);
-    ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target,
-        value: glob_val,
-    });
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Assign { target, value });
     // A glob materialises into a fresh temp array; nothing to vouch for.
     Some(lower_for_array(
         f, &tmp_name, false, false, ssa, state, block,

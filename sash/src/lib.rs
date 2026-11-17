@@ -9,6 +9,8 @@ pub(crate) mod bindings;
 pub(crate) mod capture_purity;
 pub mod codegen;
 pub(crate) mod diagnostic;
+#[path = "../../sash-rt/src/glob_pattern.rs"]
+pub(crate) mod glob_pattern;
 pub(crate) mod output_taint;
 pub(crate) mod regex_validate;
 pub(crate) mod resolve;

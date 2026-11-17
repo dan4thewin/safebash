@@ -435,37 +435,25 @@ fn dq_to_value(parts: &[Expr], state: &VersionState) -> SsaValue {
     SsaValue::Concat(concat_parts)
 }
 
-/// `arr=(…)` array literal: detect the single-glob shorthand before falling
-/// back to IndexedArray. The regex-filter shorthand `(GLOB =~ 're')` was
-/// retired by DD#108 and is rejected in `validate` (SB5075), so it never
-/// reaches here.
-fn lower_array_literal(elems: &[Expr], state: &VersionState) -> SsaValue {
+/// Preserve source glob markers within a mixed list for ordered lifting.
+/// DD#108's retired regex-filter shorthand is rejected before lowering.
+pub(super) fn lower_array_literal(elems: &[Expr], state: &VersionState) -> SsaValue {
     // An array-literal element is an elidable list position like a command
     // argument, so `@a` SPLICES its elements — `(p @a q)` is p,x,y,z, not a
     // 3-element array whose middle entry is the joined string.
-    let vals: Vec<SsaValue> = elems.iter().map(|e| arg_to_value(e, state)).collect();
-    if let Some(v) = try_array_single_glob(&vals) {
-        return v;
-    }
-    SsaValue::IndexedArray(vals)
-}
-
-/// arr=(*.sh) → sash_glob(".", "*.sh") shorthand.
-fn try_array_single_glob(vals: &[SsaValue]) -> Option<SsaValue> {
-    if vals.len() != 1 {
-        return None;
-    }
-    let SsaValue::Literal(s) = &vals[0] else {
-        return None;
-    };
-    if !s.contains('*') {
-        return None;
-    }
-    Some(SsaValue::ParamExpansion {
-        var: VarRef::new(".", 0),
-        operator: "glob".to_string(),
-        operand: s.clone(),
-    })
+    SsaValue::IndexedArray(
+        elems
+            .iter()
+            .map(|e| match e.literal_glob() {
+                Some(pattern) => SsaValue::ParamExpansion {
+                    var: VarRef::new(".", 0),
+                    operator: "glob".to_string(),
+                    operand: pattern.to_string(),
+                },
+                None => arg_to_value(e, state),
+            })
+            .collect(),
+    )
 }
 
 /// The literal name an expression carries.

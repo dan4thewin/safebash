@@ -1545,6 +1545,37 @@ pub(super) fn handle_keys_fill(
     false
 }
 
+pub(super) fn handle_glob_fill(
+    array: &str,
+    patterns: &[SsaValue],
+    checked: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    let (patterns, _) = super::values::lower_value(
+        &SsaValue::IndexedArray(patterns.to_vec()),
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+        ctx.exit_status_var,
+    );
+    let target = find_array_slot(ctx.vars, array, "array")
+        .str_ptr()
+        .load(builder);
+    let checked = builder.ins().iconst(I64, i64::from(checked));
+    let function = module.declare_func_in_func(ctx.externs.glob, builder.func);
+    let call = builder.ins().call(function, &[target, patterns, checked]);
+    let status = builder.inst_results(call)[0];
+    builder.def_var(ctx.exit_status_var, status);
+    let success = builder.ins().icmp_imm(IntCC::Equal, status, 0);
+    let success = builder.ins().uextend(I64, success);
+    builder.def_var(ctx.test_result_var, success);
+    false
+}
+
 /// Handle SsaInst::SubscriptAssign.
 pub(super) fn handle_subscript_assign(
     array: &str,

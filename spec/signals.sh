@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 / DD#128 — signals and terminal handlers
 . common.sh
-plan=125
+plan=126
 setup signals
 
 set +e
@@ -973,7 +973,15 @@ ERR {
   if /bin/echo "$work$(change)" { : }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.38
+[[ $rc = 1 && $out = before1 && -z $err && -z $rerr ]]; chk errnul.39
+
+run_sash 'fn change -> int { work=$'\''bad\x00value'\''; return 1 }
+ERR {
+  str work=before
+  if /bin/echo "$(change)$work" { : }
+}
+fail'
+[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.40
 
 set -e
 tally
