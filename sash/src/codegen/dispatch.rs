@@ -149,11 +149,13 @@ impl SsaInst {
             }
             SsaInst::GlobFill {
                 target,
+                directory,
                 patterns,
                 checked,
             } => {
                 return super::inst_handlers::handle_glob_fill(
                     &target.name,
+                    directory.as_ref(),
                     patterns,
                     *checked,
                     builder,
@@ -364,6 +366,7 @@ impl SsaInst {
             | BuiltinCmd::Dirname
             | BuiltinCmd::Argv
             | BuiltinCmd::Glob
+            | BuiltinCmd::Rglob
             | BuiltinCmd::Test
             | BuiltinCmd::Attest
             | BuiltinCmd::Read

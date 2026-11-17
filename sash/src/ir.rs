@@ -70,6 +70,18 @@ impl Expr {
     }
 }
 
+/// The collection behind a whole splat operand, including dispositions.
+/// Quoted `@a` is literal text; retired quoted bracket splats reject at parse.
+pub(crate) fn splat_collection_name(kind: &ExprKind) -> Option<&str> {
+    let ExprKind::ParameterExpansion(pe) = kind else {
+        return None;
+    };
+    pe.operator
+        .as_deref()
+        .is_some_and(|op| op.starts_with("arrvals"))
+        .then_some(pe.name.as_str())
+}
+
 impl Statement {
     /// Shorthand: a simple command with name and args.
     pub fn command(name: Expr, args: Vec<Expr>, span: Span) -> Self {

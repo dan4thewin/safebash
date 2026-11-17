@@ -1188,10 +1188,12 @@ fn check_command_splat_operand(
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
     };
-    if !is_scalar_operand_intrinsic(name) {
-        return;
-    }
-    for arg in &c.args {
+    let args = match name.as_str() {
+        "rglob" => c.args.get(1..2).unwrap_or_default(),
+        _ if is_scalar_operand_intrinsic(name) => &c.args,
+        _ => return,
+    };
+    for arg in args {
         let Some(collection) = splat_collection_name(&arg.kind) else {
             continue;
         };
@@ -1276,26 +1278,6 @@ fn is_scalar_operand_intrinsic(name: &str) -> bool {
         name,
         "sub" | "gsub" | "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "match" | "cd"
     )
-}
-
-/// The collection name behind any array splat — bare `@a` or one carrying a
-/// disposition (`@{a:-W}`, `@{a:?W}`). Every splat operator is spelled
-/// `arrvals…`. `None` when the expression is not a splat at all, so a caller
-/// uses this as the test as well as the accessor.
-///
-/// There is deliberately **no `DoubleQuoted` case**: inside double quotes `@a`
-/// and `@{a:-W}` are literal text, and the one splat spelling that survives
-/// quoting is the DD#75 §4 `[@]`/`[*]` form, whose `arrvals_retired` operator
-/// the **parser** rejects (SB4038, `retired_bracket_operator_diag`). A quoted
-/// splat therefore never reaches `validate`.
-fn splat_collection_name(kind: &ExprKind) -> Option<&str> {
-    let ExprKind::ParameterExpansion(pe) = kind else {
-        return None;
-    };
-    pe.operator
-        .as_deref()
-        .is_some_and(|op| op.starts_with("arrvals"))
-        .then_some(pe.name.as_str())
 }
 
 /// SB4037 (DD#74): a function used in a boolean context must supply its
@@ -1965,10 +1947,12 @@ fn check_attest_convert_names(name: &str, c: &Command, span: Span, diags: &mut V
 /// (`array a=(*)`) and splat (`@a`) — there is no inline glob expansion.
 /// Quoted `"*"` is a literal asterisk and is unaffected.
 fn check_inline_glob(c: &Command, diags: &mut Vec<Diagnostic>) {
-    if expr_literal_str(&c.name) == "glob" {
-        return;
-    }
-    for arg in &c.args {
+    let args = match expr_literal_str(&c.name) {
+        "glob" => return,
+        "rglob" => &c.args[..c.args.len().min(2)],
+        _ => &c.args,
+    };
+    for arg in args {
         if arg_has_unquoted_star(&arg.kind) {
             diags.push(Diagnostic::error_span(
                 arg.span,
@@ -1995,19 +1979,26 @@ fn arg_has_unquoted_star(kind: &ExprKind) -> bool {
 }
 
 fn check_glob_command(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    let (minimum, message) = match name {
+        "rglob" => (
+            3,
+            "`rglob` expects an array target, a directory and at least one pattern: \
+             `rglob ARRAY DIRECTORY REGEX...`",
+        ),
+        "glob" => (
+            2,
+            "`glob` expects an array target and at least one pattern: `glob ARRAY PATTERN...`",
+        ),
+        _ => return,
+    };
+    if c.args.len() < minimum {
+        diags.push(Diagnostic::error_span(span, "SB4045", message.to_string()));
+    }
     if name != "glob" {
         return;
     }
-    if c.args.len() < 2 {
-        diags.push(Diagnostic::error_span(
-            span,
-            "SB4045",
-            "`glob` expects an array target and at least one pattern: `glob ARRAY PATTERN...`"
-                .to_string(),
-        ));
-    }
     for pattern in c.args.iter().skip(1) {
-        let Some(text) = static_word_text(pattern) else {
+        let Some(text) = static_pattern_text(pattern) else {
             continue;
         };
         check_glob_pattern(&text, pattern.span, diags);
@@ -2845,12 +2836,13 @@ fn check_test_regex_patterns(test: &TestExpr, span: Span, diags: &mut Vec<Diagno
 /// edit of a `,` chain, and the `x =~ s/…` statement all desugar to `sub`/
 /// `gsub` and reach this through their capture bodies.
 fn check_regex_operand(name: &str, c: &Command, diags: &mut Vec<Diagnostic>) {
-    let what = match name {
-        "sub" | "gsub" => "invalid regex in substitution",
-        "match" | "matchall" => "invalid regex pattern",
+    let (patterns, what) = match name {
+        "rglob" => (c.args.get(2..), "invalid regex pattern"),
+        "sub" | "gsub" => (c.args.get(1..2), "invalid regex in substitution"),
+        "match" | "matchall" => (c.args.get(1..2), "invalid regex pattern"),
         _ => return,
     };
-    if let Some(re) = c.args.get(1) {
+    for re in patterns.unwrap_or_default() {
         check_regex_pattern(re, what, re.span, diags);
     }
 }
@@ -2876,7 +2868,7 @@ fn check_regex_pattern(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diag
         ));
         return;
     }
-    let Some(pattern) = static_word_text(expr) else {
+    let Some(pattern) = static_pattern_text(expr) else {
         return;
     };
     if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
@@ -2886,6 +2878,16 @@ fn check_regex_pattern(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diag
             format!("{what}: {msg}"),
         ));
     }
+}
+
+fn static_pattern_text(expr: &Expr) -> Option<String> {
+    let word = match &expr.kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals_default") => {
+            pe.operand.as_deref()
+        }
+        _ => Some(expr),
+    };
+    word.and_then(static_word_text)
 }
 
 fn trusted_pattern_read(expr: &Expr) -> Option<Span> {
@@ -4071,6 +4073,7 @@ const BUILTINS: &[&str] = &[
     "close",
     "mkdtemp",
     "glob",
+    "rglob",
     // Introspection
     "status",
     "getpid",
@@ -5302,14 +5305,15 @@ pub fn check_elide_positions(program: &Program) -> Vec<Diagnostic> {
 
 fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     // A command's direct args are elidable; its name is not.
-    if let StmtKind::Command(c) = &stmt.kind {
-        check_elide_expr(&c.name, false, diags);
-        let elidable = command_args_elidable(expr_literal_str(&c.name));
-        for a in &c.args {
-            check_elide_expr(a, elidable, diags);
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            check_elide_expr(&c.name, false, diags);
+            let name = expr_literal_str(&c.name);
+            for (index, a) in c.args.iter().enumerate() {
+                check_elide_expr(a, command_arg_elidable(name, index), diags);
+            }
         }
-    } else {
-        stmt.direct_exprs(&mut |e| check_elide_expr(e, false, diags));
+        _ => stmt.direct_exprs(&mut |e| check_elide_expr(e, false, diags)),
     }
     // A bare `(( … ))` holds an `ArithExpr` directly, which `direct_exprs`
     // cannot surface (same shape as check_positionals_direct).
@@ -5346,7 +5350,7 @@ fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 /// is an ICE; under this one it is non-elidable until someone decides
 /// otherwise, and the arms below make that a decision the compiler will not
 /// let anyone skip.
-fn command_args_elidable(name: &str) -> bool {
+fn command_arg_elidable(name: &str, index: usize) -> bool {
     use crate::ssa::BuiltinCmd as B;
     match B::from_name(name) {
         // (1) An external program or a user function call: `from_name` knows
@@ -5358,6 +5362,8 @@ fn command_args_elidable(name: &str) -> bool {
         // builds an external command's argv, which is (1) wearing a builtin's
         // name; `:` discards a list it never evaluates.
         B::Echo | B::Write | B::Exec | B::Noop => true,
+        B::Glob => index >= 1,
+        B::Rglob => index >= 2,
 
         // Fixed-arity builtins. Dropping an argument here does not shorten a
         // list, it SHIFTS the roles — `read ${u:~} f` becomes `read f` and
@@ -5367,7 +5373,6 @@ fn command_args_elidable(name: &str) -> bool {
         | B::Read
         | B::Mapfile
         | B::Argv
-        | B::Glob
         | B::Unset
         | B::Wait
         | B::Close
@@ -5942,7 +5947,7 @@ fn command_writes_args(c: &Command) -> bool {
             c.args.len() == 3 && c.args.last().map(expr_literal_str) == Some("args")
         }
         "argv" => argv_target_name(&c.args) == Some("args"),
-        "glob" => c.args.first().map(expr_literal_str) == Some("args"),
+        "glob" | "rglob" => c.args.first().map(expr_literal_str) == Some("args"),
         // DD#75: `keys m k` — the target is the second argument. One argument
         // is the `$(keys m)` splat, which writes nothing.
         "keys" => c.args.len() == 2 && c.args.last().map(expr_literal_str) == Some("args"),
@@ -8668,7 +8673,7 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
         // two-arg `match S P` is the boolean form and binds nothing.
         "matchall" | "match" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         "argv" => insert_last_literal_arg(&c.args, set),
-        "glob" => insert_last_literal_arg(&c.args[..c.args.len().min(1)], set),
+        "glob" | "rglob" => insert_last_literal_arg(&c.args[..c.args.len().min(1)], set),
         // DD#75: `keys m k` snapshots the map's keys into the array named
         // last. One argument is the `$(keys m)` splat, which binds nothing.
         "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
@@ -9557,7 +9562,7 @@ fn insert_auto_collection_target(kind: &StmtKind, set: &mut HashSet<String>) {
         "match" | "matchall" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         // DD#60: `argv [N] ARR` snapshots into the array named last.
         "argv" => insert_last_literal_arg(&c.args, set),
-        "glob" => insert_last_literal_arg(&c.args[..c.args.len().min(1)], set),
+        "glob" | "rglob" => insert_last_literal_arg(&c.args[..c.args.len().min(1)], set),
         // DD#75: `keys m k` likewise. One argument is the splat form.
         "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
         _ => {}
@@ -11220,7 +11225,7 @@ fn check_fill_target_body(body: &[Statement], diags: &mut Vec<Diagnostic>) {
 fn fill_target_spec(c: &Command) -> Option<(Vec<&str>, bool)> {
     let spec = match expr_literal_str(&c.name) {
         "argv" => (argv_target_name(&c.args).into_iter().collect(), false),
-        "glob" => (
+        "glob" | "rglob" => (
             c.args.first().map(expr_literal_str).into_iter().collect(),
             false,
         ),

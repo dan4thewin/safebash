@@ -224,6 +224,7 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         | BuiltinCmd::Mapfile
         | BuiltinCmd::Argv
         | BuiltinCmd::Glob
+        | BuiltinCmd::Rglob
         | BuiltinCmd::Break
         | BuiltinCmd::Continue
         | BuiltinCmd::Return

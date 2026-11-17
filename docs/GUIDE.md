@@ -184,27 +184,45 @@ evaluation remain part of the trial.
 
 ### Directory selection on the trial branch
 
-Explicit `glob` and bare-word array/append/loop sugar share `GlobFill` and
-[`directory.rs`](../sash-rt/src/directory.rs). The compiler includes the
-runtime's small [`glob_pattern.rs`](../sash-rt/src/glob_pattern.rs) validator,
-so static and computed patterns have the same final-component, one-star
-bound. Quoted and computed list words remain data; source provenance, not
-the presence of a star in the evaluated value, selects sugar.
+Explicit `glob`, `rglob` and bare-word array/append/loop sugar share `GlobFill`
+and [`directory.rs`](../sash-rt/src/directory.rs). Its optional directory
+operand distinguishes regex selection from coarse glob selection and
+participates in canonical SSA reads and failure analysis. The compiler
+includes the runtime's small
+[`glob_pattern.rs`](../sash-rt/src/glob_pattern.rs) validator, so static and
+computed coarse-glob patterns have the same final-component, one-star bound.
+Quoted and computed list words remain data; source provenance, not the
+presence of a star in the evaluated value, selects sugar.
 
 Each pattern enumerates one directory through public rustix, builds
 lexically normalized absolute paths and sorts its own batch bytewise.
+`rglob` applies ordinary unanchored regex matching to basenames in its
+explicit directory, including matching hidden names but excluding `.`/`..`.
+It compiles and owns one regex at a time, freeing it on completion or error.
+Regex execution-workspace exhaustion is fatal, not no-match.
 All patterns complete before publication; duplicates and pattern order
 are retained. Successful emptiness differs from an open/read/getcwd failure.
 Handled errors release private paths and descriptors without changing an
 ordinary destination. Scratch failure leaves the fresh empty instance.
 
-Lowering snapshots completed pattern operands and earlier mixed-list
-elements before later effects. The shared word-concatenation path also
-retains earlier component values, including their string conversion.
+The variadic pattern tails use ordinary argument-list lowering, retaining
+splat boundaries, dispositions and elision. Lowering snapshots each completed
+operand before evaluating the next, including `rglob`'s scalar directory.
+An empty expanded pattern list succeeds without directory normalization or
+enumeration; operand effects and failures still happen. Actual splat element
+types, rather than a generic expansion's string type, govern string operands.
+
+The shared proof analysis requires valid immutable regex values, including
+possible splat defaults. Present-cell proofs survive byte-preserving quoting,
+but trusted copies and mutable intermediates do not convey validity.
+Compiler-owned literal argument batches can establish static facts; a
+source-created array still needs its own successful check.
+
+Earlier mixed-list elements are also retained before later effects.
+The shared word-concatenation path retains earlier component values,
+including their string conversion.
 This does not complete the separately tracked general argument-order work.
 Both backends use the same runtime status and publication protocol.
-The regex selector remains to be implemented; DD132's scalar result channels
-are described below.
 
 ## Taint analysis
 
@@ -387,7 +405,8 @@ SB4018 requires explicit discard for text-only calls. Substitution sugar
 and `basename`/`dirname` project only text. Shared SSA values carry that
 choice, and both backends use an optional status pointer added to the
 runtime's existing pointer/length-returning APIs. No compiled pattern handle
-persists. `rglob` and integrated evaluation remain pending.
+persists. Integrated utility, migration and memory/time evaluation remains
+pending before DG's adoption decision.
 
 Executable redirect indices use shared nested scopes: retain command
 arguments, evaluate and open each target in order, then run the body.

@@ -431,6 +431,7 @@ pub(super) fn lift_int_func_calls(
             let target = state.define_replacement(&array);
             ssa.block_mut(*block).insts.push(SsaInst::GlobFill {
                 target: target.clone(),
+                directory: None,
                 patterns: vec![SsaValue::Literal(operand.clone())],
                 checked: true,
             });

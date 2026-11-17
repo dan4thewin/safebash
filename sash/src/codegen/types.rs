@@ -211,6 +211,7 @@ pub(super) struct ExternFuncs {
     pub(super) epochseconds: cranelift_module::FuncId,
     pub(super) trap: cranelift_module::FuncId,
     pub(super) glob: cranelift_module::FuncId,
+    pub(super) rglob: cranelift_module::FuncId,
     pub(super) capture_start: cranelift_module::FuncId,
     pub(super) capture_end: cranelift_module::FuncId,
     pub(super) capture_start_buf: cranelift_module::FuncId,

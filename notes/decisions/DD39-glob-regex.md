@@ -102,8 +102,9 @@ within pattern operands (journal 649). SB5106 now requires immutable-value
 proofs at every existing consumer (journal 650), independently of taint
 switches. Caught ordinary-read permissions are implemented in journal 651;
 scalar regex text/Boolean results and explicit projections follow in
-journal 652. `rglob` and integrated evaluation remain unfinished, and none
-of these trial deliveries adopts the package on main.
+journal 652. `rglob` and its pattern-list proof handling are implemented in
+journal 653. Integrated evaluation remains unfinished, and none of these
+trial deliveries adopts the package on main.
 
 ## Whole-subject anchors (DG, 2026-11-16)
 

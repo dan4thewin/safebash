@@ -135,6 +135,7 @@ pub enum BuiltinCmd {
     /// DD#60: `argv [N] a` fills array `a` with the program argv slice.
     Argv,
     Glob,
+    Rglob,
     Break,
     Continue,
     Return,
@@ -209,6 +210,7 @@ impl BuiltinCmd {
             "mapfile" | "readarray" => Self::Mapfile,
             "argv" => Self::Argv,
             "glob" => Self::Glob,
+            "rglob" => Self::Rglob,
             "break" => Self::Break,
             "continue" => Self::Continue,
             "return" => Self::Return,
@@ -291,6 +293,7 @@ impl BuiltinCmd {
             | Self::Mapfile
             | Self::Argv
             | Self::Glob
+            | Self::Rglob
             | Self::Break
             | Self::Continue
             | Self::Return
@@ -369,6 +372,7 @@ impl BuiltinCmd {
             // Write a variable or collection of the process that runs them.
             Self::Argv
             | Self::Glob
+            | Self::Rglob
             | Self::Read
             | Self::Keys
             | Self::Match
@@ -655,6 +659,7 @@ pub enum SsaInst {
     /// DD#131: fill a private clean batch; success is independent of population.
     GlobFill {
         target: VarRef,
+        directory: Option<SsaValue>,
         patterns: Vec<SsaValue>,
         checked: bool,
     },
@@ -1035,8 +1040,19 @@ impl SsaInst {
                     format!("the match pattern for '{}'", array),
                 ),
             ],
-            SsaInst::GlobFill { patterns, .. } => {
-                value_reads(patterns, "a glob pattern".to_string())
+            SsaInst::GlobFill {
+                directory,
+                patterns,
+                ..
+            } => {
+                let mut reads = value_reads(patterns, "a directory-selection pattern".to_string());
+                if let Some(directory) = directory {
+                    reads.push((
+                        TaintRead::Value(directory),
+                        "an rglob directory".to_string(),
+                    ));
+                }
+                reads
             }
             SsaInst::Assign { value, .. } if propagation => {
                 vec![(TaintRead::Value(value), "an assigned value".to_string())]
@@ -1533,6 +1549,18 @@ pub struct ArraySplatDisposition {
 }
 
 impl SsaValue {
+    pub(crate) fn literal_text(&self) -> Option<String> {
+        match self {
+            Self::Literal(s) | Self::Expr(s) => Some(s.clone()),
+            Self::Concat(parts) => parts
+                .iter()
+                .map(Self::literal_text)
+                .collect::<Option<Vec<_>>>()
+                .map(|v| v.concat()),
+            _ => None,
+        }
+    }
+
     /// Ordinary storage reads, including indices of explicitly trusted cells.
     /// Total over `SsaValue`; do not add a wildcard.
     pub(crate) fn read_variables(&self, f: &mut impl FnMut(&VarRef)) {

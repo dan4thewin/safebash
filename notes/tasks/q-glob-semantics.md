@@ -6,6 +6,7 @@ depends: [bug-glob-directory-portion, bug-glob-multi-star, bug-regex-line-anchor
 gates:
   - "implementation and evaluation occur on a separate branch; DG reviews utility and ramifications before behavior lands on main"
   - "glob ARRAY PATTERN... accepts ordinary strings with consistent static/runtime bound checks; rglob ARRAY DIRECTORY REGEX... requires DD132 proof for runtime regex operands"
+  - "both pattern tails accept list splats and dispositions; empty expansion succeeds without directory work, while operand effects/failures remain and at least one source pattern operand is required"
   - "DD39's at-most-one-star/final-component rule is enforced in explicit glob calls and every glob list position; literal prefixes and zero-star exact-name patterns remain legal"
   - "dotfiles require a literal leading dot in the filename pattern; wildcards never yield dot or dot-dot"
   - "rglob matches basenames with ordinary regex semantics, not glob limits or a hidden-file prefilter; dot/dot-dot are excluded and outputs are normalized absolute paths"
@@ -76,8 +77,10 @@ Caught-scratch ordinary reads and failed-path relaxation are now enforced
 with SB5107 (journal 651), including negated/logical forms and handler/signal
 boundaries. Scalar regex text-plus-Boolean results and their projections are
 implemented and gated (journal 652), together with guarded redirect-index
-lifting and its ordered scopes. `rglob` remains implementation work;
-this owner stays open through the integrated trial and DG's evaluation.
+lifting and its ordered scopes. `rglob` and ordinary pattern-list expansion
+are implemented and gated (journal 653), with empty-list success and
+per-value regex proofs. Implementation is complete for the selected package;
+this owner stays open through integrated evaluation and DG's adoption decision.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record
@@ -117,6 +120,16 @@ Every runtime regex operand needs DD132's successful validity proof for
 its immutable final value. Literal use retains static validation.
 `r?` returning false is not `rglob` returning a directory failure, and
 neither is successful enumeration with zero matches.
+
+DG settled pattern-list expansion on 2026-11-17: allow splats, with an empty
+expansion succeeding without enumeration. Both commands retain the target as
+a binding name, and `rglob` retains one non-elidable scalar directory.
+Normal pattern-tail dispositions preserve element boundaries, order and
+duplicates; at least one source pattern operand is required. Zero actual
+patterns means no open, read or path normalization, not skipped operand
+evaluation or failure checks. An explicitly empty fallback is one empty
+pattern, not zero patterns. Runtime regex defaults need their own proof
+when reachable; a source array of literal strings is not implicitly validated.
 
 DG explicitly included these independent sugar forms:
 
@@ -410,6 +423,15 @@ The regex-result/redirect-index unit has baseline
 | [DD39-glob-regex.md](../decisions/DD39-glob-regex.md) | Engine delivery paragraph. | Reconcile caught-scratch and result delivery; `rglob` and integrated evaluation remain. |
 | [DD65-var-modifier-prune.md](../decisions/DD65-var-modifier-prune.md) | Kept substitution-sugar entry. | Record the implemented per-edit text projection on the trial, not main adoption. |
 
+The regex-selector/pattern-list unit has baseline
+`f61aecad2a8a4d42bf348b59eb583b7161d7a006`:
+
+| Exact DD file | Changed section / contract | Disposition |
+|---|---|---|
+| [DD131-directory-selectors-scratch-collections.md](../decisions/DD131-directory-selectors-scratch-collections.md) | Opening rule 2, pattern-list expansion and delivery notice. | DG chose pattern-list splats and empty-expansion success without enumeration; operand evaluation remains checked. Both selectors are delivered on the trial. |
+| [DD132-validated-regex-immutable-scratch.md](../decisions/DD132-validated-regex-immutable-scratch.md) | Implementation boundary. | Record rglob, list/default proofs and runtime ownership; no new proof policy or retained cache. |
+| [DD39-glob-regex.md](../decisions/DD39-glob-regex.md) | Engine delivery paragraph. | Record rglob delivery, with integrated evaluation and main adoption still outstanding. |
+
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
@@ -584,8 +606,32 @@ caught-scratch baseline, all 12255 retained statuses are unchanged:
 Final source/compiler/runtime/lock identities match the separate post-refactor
 snapshot. The ABI changes, but this unit adds no retained regex handle or cache;
 existing per-use compilation and integrated memory/time costs still need
-evaluation. All 56 tour snippets match their regenerated edition. `rglob`
-and the integrated evaluation remain before DG's adoption decision.
+evaluation. All 56 tour snippets match their regenerated edition. The
+regex-selector delivery follows below; integrated evaluation remains before
+DG's adoption decision.
+
+The regex-selector unit follows `f61aecad2a8a4d42bf348b59eb583b7161d7a006`;
+[journal 653](../journal/653-regex-directory-selection.md) records shared
+`glob`/`rglob` list-aware lowering, immediate operand snapshots, actual splat
+element typing, exact-value/default proofs and runtime regex ownership.
+The glob file has 137 checks per mode. The matched frozen before pair fails
+exactly the nine new `globlist` and 49 `rglob` assertions in each backend,
+while all 79 retained checks pass.
+
+Sixteen independent reversions pin lowering/proofs, directory SSA reads,
+each backend's selector call, fatal matching-workspace failure, compiled
+regex release and all-or-nothing publication. The two corrected initial
+control attempts are retained separately; they are not product regressions
+or successful negative controls. Every mutation is restored, and positive
+source/compiler/runtime/lock identities match after the ordinary gate.
+
+That gate passes at rows 7246113-7258677: 12565 checks, 12552 passing and
+13 existing C skips, native 6394 and C 6171. It adds exactly 116 first-ever
+mode IDs, with no flips or retirements. All 12449 accepted regex-result
+baseline statuses are unchanged. Each selector regex is compiled per pattern
+and released even on enumeration failure; no cache or engine change is added.
+Integrated useful-program/helper/converter/memory/time evaluation remains,
+and main is unchanged.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

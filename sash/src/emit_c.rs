@@ -404,6 +404,11 @@ fn emit_prologue(out: &mut String) {
         "extern i64 sash_glob(SashTable* target, SashTable* patterns, i64 checked);"
     )
     .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_rglob(SashTable* target, const char* dir, i64 len, SashTable* patterns, i64 checked);"
+    )
+    .unwrap();
     writeln!(out,).unwrap();
     writeln!(
         out,
@@ -1299,10 +1304,18 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         SsaInst::KeysFill { source, target } => emit_keys_fill_c(e, source, &target.name),
         SsaInst::GlobFill {
             target,
+            directory,
             patterns,
             checked,
         } => {
-            emit_glob_fill_c(e, &target.name, patterns, *checked, types);
+            emit_glob_fill_c(
+                e,
+                &target.name,
+                directory.as_ref(),
+                patterns,
+                *checked,
+                types,
+            );
         }
 
         // Exhaustive on purpose — no `_ =>`. These twelve are claimed by the
@@ -2322,6 +2335,7 @@ fn emit_command_body(
         | BuiltinCmd::Dirname
         | BuiltinCmd::Argv
         | BuiltinCmd::Glob
+        | BuiltinCmd::Rglob
         | BuiltinCmd::Test
         | BuiltinCmd::Attest
         | BuiltinCmd::Read
@@ -3355,15 +3369,25 @@ fn emit_keys_fill_c(e: &mut Emit, source: &str, array: &str) {
 fn emit_glob_fill_c(
     e: &mut Emit,
     array: &str,
+    directory: Option<&SsaValue>,
     patterns: &[SsaValue],
     checked: bool,
     types: &VarTypes,
 ) {
     let (patterns, _) = emit_indexed_array(e, patterns, types);
     let base = c_var_name(array, 0);
+    let (function, args) = if let Some(directory) = directory {
+        let (ptr, len) = lower_value_as_str(e, directory, types);
+        (
+            "sash_rglob",
+            format!("(SashTable*){base}_ptr, {ptr}, {len}"),
+        )
+    } else {
+        ("sash_glob", format!("(SashTable*){base}_ptr"))
+    };
     writeln!(
         e.out,
-        "    __exit_status = sash_glob((SashTable*){base}_ptr, (SashTable*){patterns}, {});",
+        "    __exit_status = {function}({args}, (SashTable*){patterns}, {});",
         i64::from(checked),
     )
     .unwrap();

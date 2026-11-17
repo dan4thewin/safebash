@@ -1,6 +1,6 @@
 //! Private directory selection; only completed batches reach source collections.
 
-use core::{mem, ptr, slice};
+use core::{ffi::CStr, mem, ptr, slice};
 use rustix::fs::{open, Mode, OFlags, RawDir};
 
 use crate::{
@@ -150,6 +150,7 @@ impl Drop for Paths {
 enum Failure<'a> {
     Pattern(&'a [u8], &'static str),
     System(&'static [u8], &'a [u8], rustix::io::Errno),
+    Regex(&'static [u8]),
 }
 
 impl Failure<'_> {
@@ -158,6 +159,10 @@ impl Failure<'_> {
             Self::System(operation, path, errno) => (*operation, *path, *errno),
             Self::Pattern(pattern, reason) => {
                 (reason.as_bytes(), *pattern, rustix::io::Errno::INVAL)
+            }
+            Self::Regex(message) => {
+                unsafe { crate::regerror9(message.as_ptr()) };
+                return;
             }
         };
         set_last_errno(errno);
@@ -172,7 +177,10 @@ impl Failure<'_> {
     }
 }
 
-fn absolute_prefix(directory: &[u8]) -> Result<Bytes, Failure<'_>> {
+fn absolute_prefix<'a>(
+    directory: &'a [u8],
+    operation: &'static [u8],
+) -> Result<Bytes, Failure<'a>> {
     let mut cwd_len = 0;
     let cwd = if directory.starts_with(b"/") {
         &b""[..]
@@ -181,7 +189,7 @@ fn absolute_prefix(directory: &[u8]) -> Result<Bytes, Failure<'_>> {
         if cwd_ptr.is_null() {
             let errno =
                 unsafe { rustix::io::Errno::from_raw_os_error(crate::SASH_LAST_ERRNO as i32) };
-            return Err(Failure::System(b"glob: getcwd", directory, errno));
+            return Err(Failure::System(operation, directory, errno));
         }
         unsafe { slice::from_raw_parts(cwd_ptr, cwd_len as usize) }
     };
@@ -223,7 +231,7 @@ fn absolute_prefix(directory: &[u8]) -> Result<Bytes, Failure<'_>> {
 }
 
 fn matches(name: &[u8], pattern: &[u8]) -> bool {
-    if name == b"." || name == b".." || (name.starts_with(b".") && !pattern.starts_with(b".")) {
+    if name.starts_with(b".") && !pattern.starts_with(b".") {
         return false;
     }
     match pattern.iter().position(|&b| b == b'*') {
@@ -241,28 +249,99 @@ fn matches(name: &[u8], pattern: &[u8]) -> bool {
 fn select<'a>(pattern: &'a [u8], paths: &mut Paths) -> Result<(), Failure<'a>> {
     let (directory, filename) =
         glob_pattern::split(pattern).map_err(|reason| Failure::Pattern(pattern, reason))?;
+    select_directory(
+        directory,
+        paths,
+        [b"glob: open", b"glob: read", b"glob: getcwd"],
+        |name| Ok(matches(name.to_bytes(), filename)),
+    )
+}
+
+fn select_directory<'a>(
+    directory: &'a [u8],
+    paths: &mut Paths,
+    [open_op, read_op, cwd_op]: [&'static [u8]; 3],
+    matches: impl Fn(&CStr) -> Result<bool, Failure<'a>>,
+) -> Result<(), Failure<'a>> {
+    if directory.contains(&0) {
+        return Err(Failure::System(
+            open_op,
+            directory,
+            rustix::io::Errno::INVAL,
+        ));
+    }
     let mut storage = Bytes::new(directory.len());
     storage.as_mut_slice().copy_from_slice(directory);
-    let path = unsafe { core::ffi::CStr::from_ptr(storage.ptr.cast()) };
+    let path = unsafe { CStr::from_ptr(storage.ptr.cast()) };
     let fd = open(
         path,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
     )
-    .map_err(|e| Failure::System(b"glob: open", directory, e))?;
-    let prefix = absolute_prefix(directory)?;
+    .map_err(|e| Failure::System(open_op, directory, e))?;
+    let prefix = absolute_prefix(directory, cwd_op)?;
     let mut buffer = [mem::MaybeUninit::uninit(); 4096];
     let mut entries = RawDir::new(&fd, &mut buffer);
     let start = paths.len;
     while let Some(entry) = entries.next() {
-        let entry = entry.map_err(|e| Failure::System(b"glob: read", directory, e))?;
+        let entry = entry.map_err(|e| Failure::System(read_op, directory, e))?;
         let name = entry.file_name().to_bytes();
-        if matches(name, filename) {
+        if name != b"." && name != b".." && matches(entry.file_name())? {
             paths.push(prefix.as_slice(), name);
         }
     }
     paths.sort_from(start);
     Ok(())
+}
+
+struct Regex(*mut u8);
+
+impl Regex {
+    fn new(pattern: &[u8]) -> Result<Self, Failure<'static>> {
+        if pattern.contains(&0) {
+            return Err(Failure::Regex(b"rglob: NUL in a validated pattern\0"));
+        }
+        let mut storage = Bytes::new(pattern.len());
+        storage.as_mut_slice().copy_from_slice(pattern);
+        let mut failed_alloc = 0;
+        let program = unsafe { crate::regcompcheck9(storage.ptr, &mut failed_alloc) };
+        if failed_alloc != 0 {
+            crate::sash_panic_oom(failed_alloc);
+        }
+        if program.is_null() {
+            return Err(Failure::Regex(b"rglob: invalid regex after validation\0"));
+        }
+        Ok(Self(program))
+    }
+
+    fn matches(&self, name: &CStr) -> Result<bool, Failure<'static>> {
+        match unsafe { crate::regexec9(self.0, name.as_ptr().cast(), ptr::null_mut(), 0) } {
+            n if n < 0 => Err(Failure::Regex(
+                b"rglob: regex matching workspace exhausted\0",
+            )),
+            n => Ok(n != 0),
+        }
+    }
+}
+
+impl Drop for Regex {
+    fn drop(&mut self) {
+        unsafe { sash_free_c(self.0) };
+    }
+}
+
+fn select_regex<'a>(
+    directory: &'a [u8],
+    pattern: &[u8],
+    paths: &mut Paths,
+) -> Result<(), Failure<'a>> {
+    let regex = Regex::new(pattern)?;
+    select_directory(
+        directory,
+        paths,
+        [b"rglob: open", b"rglob: read", b"rglob: getcwd"],
+        |name| regex.matches(name),
+    )
 }
 
 /// `target` is a private empty batch; `patterns` is consumed, without its values.
@@ -272,16 +351,46 @@ pub unsafe extern "C" fn sash_glob(
     patterns: *mut SashTable,
     checked: i64,
 ) -> i64 {
+    fill(target, patterns, checked, None)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_rglob(
+    target: *mut SashTable,
+    directory: *const u8,
+    directory_len: i64,
+    patterns: *mut SashTable,
+    checked: i64,
+) -> i64 {
+    fill(
+        target,
+        patterns,
+        checked,
+        Some(slice::from_raw_parts(directory, directory_len as usize)),
+    )
+}
+
+unsafe fn fill(
+    target: *mut SashTable,
+    patterns: *mut SashTable,
+    checked: i64,
+    directory: Option<&[u8]>,
+) -> i64 {
     let arguments = TableBatch(patterns);
     let mut paths = Paths::new();
     for i in 0..(*patterns).entry_count as usize {
         let entry = &*(*patterns).entries.add(i);
         let pattern = slice::from_raw_parts(entry.val_ptr, entry.val_len as usize);
-        if let Err(failure) = select(pattern, &mut paths) {
+        let result = match directory {
+            Some(directory) => select_regex(directory, pattern, &mut paths),
+            None => select(pattern, &mut paths),
+        };
+        if let Err(failure) = result {
+            let fatal = matches!(failure, Failure::Regex(_));
             failure.record(checked != 0);
             drop(paths);
             drop(arguments);
-            if checked != 0 {
+            if checked != 0 || fatal {
                 sash_abort(1);
             }
             return 1;

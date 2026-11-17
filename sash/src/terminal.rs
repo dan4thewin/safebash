@@ -711,8 +711,11 @@ fn instruction_failures(
             values_failures([subject, pattern], facts, &mut errors);
         }
         SsaInst::GlobFill {
-            patterns, checked, ..
-        } => glob_failures(patterns, *checked, facts, &mut errors),
+            directory,
+            patterns,
+            checked,
+            ..
+        } => glob_failures(directory.as_ref(), patterns, *checked, facts, &mut errors),
         SsaInst::CaptureStart { buffered: true, .. }
         | SsaInst::CaptureEnd { buffered: true, .. }
         | SsaInst::AttestRetag { .. }
@@ -727,14 +730,17 @@ fn instruction_failures(
 }
 
 fn glob_failures(
+    directory: Option<&SsaValue>,
     patterns: &[SsaValue],
     checked: bool,
     facts: &Facts<'_>,
     errors: &mut Vec<String>,
 ) {
     if checked {
-        errors.push("an unchecked glob operation failure".to_string());
+        let operation = if directory.is_some() { "rglob" } else { "glob" };
+        errors.push(format!("an unchecked {operation} operation failure"));
     }
+    values_failures(directory, facts, errors);
     values_failures(patterns, facts, errors);
 }
 
@@ -819,6 +825,7 @@ fn command_failures(
         | BuiltinCmd::Mapfile
         | BuiltinCmd::Argv
         | BuiltinCmd::Glob
+        | BuiltinCmd::Rglob
         | BuiltinCmd::Break
         | BuiltinCmd::Continue
         | BuiltinCmd::Return

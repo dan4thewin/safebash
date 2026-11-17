@@ -351,7 +351,7 @@ fn command_name_operands(c: &Command, name: &str) -> Vec<usize> {
         "read" | "readline" | "argv" => last.into_iter().collect(),
         "match" | "matchall" if c.args.len() == 3 => vec![2],
         "keys" => (0..c.args.len()).collect(),
-        "glob" => vec![0],
+        "glob" | "rglob" => vec![0],
         "len" | "join" => vec![0],
         "unset" => (0..c.args.len()).collect(),
         "attest" => (0..c.args.len().saturating_sub(1)).collect(),

@@ -543,7 +543,8 @@ impl Checker<'_> {
         flow.map(|facts| self.write(inst, facts));
         match inst {
             SsaInst::Assign { target, value } if target.name == "?" => flow.reset(
-                literal_text(value)
+                value
+                    .literal_text()
                     .and_then(|s| s.parse::<i64>().ok())
                     .map(|n| n == 0),
             ),
@@ -713,8 +714,18 @@ impl Checker<'_> {
     }
 
     fn certificate(&self, value: &SsaValue, facts: &Facts, present: bool) -> Certificates {
+        let Some(value) = unquoted_value(value) else {
+            return Certificates::new();
+        };
         match value {
             SsaValue::RequireValue { source, .. } => self.certificate(source, facts, true),
+            SsaValue::ElideEmpty {
+                source,
+                taint_off: false,
+            } => self.element_certificate(source, true, facts),
+            SsaValue::ArraySplat { array, disposition } => {
+                self.splat_certificate(array, disposition.as_ref(), true, facts)
+            }
             SsaValue::TableValue { array, .. } if self.immutable(&array.name) => {
                 facts.get(&Place::collection(&array.name, false))
             }
@@ -837,12 +848,16 @@ impl Checker<'_> {
         before: &Facts,
         after: &mut Facts,
     ) -> Certificates {
-        if let SsaValue::ArraySplat {
-            array,
-            disposition: None,
-        } = value
-        {
-            return self.copy_splat(name, index, array, before, after);
+        if let SsaValue::ArraySplat { array, disposition } = value {
+            return self.copy_splat(
+                name,
+                index,
+                array,
+                disposition.as_ref(),
+                literals,
+                before,
+                after,
+            );
         }
         if let Some(index) = index {
             let cell = Place::cell(name, &SsaValue::Literal(index.to_string()), true);
@@ -852,24 +867,73 @@ impl Checker<'_> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn copy_splat(
         &self,
         name: &str,
         offset: Option<usize>,
         source: &VarRef,
+        disposition: Option<&crate::ssa::ArraySplatDisposition>,
+        literals: bool,
         before: &Facts,
         after: &mut Facts,
     ) -> Certificates {
-        if let (Some(offset), Some(size)) = (offset, before.sizes.get(&source.name)) {
-            for index in 0..*size {
-                let from = Place::cell(&source.name, &SsaValue::Literal(index.to_string()), true);
-                let to = Place::cell(name, &SsaValue::Literal((offset + index).to_string()), true);
-                after.present.push(to.clone());
-                after.add(to.clone(), before.get(&from));
+        let trusted = disposition.is_some_and(|d| d.taint_off);
+        let default =
+            splat_default(disposition).filter(|_| before.sizes.get(&source.name) == Some(&0));
+        if let (Some(index), Some(default)) = (offset, default) {
+            let cell = Place::cell(name, &SsaValue::Literal(index.to_string()), true);
+            self.copy_cell(cell, default, literals && !trusted, before, after);
+        } else {
+            self.copy_splat_cells(name, offset, source, trusted, before, after);
+        }
+        self.splat_certificate(source, disposition, literals, before)
+    }
+
+    fn copy_splat_cells(
+        &self,
+        name: &str,
+        offset: Option<usize>,
+        source: &VarRef,
+        trusted: bool,
+        before: &Facts,
+        after: &mut Facts,
+    ) {
+        let (Some(offset), Some(size)) = (offset, before.sizes.get(&source.name)) else {
+            return;
+        };
+        for index in 0..*size {
+            let from = Place::cell(&source.name, &SsaValue::Literal(index.to_string()), true);
+            let to = Place::cell(name, &SsaValue::Literal((offset + index).to_string()), true);
+            after.present.push(to.clone());
+            if !trusted {
+                after.add(to.clone(), self.place_certificate(&from, before, true));
                 after.alias(&to, &from);
             }
         }
-        before.get(&Place::collection(&source.name, false))
+    }
+
+    fn splat_certificate(
+        &self,
+        source: &VarRef,
+        disposition: Option<&crate::ssa::ArraySplatDisposition>,
+        literals: bool,
+        facts: &Facts,
+    ) -> Certificates {
+        if disposition.is_some_and(|d| d.taint_off) {
+            return Certificates::new();
+        }
+        let size = facts.sizes.get(&source.name).copied();
+        let proofs = if size == Some(0) {
+            unconditional()
+        } else {
+            self.place_certificate(&Place::collection(&source.name, false), facts, false)
+        };
+        let Some(default) = splat_default(disposition).filter(|_| size.is_none_or(|n| n == 0))
+        else {
+            return proofs;
+        };
+        require_both(&proofs, &self.element_certificate(default, literals, facts))
     }
 
     fn copy_cell(
@@ -950,6 +1014,11 @@ impl Checker<'_> {
             SsaInst::Test(..) | SsaInst::Attest { .. } | SsaInst::AttestAll { .. } => return,
             SsaInst::Assign { value, .. } => self.value_patterns(value, origin, facts),
             SsaInst::MatchInto { pattern, .. } => self.pattern(pattern, origin, facts),
+            SsaInst::GlobFill {
+                directory: Some(_),
+                patterns,
+                ..
+            } => self.patterns(patterns, origin, facts),
             SsaInst::Command {
                 kind: BuiltinCmd::Match,
                 args,
@@ -964,6 +1033,12 @@ impl Checker<'_> {
             if let TaintRead::Value(value) = read {
                 self.value_patterns(value, origin, facts);
             }
+        }
+    }
+
+    fn patterns(&mut self, values: &[SsaValue], origin: Option<usize>, facts: &Facts) {
+        for value in values {
+            self.pattern(value, origin, facts);
         }
     }
 
@@ -1017,7 +1092,7 @@ fn read_names(read: TaintRead<'_>) -> Vec<String> {
 }
 
 fn place_of(value: &SsaValue, trusted_candidate: bool) -> Option<Place> {
-    match value {
+    match unquoted_value(value)? {
         SsaValue::Var(var) => Some(Place::scalar(&var.name)),
         SsaValue::Subscript {
             array,
@@ -1027,35 +1102,37 @@ fn place_of(value: &SsaValue, trusted_candidate: bool) -> Option<Place> {
         } => Some(Place::cell(&array.name, index, *is_integer_key)),
         SsaValue::Trusted { source } if trusted_candidate => place_of(source, true),
         SsaValue::RequireValue { source, .. } => place_of(source, trusted_candidate),
+        _ => None,
+    }
+}
+
+fn unquoted_value(value: &SsaValue) -> Option<&SsaValue> {
+    match value {
         SsaValue::Concat(parts) => {
             let mut values = parts
                 .iter()
-                .filter(|v| literal_text(v).as_deref() != Some(""));
+                .filter(|v| v.literal_text().as_deref() != Some(""));
             let only = values.next()?;
             if values.next().is_none() {
-                place_of(only, trusted_candidate)
+                unquoted_value(only)
             } else {
                 None
             }
         }
-        _ => None,
+        _ => Some(value),
     }
 }
 
-fn literal_text(value: &SsaValue) -> Option<String> {
-    match value {
-        SsaValue::Literal(s) | SsaValue::Expr(s) => Some(s.clone()),
-        SsaValue::Concat(parts) => parts
-            .iter()
-            .map(literal_text)
-            .collect::<Option<Vec<_>>>()
-            .map(|v| v.concat()),
-        _ => None,
-    }
+fn splat_default(disposition: Option<&crate::ssa::ArraySplatDisposition>) -> Option<&SsaValue> {
+    disposition
+        .filter(|d| d.has_word && !d.abort)
+        .map(|d| d.word.as_ref())
 }
 
 fn static_pattern(value: &SsaValue) -> bool {
-    literal_text(value).is_some_and(|s| crate::regex_validate::validate_regex(&s).is_ok())
+    value
+        .literal_text()
+        .is_some_and(|s| crate::regex_validate::validate_regex(&s).is_ok())
 }
 
 /// Calls and external reads can change without a write to an indexed binding.
@@ -1096,12 +1173,11 @@ fn stable_index(value: &SsaValue) -> bool {
 }
 
 fn element_count(value: &SsaValue, facts: &Facts) -> Option<usize> {
-    match value {
-        SsaValue::ArraySplat {
-            array,
-            disposition: None,
-        } => facts.sizes.get(&array.name).copied(),
-        SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty { .. } => None,
-        _ => Some(1),
-    }
+    let (array, disposition) = match value {
+        SsaValue::ArraySplat { array, disposition } => (array, disposition),
+        SsaValue::ElideEmpty { .. } => return None,
+        _ => return Some(1),
+    };
+    let size = *facts.sizes.get(&array.name)?;
+    Some(size.max(usize::from(splat_default(disposition.as_ref()).is_some())))
 }

@@ -1572,6 +1572,7 @@ pub(super) fn handle_keys_fill(
 
 pub(super) fn handle_glob_fill(
     array: &str,
+    directory: Option<&SsaValue>,
     patterns: &[SsaValue],
     checked: bool,
     builder: &mut FunctionBuilder,
@@ -1591,8 +1592,22 @@ pub(super) fn handle_glob_fill(
         .str_ptr()
         .load(builder);
     let checked = builder.ins().iconst(I64, i64::from(checked));
-    let function = module.declare_func_in_func(ctx.externs.glob, builder.func);
-    let call = builder.ins().call(function, &[target, patterns, checked]);
+    let (function, args) = if let Some(directory) = directory {
+        let (ptr, len) = super::values::lower_value(
+            directory,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.externs,
+            ctx.exit_status_var,
+        );
+        (ctx.externs.rglob, vec![target, ptr, len, patterns, checked])
+    } else {
+        (ctx.externs.glob, vec![target, patterns, checked])
+    };
+    let function = module.declare_func_in_func(function, builder.func);
+    let call = builder.ins().call(function, &args);
     let status = builder.inst_results(call)[0];
     builder.def_var(ctx.exit_status_var, status);
     let success = builder.ins().icmp_imm(IntCC::Equal, status, 0);

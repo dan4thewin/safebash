@@ -5,6 +5,8 @@ status: provisional
    branch; DG reviews evidence and revisions before adoption on main.
 2. `glob ARRAY PATTERN...` and `rglob ARRAY DIRECTORY REGEX...` produce
    string arrays from ordinary operands; runtime regexes require DD132 proof.
+   Pattern-list splats preserve element boundaries. An empty expanded list
+   succeeds without enumeration; the target and directory are fixed operands.
 3. Each glob pattern permits at most one star, in the final component, and
    literal directory prefixes. Glob needs a leading dot for dotfiles;
    both selectors exclude `.` and `..`. Regex selection tests basenames
@@ -72,6 +74,20 @@ requires every runtime regex operand to be immutable and have a successful
 `r?` proof available at its use. Literal regexes retain static validation.
 The directory operand of `rglob` is separate from its regexes, so the
 compiler need not infer a directory by interpreting regex syntax.
+
+DG settled pattern-list expansion during implementation on 2026-11-17:
+
+> Allow pattern-list splats, with empty expansion succeeding without enumeration.
+
+Both selectors accept array splats in the variadic pattern tail, preserving
+each element, its position and duplicates. Normal argument dispositions apply
+there; the target remains a binding name and `rglob`'s directory remains one
+non-elidable scalar string. Every expanded regex still needs DD132's immutable
+value proof, including a default pattern supplied by a splat disposition.
+An empty expanded list succeeds without opening, enumerating or normalizing
+a directory, appends nothing to an ordinary destination and leaves a new
+scratch instance empty. Operand evaluation still occurs normally. At least
+one pattern operand must be written in the source.
 
 ### Matching and output
 
@@ -317,3 +333,11 @@ every affected contract in place rather than leaving contradictory
 addenda. The original recording had no implementation branch or compiler
 change. DG authorized implementation on 2026-11-17; `glob-scratch-trial`
 starts from `6c7b899f`, with adoption on main still requiring his evaluation.
+
+The selector implementation is complete on that branch (journals 647 and
+653): explicit `glob`/`rglob`, ordered list sugar, pattern-list splats,
+empty-list success, immutable regex proofs and atomic publication use shared
+lowering and runtime traversal. Scratch and accumulating fillers are recorded
+in journals 645-646; DD132's proof/read/result units are in journals 648-652.
+The integrated utility, migration and memory/time evaluation remains open.
+These delivery records do not change this decision's provisional status.

@@ -311,5 +311,14 @@ The scalar match/replacement runtime ABI now has an optional final status
 pointer alongside its existing pointer/length return. Both backends pass
 storage when consuming the Boolean and null when discarding it. The predicate
 and consumers still compile separately: no compiled handle or retained cache
-was added. `rglob` and integrated utility/migration/cost evaluation remain
-implementation work. The construction spelling is settled in DD131.
+was added.
+
+`rglob` is implemented on the trial (journal 653), sharing selector traversal,
+sorting and complete-batch publication with `glob`. Pattern-list splats retain
+boundaries and require proof for every actual regex, including selected
+defaults; a known-empty list needs no pattern proof or directory work.
+Trusted copies and mutable intermediates cannot transfer validity. Each
+compiled selector regex is released after its pattern batch, including
+directory failures; execution-workspace exhaustion remains fatal rather than
+no-match. Integrated utility/migration/cost evaluation remains open, followed
+by DG's adoption decision. The construction spelling is settled in DD131.

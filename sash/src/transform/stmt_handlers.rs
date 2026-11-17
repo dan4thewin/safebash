@@ -70,7 +70,7 @@ fn try_builtin(
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
         BuiltinCmd::Argv => Some(handle_argv(c, ssa, state, *block)),
         BuiltinCmd::Keys => Some(handle_keys(c, ssa, state, *block)),
-        BuiltinCmd::Glob => Some(handle_glob(c, ssa, state, *block)),
+        BuiltinCmd::Glob | BuiltinCmd::Rglob => Some(handle_glob(c, ssa, state, *block)),
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
@@ -761,28 +761,29 @@ fn handle_glob(
     mut block: BlockId,
 ) -> BlockId {
     let destination = resolve_args_name(literal_name_of(&c.args[0]), state);
-    let patterns = super::functions::unsuppressed(state, |state| {
-        c.args
-            .iter()
-            .skip(1)
-            .map(|arg| {
-                let value = expr_to_value(arg, state);
-                let value = lift_int_func_calls(value, ssa, state, &mut block);
-                let name = state.reserve_temp_name("__globpattern".to_string(), VarType::String);
-                let target = state.define(&name);
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target: target.clone(),
-                    value,
-                });
-                SsaValue::Var(target)
-            })
-            .collect()
+    let regex = literal_name_of(&c.name) == "rglob";
+    let mut operands = super::functions::unsuppressed(state, |state| {
+        let mut operands = Vec::new();
+        for arg in c.args.iter().skip(1) {
+            let value = arg_to_value(arg, state);
+            let value = lift_int_func_calls(value, ssa, state, &mut block);
+            let value = value.literal_text().map(SsaValue::Literal).unwrap_or(value);
+            operands.extend(super::functions::retain_args(
+                vec![value],
+                ssa,
+                state,
+                block,
+            ));
+        }
+        operands
     });
+    let directory = regex.then(|| operands.remove(0));
     let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
     let target = state.define_replacement(&array);
     ssa.block_mut(block).insts.push(SsaInst::GlobFill {
         target,
-        patterns,
+        directory,
+        patterns: operands,
         checked: state.suppressed == 0,
     });
     super::statements::publish_collection(&destination, &array, ssa, state, block);

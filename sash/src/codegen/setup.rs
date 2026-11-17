@@ -803,6 +803,13 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let glob_func = module
         .declare_function("sash_glob", Linkage::Import, &glob_sig)
         .expect("declare");
+    let mut rglob_sig = glob_sig.clone();
+    rglob_sig
+        .params
+        .extend([AbiParam::new(I64), AbiParam::new(I64)]);
+    let rglob_func = module
+        .declare_function("sash_rglob", Linkage::Import, &rglob_sig)
+        .expect("declare");
 
     // sash_trap(signum, handler) -> i64
     let mut trap_sig = module.make_signature();
@@ -965,6 +972,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         epochseconds: epochseconds_func,
         trap: trap_func,
         glob: glob_func,
+        rglob: rglob_func,
         capture_start: capture_start_func,
         capture_end: capture_end_func,
         capture_start_buf: capture_start_buf_func,
@@ -1183,9 +1191,13 @@ impl<'a> Interner<'a> {
                 self.intern_value(subject);
                 self.intern_value(pattern);
             }
-            SsaInst::GlobFill { patterns, .. } => {
-                for pattern in patterns {
-                    self.intern_value(pattern);
+            SsaInst::GlobFill {
+                directory,
+                patterns,
+                ..
+            } => {
+                for value in directory.iter().chain(patterns) {
+                    self.intern_value(value);
                 }
             }
             SsaInst::ReadLine { redirects, .. }

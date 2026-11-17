@@ -1250,7 +1250,7 @@ fn not_an_int(part: &str) -> Option<String> {
 
 /// How many **leading** arguments of a string intrinsic are string operands.
 ///
-/// The number of leading string operands; `glob` instead skips its first target.
+/// The number of leading string operands; directory selectors skip their target.
 ///
 /// `join` is absent deliberately — its first operand is a collection
 /// (SB4030 via `check_join_operand`) and its separator must already be a
@@ -1260,7 +1260,7 @@ fn string_operand_slots(name: &str) -> Option<usize> {
         "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "getenv" => Some(1),
         "match" | "matchall" => Some(2),
         "sub" | "gsub" => Some(3),
-        "glob" => Some(usize::MAX),
+        "glob" | "rglob" => Some(usize::MAX),
         _ => None,
     }
 }
@@ -1288,9 +1288,12 @@ fn check_string_intrinsic_operands(
     let Some(slots) = string_operand_slots(&name) else {
         return;
     };
-    let skip = usize::from(name == "glob");
+    let skip = usize::from(matches!(name.as_str(), "glob" | "rglob"));
     for arg in c.args.iter().skip(skip).take(slots) {
-        if expr_type(arg, env) != VarType::Int {
+        let ty = splat_collection_name(&arg.kind)
+            .map(|name| env.var_type(name))
+            .unwrap_or_else(|| expr_type(arg, env));
+        if ty != VarType::Int {
             continue;
         }
         errors.push(TypeError {
@@ -1303,6 +1306,12 @@ fn check_string_intrinsic_operands(
 /// The SB4030 message for an int operand of a string intrinsic, naming the
 /// variable when the operand is a plain expansion.
 fn int_operand_message(name: &str, arg: &Expr) -> String {
+    if let Some(array) = splat_collection_name(&arg.kind) {
+        return format!(
+            "`{name}` expects string operands but `@{array}` expands integer elements; \
+             construct a string array with explicit element conversions"
+        );
+    }
     let operand = match &arg.kind {
         ExprKind::SimpleExpansion(v) => format!("`{v}` is an int variable"),
         ExprKind::Subscript { .. } => "that element is int-typed".to_string(),
@@ -2261,7 +2270,7 @@ fn collection_fill_target(c: &Command) -> Option<&Expr> {
         "argv" | "read" => c.args.last(),
         "match" | "matchall" if c.args.len() == 3 => c.args.last(),
         "keys" if c.args.len() == 2 => c.args.last(),
-        "glob" => c.args.first(),
+        "glob" | "rglob" => c.args.first(),
         _ => None,
     }
 }
