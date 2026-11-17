@@ -90,7 +90,7 @@ fn failure_diagnostic(program: &SsaProgram, origin: Option<usize>, failure: &str
     )
 }
 
-fn origin_sites(program: &SsaProgram, origin: Option<usize>) -> (Span, Span) {
+pub(crate) fn origin_sites(program: &SsaProgram, origin: Option<usize>) -> (Span, Span) {
     let mut path = Vec::new();
     let mut next = origin;
     while let Some(id) = next {
@@ -365,6 +365,13 @@ impl<'a> Facts<'a> {
             | SsaInst::MapFromArray { target, .. } => {
                 self.collections.insert(target.name.clone());
             }
+            SsaInst::LifetimeStart {
+                target,
+                collection: true,
+            }
+            | SsaInst::CollectionPublish { target, .. } => {
+                self.collections.insert(target.name.clone());
+            }
             _ => {}
         }
     }
@@ -416,6 +423,13 @@ impl<'a> Facts<'a> {
 
     fn instruction(&self, inst: &SsaInst) -> Proof {
         match inst {
+            SsaInst::LifetimeStart {
+                collection: true, ..
+            } => self.value(&SsaValue::IndexedArray(Vec::new())),
+            SsaInst::LifetimeStart {
+                collection: false, ..
+            } => Proof::text(""),
+            SsaInst::CollectionPublish { source, .. } => self.variable(source),
             SsaInst::Assign { value, .. } => self.value(value),
             SsaInst::Attest { source, .. } | SsaInst::AttestRetag { source, .. } => {
                 self.variable(source)
@@ -687,6 +701,8 @@ fn instruction_failures(
         | SsaInst::AttestRetag { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
+        | SsaInst::LifetimeStart { .. }
+        | SsaInst::CollectionPublish { .. }
         | SsaInst::RedirectPop { .. }
         | SsaInst::SourceOrigin(..) => {}
     }

@@ -568,6 +568,11 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let table_new_func = module
         .declare_function("sash_table_new", Linkage::Import, &table_new_sig)
         .expect("declare sash_table_new");
+    let mut table_clear_sig = module.make_signature();
+    table_clear_sig.params.push(AbiParam::new(I64));
+    let table_clear_func = module
+        .declare_function("sash_table_clear", Linkage::Import, &table_clear_sig)
+        .expect("declare sash_table_clear");
 
     // sash_table_set(table, key_ptr, key_len, val_ptr, val_len)
     let mut table_set_sig = module.make_signature();
@@ -918,6 +923,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         argv_guard: argv_guard_func,
         strcmp: strcmp_func,
         table_new: table_new_func,
+        table_clear: table_clear_func,
         table_set: table_set_func,
         table_get: table_get_func,
         table_len: table_len_func,
@@ -1130,6 +1136,9 @@ impl<'a> Interner<'a> {
 
     fn intern_inst(&mut self, inst: &SsaInst) {
         match inst {
+            SsaInst::LifetimeStart { .. } => {
+                self.intern("");
+            }
             SsaInst::Assign { value, .. } => self.intern_value(value),
             SsaInst::Command {
                 name,
@@ -1404,6 +1413,23 @@ fn declare_inst_bases(
         SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
             declare_bg_pid_base(builder, args, base_vars);
         }
+        SsaInst::LifetimeStart {
+            target,
+            collection: true,
+        }
+        | SsaInst::CollectionPublish { target, .. } => {
+            base_vars
+                .entry(target.name.clone())
+                .or_insert_with(|| make_str_slot(builder));
+        }
+        SsaInst::LifetimeStart {
+            target,
+            collection: false,
+        } => {
+            base_vars
+                .entry(target.name.clone())
+                .or_insert_with(|| slot_for_var_type(builder, &target.var_type));
+        }
         SsaInst::Assign { target, value } => {
             base_vars
                 .entry(target.name.clone())
@@ -1495,6 +1521,8 @@ fn map_inst_versioned(
 ) {
     match inst {
         SsaInst::Assign { target, .. }
+        | SsaInst::LifetimeStart { target, .. }
+        | SsaInst::CollectionPublish { target, .. }
         | SsaInst::ReadLine { target, .. }
         | SsaInst::CaptureEnd { target, .. }
         | SsaInst::Pipeline {

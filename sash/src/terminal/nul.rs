@@ -53,6 +53,8 @@ impl Cursor {
                 Ok(None)
             }
             SsaInst::SourceOrigin(..)
+            | SsaInst::LifetimeStart { .. }
+            | SsaInst::CollectionPublish { .. }
             | SsaInst::AttestRetag { .. }
             | SsaInst::Command {
                 kind: BuiltinCmd::SignalCheckpoint,
@@ -531,6 +533,10 @@ impl<'a, 'p> Prover<'a, 'p> {
     /// Total over SSA instructions; do not add a wildcard.
     fn written_value(&self, inst: &SsaInst) -> Option<Value> {
         match inst {
+            SsaInst::LifetimeStart { .. } => {
+                Some(Value::leaf(Form::Known(self.facts.instruction(inst))))
+            }
+            SsaInst::CollectionPublish { source, .. } => Some(Value::binding(source)),
             SsaInst::Assign { value, .. } => self.value(value),
             SsaInst::ReadArray { .. } | SsaInst::ArgvFill { .. } | SsaInst::SplitValue { .. } => {
                 Some(Value::leaf(Form::Known(Proof {

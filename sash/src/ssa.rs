@@ -517,6 +517,10 @@ pub(crate) fn ice_unreachable_command(kind: &BuiltinCmd, name: &str) -> ! {
 pub enum SsaInst {
     /// Compiler-only context, retained through folding and CFG rewrites.
     SourceOrigin(Option<usize>, bool),
+    /// Begin a fresh source lifetime without allocating or retaining old taint.
+    LifetimeStart { target: VarRef, collection: bool },
+    /// Publish an already complete table, including an integer-element table.
+    CollectionPublish { target: VarRef, source: VarRef },
     /// x_n = value
     Assign { target: VarRef, value: SsaValue },
     /// A command (no variable defined)
@@ -981,6 +985,8 @@ impl SsaInst {
             | SsaInst::AttestAll { .. }
             | SsaInst::AttestRetag { .. }
             | SsaInst::CaptureEnd { .. }
+            | SsaInst::LifetimeStart { .. }
+            | SsaInst::CollectionPublish { .. }
             | SsaInst::ArgvFill { .. }
             | SsaInst::KeysFill { .. }
             | SsaInst::CaptureStart { .. }
@@ -1051,6 +1057,8 @@ impl SsaInst {
 pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
     match inst {
         SsaInst::Assign { target, .. }
+        | SsaInst::LifetimeStart { target, .. }
+        | SsaInst::CollectionPublish { target, .. }
         | SsaInst::ReadLine { target, .. }
         | SsaInst::ReadArray { target, .. }
         | SsaInst::CaptureEnd { target, .. }
@@ -1090,6 +1098,8 @@ pub(crate) fn instruction_write(inst: &SsaInst) -> Option<&str> {
             Some(&kind.expect_var_arg(table).name)
         }
         SsaInst::Assign { .. }
+        | SsaInst::LifetimeStart { .. }
+        | SsaInst::CollectionPublish { .. }
         | SsaInst::ReadLine { .. }
         | SsaInst::ReadArray { .. }
         | SsaInst::CaptureEnd { .. }
@@ -1690,6 +1700,8 @@ fn sets_condition_status(inst: &SsaInst) -> bool {
         SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
         | SsaInst::MapFromArray { .. }
+        | SsaInst::LifetimeStart { .. }
+        | SsaInst::CollectionPublish { .. }
         | SsaInst::SplitValue { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
@@ -1741,6 +1753,8 @@ pub struct SsaProgram {
     pub(crate) handlers: BTreeMap<crate::ir::HandlerKind, HandlerEntry>,
     pub(crate) origins: Vec<SourceOrigin>,
     pub(crate) current_origin: Option<usize>,
+    pub(crate) scratch_constructions: HashMap<usize, std::collections::HashSet<String>>,
+    pub(crate) private_initializations: std::collections::HashSet<VarRef>,
     /// DD#56: signals with EXIT disposition (check points inserted)
     pub exiting_signals: std::collections::HashSet<i64>,
     /// DD#14: forked pipeline stages — each stage's entry block (run by a
@@ -1863,6 +1877,8 @@ impl SsaProgram {
             handlers: BTreeMap::new(),
             origins: Vec::new(),
             current_origin: None,
+            scratch_constructions: HashMap::new(),
+            private_initializations: std::collections::HashSet::new(),
             exiting_signals: std::collections::HashSet::new(),
             compound_stages: CompoundStages::default(),
             external_deps: std::collections::BTreeSet::new(),
@@ -2163,6 +2179,7 @@ pub struct VersionState {
     pub(crate) failed_attests: Vec<String>,
     pub(crate) live_locals: std::collections::HashSet<String>,
     pub(crate) checked_collections: HashMap<String, bool>,
+    pub(crate) scratch: crate::scratch::Bindings,
     /// Functions known at this point in the program.
     pub known_functions: std::collections::HashSet<String>,
     /// Function IR bodies for inline expansion at call sites.
@@ -2344,6 +2361,7 @@ impl VersionState {
             failed_attests: Vec::new(),
             live_locals: std::collections::HashSet::new(),
             checked_collections: HashMap::new(),
+            scratch: crate::scratch::Bindings::default(),
             known_functions: std::collections::HashSet::new(),
             function_bodies: HashMap::new(),
             exits_in_force: HashMap::new(),

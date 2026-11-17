@@ -131,6 +131,29 @@ Synthetic variables are allocated through `VersionState::reserve_temp_name`
 with their actual type before definition. A prefix or counter alone is not
 a collision guarantee: source names beginning with `__` are legal.
 
+### Immutable scratch on the trial branch
+
+The separate `glob-scratch-trial` branch implements DD131 scratch
+construction; the combined DD131/DD132 package is not adopted on main.
+[`scratch.rs`](../sash/src/scratch.rs) records construction sites against
+resolved identities, interpreting the original source spelling rather than
+qualified local names. Source checks reject second construction sites,
+mutation and initializer self-reads, including helper and collection-slot
+reads. A post-lowering write check also sees mutations through mapped aliases.
+
+`LifetimeStart` resets the visible binding before initializer or setup work.
+Scalar resets use meaningful zeros; collection resets clear the existing
+valid table without allocating. Fillers build scratch collections privately,
+then `CollectionPublish` installs the completed table pointer. Thus ERR can
+observe the new empty instance after a failed fill, but not the previous
+instance or a partial batch. Integer-element collections remain pointer-backed.
+The same SSA instructions feed both backends and the taint/handler analyses.
+
+Revisiting one construction site is allowed; skipped sites and zero-trip
+loop binders do not reset storage. This adds neither block scope nor automatic
+destruction at loop exit. Caught-attest permissions, regex proofs, selectors
+and accumulating ordinary fillers remain subsequent trial work.
+
 ## Taint analysis
 
 Taint is a compile-time quarantine on unresolved reads, not merely a check

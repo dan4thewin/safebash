@@ -220,6 +220,223 @@ fn attest_retag_target(c: &Command) -> Option<&str> {
     }
 }
 
+pub(crate) fn check_scratch_bindings(
+    program: &Program,
+    names: &crate::bindings::SourceNames,
+) -> (crate::scratch::Bindings, Vec<Diagnostic>) {
+    let (bindings, mut diags) = crate::scratch::collect(program, names);
+    let usage = slot_usage_map(program);
+    let mut census = take_census(program);
+    let reads = function_global_reads(program, &usage, &census);
+    for body in program.bodies() {
+        walk_stmt_tree(body, &mut |stmt| {
+            check_scratch_statement(
+                stmt,
+                names,
+                &bindings,
+                &usage,
+                &reads,
+                &mut census,
+                &mut diags,
+            );
+        });
+    }
+    (bindings, diags)
+}
+
+fn check_scratch_statement(
+    stmt: &Statement,
+    names: &crate::bindings::SourceNames,
+    bindings: &crate::scratch::Bindings,
+    usage: &HashMap<String, SlotUse>,
+    reads: &CollectionGlobalUses,
+    census: &mut Census,
+    diags: &mut Vec<Diagnostic>,
+) {
+    check_scratch_mutations(stmt, names, diags);
+    check_scratch_prefixes(stmt, bindings, usage, reads, census, diags);
+    for construction in crate::scratch::constructions(stmt)
+        .into_iter()
+        .filter(|construction| bindings.contains(&construction.name))
+    {
+        check_scratch_initializer(&construction, stmt.span, usage, reads, census, diags);
+    }
+}
+
+fn check_scratch_mutations(
+    stmt: &Statement,
+    names: &crate::bindings::SourceNames,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let constructors: HashSet<_> = crate::scratch::constructions(stmt)
+        .into_iter()
+        .map(|construction| construction.name)
+        .collect();
+    let mut writes = HashSet::new();
+    stmt_written_names(stmt, &mut |name| {
+        writes.insert(name.to_string());
+    });
+    match &stmt.kind {
+        StmtKind::Command(c)
+            if c.args
+                .iter()
+                .all(|arg| matches!(arg.kind, ExprKind::Literal(_))) =>
+        {
+            collection_identity_uses(c, &HashSet::new(), &mut writes);
+        }
+        _ => {}
+    }
+    let mut writes: Vec<_> = writes.into_iter().collect();
+    writes.sort();
+    for name in writes.into_iter().filter(|name| {
+        crate::scratch::source_name(names.original(name)) && !constructors.contains(name)
+    }) {
+        diags.push(Diagnostic::error_span(
+            stmt.span,
+            "SB5103",
+            format!(
+                "cannot modify immutable scratch `{name}`; \
+                 introduce it with a whole-value construction instead"
+            ),
+        ));
+    }
+}
+
+fn function_global_reads(
+    program: &Program,
+    usage: &HashMap<String, SlotUse>,
+    census: &Census,
+) -> CollectionGlobalUses {
+    let globals = crate::bindings::global_names(program);
+    let mut direct = CollectionGlobalUses::new();
+    for (f, span) in program.statements.iter().filter_map(as_function_def) {
+        let mut reads = HashSet::new();
+        collect_reads(&f.body, &mut reads);
+        collect_slot_arg_reads(&f.body, usage, &mut reads);
+        direct.entry(f.name.clone()).or_default().extend(
+            reads
+                .into_iter()
+                .filter(|name| globals.contains(name))
+                .map(|name| {
+                    (
+                        name,
+                        GlobalAccess {
+                            function: f.name.clone(),
+                            span,
+                        },
+                    )
+                }),
+        );
+    }
+    direct
+        .keys()
+        .map(|name| {
+            (
+                name.clone(),
+                reachable_global_accesses(name, &direct, &census.callees),
+            )
+        })
+        .collect()
+}
+
+fn check_scratch_initializer(
+    construction: &crate::scratch::Construction<'_>,
+    span: Span,
+    usage: &HashMap<String, SlotUse>,
+    globals: &CollectionGlobalUses,
+    census: &mut Census,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(initializer) = construction.initializer(span) else {
+        return;
+    };
+    check_scratch_reads(
+        &construction.name,
+        std::slice::from_ref(&initializer),
+        span,
+        usage,
+        globals,
+        census,
+        diags,
+    );
+}
+
+fn check_scratch_prefixes(
+    stmt: &Statement,
+    bindings: &crate::scratch::Bindings,
+    usage: &HashMap<String, SlotUse>,
+    globals: &CollectionGlobalUses,
+    census: &mut Census,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let (constructors, inputs) = match &stmt.kind {
+        StmtKind::Redirected(r) => (
+            crate::scratch::constructions(r.body.stage_marks().0),
+            vec![crate::scratch::redirect_initializer(r, stmt.span)],
+        ),
+        StmtKind::Pipeline(p) => {
+            let Some((reader, producers)) = p.commands.split_last() else {
+                return;
+            };
+            (
+                crate::scratch::reader_constructions(reader),
+                producers.to_vec(),
+            )
+        }
+        _ => return,
+    };
+    for construction in constructors {
+        if bindings.contains(&construction.name) {
+            check_scratch_reads(
+                &construction.name,
+                &inputs,
+                stmt.span,
+                usage,
+                globals,
+                census,
+                diags,
+            );
+        }
+    }
+}
+
+fn check_scratch_reads(
+    name: &str,
+    initializer: &[Statement],
+    span: Span,
+    usage: &HashMap<String, SlotUse>,
+    globals: &CollectionGlobalUses,
+    census: &mut Census,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut reads = HashSet::new();
+    collect_reads(initializer, &mut reads);
+    collect_slot_arg_reads(initializer, usage, &mut reads);
+    for sites in census.fns.values_mut() {
+        sites.calls.clear();
+    }
+    crate::ir::walk_scoped_stmts(initializer, "", &mut |stmt, owner| {
+        census.record_stmt(stmt, owner);
+    });
+    for (name, _) in census
+        .fns
+        .iter()
+        .filter(|(_, sites)| !sites.calls.is_empty())
+    {
+        reads.extend(globals[name].keys().cloned());
+    }
+    if reads.contains(name) {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5104",
+            format!(
+                "initializer for scratch `{name}` reads its own target, directly or through a helper; \
+                 construct the value from a different binding"
+            ),
+        ));
+    }
+}
+
 /// SB5071 (DD#86): a `fn` definition is legal only as a **top-level**
 /// statement.
 ///
@@ -325,7 +542,11 @@ fn flag_const_decls(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
         if d.keyword != DeclKeyword::Readonly {
             return;
         }
-        for a in &d.assignments {
+        for a in d
+            .assignments
+            .iter()
+            .filter(|a| !crate::scratch::source_name(&a.name))
+        {
             diags.push(Diagnostic::error_span(
                 s.span,
                 "SB5072",
@@ -4530,7 +4751,10 @@ impl TaintAnalysis {
     }
 }
 
-pub(crate) fn check_taint(program: &Program) -> TaintAnalysis {
+pub(crate) fn check_taint(
+    program: &Program,
+    scratch_bindings: &crate::scratch::Bindings,
+) -> TaintAnalysis {
     let mut tainted = Tainted::default();
     let mut diags = Vec::new();
     let map_names = collect_map_names(program);
@@ -4546,6 +4770,7 @@ pub(crate) fn check_taint(program: &Program) -> TaintAnalysis {
     let scratch = BodyCx::default();
     let signal_pairs = RefCell::new(HashSet::new());
     let base = SlotCx {
+        scratch: scratch_bindings,
         probing: false,
         map_names: &map_names,
         interface: &interface,
@@ -6248,15 +6473,7 @@ fn taint_stmt(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // A capture runs before the statement that consumes its output, so its
-    // body is walked against the set from before the statement's effect: in
-    // `y=$(/bin/echo "$y")` the body reads the `y` held before, not the one
-    // the assignment writes. Declarations interleave initializer evaluation
-    // with binding; for words are evaluated at each loop head.
-    if !matches!(stmt.kind, StmtKind::Declaration(_) | StmtKind::For(_)) {
-        taint_cmdsub_bodies(stmt, tainted, sx, diags);
-        taint_arith_calls(stmt, tainted, sx, diags);
-    }
+    taint_statement_inputs(stmt, tainted, sx, diags);
     match &stmt.kind {
         StmtKind::Assignment(a) => taint_assignment(a, tainted, sx, diags),
         StmtKind::Declaration(d) => taint_declaration(d, stmt.span, tainted, sx, diags),
@@ -6280,6 +6497,26 @@ fn taint_stmt(
         StmtKind::ArithTest(a) => check_arith_taint(a, tainted, sx.output, diags),
         StmtKind::ReturnProducer(inner) => taint_return_producer(inner, tainted, just, sx, diags),
         _ => taint_child_bodies(stmt, tainted, just, sx, diags),
+    }
+}
+
+fn taint_statement_inputs(
+    stmt: &Statement,
+    tainted: &mut Tainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    // A capture runs before the statement that consumes its output, so its
+    // body is walked against the set from before the statement's effect: in
+    // `y=$(/bin/echo "$y")` the body reads the `y` held before, not the one
+    // the assignment writes. Declarations interleave initializer evaluation
+    // with binding; for words are evaluated at each loop head.
+    if !matches!(stmt.kind, StmtKind::Declaration(_) | StmtKind::For(_)) {
+        for construction in crate::scratch::constructions(stmt) {
+            sx.restart_scratch(&construction.name, tainted);
+        }
+        taint_cmdsub_bodies(stmt, tainted, sx, diags);
+        taint_arith_calls(stmt, tainted, sx, diags);
     }
 }
 
@@ -6756,6 +6993,7 @@ fn for_pass(
     taint_for_words(&f.words, &mut words, sx, diags);
     let mut body = words.clone();
     // Rebinding cannot change the zero-trip path.
+    sx.restart_scratch(&f.variable, &mut body);
     let from_source = f.words.iter().any(|word| is_taint_source(word, sx.output));
     let mut lead = JustTainted::new();
     if from_source {
@@ -6866,6 +7104,7 @@ fn taint_declaration(
     // Evaluated, then bound, before the next initializer — so a later
     // binding's capture reads the taint an earlier one left.
     for a in &d.assignments {
+        sx.restart_scratch(&a.name, tainted);
         if let Some(eq) = a.as_assignment() {
             taint_capture_bodies(eq.value.cmdsub_bodies(), tainted, sx, diags);
             taint_expr_arith_calls(&eq.value, span, tainted, sx, diags);
@@ -8365,7 +8604,7 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
 /// Every name a command binds: [`collect_read_targets`]' out-params and
 /// DD#93 Part D's attest-convert TARGET. The one list, shared by scope
 /// collection, SB5092 and SB4044.
-fn command_bound_names(c: &Command, set: &mut HashSet<String>) {
+pub(crate) fn command_bound_names(c: &Command, set: &mut HashSet<String>) {
     collect_read_targets(c, set);
     set.extend(attest_convert_target(c).map(str::to_string));
 }
@@ -8805,24 +9044,11 @@ fn collect_reads(stmts: &[Statement], set: &mut HashSet<String>) {
 /// collection (`len a` reads `a`). Record it for every command, including those
 /// inside a `$( )` capture. Reuses the type checker's canonical name accessor.
 fn collect_value_fn_operands(stmts: &[Statement], set: &mut HashSet<String>) {
-    for stmt in stmts {
+    walk_stmt_tree(stmts, &mut |stmt| {
         if let StmtKind::Command(c) = &stmt.kind {
             record_value_fn_operand(c, set);
         }
-        walk_all_exprs(stmt, &mut |e| record_cmdsub_value_fn_operands(e, set));
-    }
-}
-
-/// Record the value-fn operand of every command inside a `$( )` expression.
-fn record_cmdsub_value_fn_operands(e: &Expr, set: &mut HashSet<String>) {
-    let ExprKind::CommandSubstitution(inner) = &e.kind else {
-        return;
-    };
-    for s in inner {
-        if let StmtKind::Command(c) = &s.kind {
-            record_value_fn_operand(c, set);
-        }
-    }
+    });
 }
 
 fn record_value_fn_operand(c: &Command, set: &mut HashSet<String>) {
@@ -9779,6 +10005,7 @@ fn check_slot_arity(
 /// Static summary facts and the current body's return and diagnostic state.
 #[derive(Clone, Copy)]
 struct SlotCx<'a> {
+    scratch: &'a crate::scratch::Bindings,
     map_names: &'a HashSet<String>,
     interface: &'a HashSet<String>,
     fns: &'a HashMap<String, CallSites>,
@@ -9799,6 +10026,12 @@ struct SlotCx<'a> {
 }
 
 impl SlotCx<'_> {
+    fn restart_scratch(&self, name: &str, tainted: &mut Tainted) {
+        if self.scratch.contains(name) {
+            tainted.remove(name);
+        }
+    }
+
     fn resolve_replacement(&self, name: &str, tainted: &mut Tainted) {
         if self.failed_attests.iter().any(|subject| subject == name) {
             tainted.remove(name);
@@ -13004,7 +13237,7 @@ mod tests {
             let source = format!("array a\nread a\n(( a[0] {update} ))");
             let (program, parse_diags) = crate::parse::parse(&source).unwrap();
             assert!(parse_diags.is_empty(), "{parse_diags:?}");
-            let codes: Vec<_> = check_taint(&program)
+            let codes: Vec<_> = check_taint(&program, &crate::scratch::Bindings::default())
                 .diagnostics
                 .into_iter()
                 .map(|d| d.code)

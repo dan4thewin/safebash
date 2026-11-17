@@ -774,6 +774,7 @@ fn initialize_body_locals(
         state.live_locals.insert(name.clone());
         let value = local_initial_value(&name, state);
         let target = state.define_initial(&name);
+        ssa.private_initializations.insert(target.clone());
         ssa.block_mut(block)
             .insts
             .push(SsaInst::Assign { target, value });

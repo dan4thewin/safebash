@@ -353,6 +353,7 @@ fn emit_prologue(out: &mut String) {
     // Phase 5 — table runtime (arrays + maps share the same table)
     writeln!(out, "typedef struct SashTable SashTable;").unwrap();
     writeln!(out, "extern SashTable* sash_table_new(i64 capacity);").unwrap();
+    writeln!(out, "extern void sash_table_clear(SashTable* table);").unwrap();
     writeln!(
         out,
         "extern void sash_table_set(SashTable* t, const char* kp, i64 kl, const char* vp, i64 vl);"
@@ -605,6 +606,9 @@ fn insert_string_target_types(targets: &[VarRef], types: &mut VarTypes) {
 
 fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
     match inst {
+        SsaInst::CollectionPublish { target, source } => {
+            insert_string_target_types(&[target.clone(), source.clone()], types);
+        }
         SsaInst::Assign { target, value } => {
             types.insert(
                 (target.name.clone(), target.version),
@@ -612,23 +616,27 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
             );
             collect_value_vars(value, types);
         }
-        SsaInst::Command { args, .. } => {
-            for a in args {
-                collect_value_vars(a, types);
-            }
-        }
+        SsaInst::Command { args, .. } => args.iter().for_each(|a| collect_value_vars(a, types)),
         SsaInst::Pipeline {
             stages, capture, ..
         } => collect_pipeline_var_types(stages, capture, types),
         SsaInst::ArrayAppend { value, .. } => collect_value_vars(value, types),
         // The capture target holds the captured stdout (its declared type).
-        SsaInst::CaptureEnd { target, .. } => {
+        SsaInst::CaptureEnd { target, .. }
+        | SsaInst::LifetimeStart {
+            target,
+            collection: false,
+        } => {
             types.insert((target.name.clone(), target.version), target.var_type);
         }
         // Read targets are String; declare them even when the value is
         // never read later (native declares all read targets — otherwise
         // c emits an assignment to an undeclared `_ptr`/`_len`).
-        SsaInst::ReadLine { target, .. } => {
+        SsaInst::ReadLine { target, .. }
+        | SsaInst::LifetimeStart {
+            target,
+            collection: true,
+        } => {
             insert_string_target_types(std::slice::from_ref(target), types);
         }
         // DD#61 attest-all: the loop binders are set inside the emitted loop, so
@@ -1208,6 +1216,14 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
     }
     match inst {
         SsaInst::SourceOrigin(..) => {}
+        SsaInst::LifetimeStart { target, collection } => {
+            emit_lifetime_start(e, target, *collection, types);
+        }
+        SsaInst::CollectionPublish { target, source } => {
+            let target = c_var_name(&target.name, target.version);
+            let source = c_var_name(&source.name, source.version);
+            writeln!(e.out, "    {target}_ptr = {source}_ptr; {target}_len = 0;").unwrap();
+        }
         SsaInst::Assign { target, value } => emit_assign(e, target, value, types),
         SsaInst::Command {
             name,
@@ -1292,6 +1308,19 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
 /// `x = value;` — mirrors codegen's variable assignment.
 /// For string targets: assign both `_ptr` and `_len`.
 /// For int targets: assign the single i64.
+fn emit_lifetime_start(e: &mut Emit, target: &VarRef, collection: bool, types: &VarTypes) {
+    if collection {
+        let target = c_var_name(&target.name, target.version);
+        writeln!(e.out, "    sash_table_clear((SashTable*){target}_ptr);").unwrap();
+    } else {
+        let zero = match target.var_type {
+            VarType::Int => "0",
+            VarType::String => "",
+        };
+        emit_assign(e, target, &SsaValue::Literal(zero.to_string()), types);
+    }
+}
+
 fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes) {
     // Assignment to `$?` sets the dedicated __exit_status (an i64), not a
     // regular var slot — mirrors handle_exit_status_assign

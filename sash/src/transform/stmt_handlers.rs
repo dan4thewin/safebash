@@ -26,6 +26,7 @@ pub(super) fn handle_command(
 ) -> BlockId {
     let name = literal_name_of(&c.name);
     let kind = BuiltinCmd::from_name(name);
+    super::statements::restart_scratch_statement(stmt, ssa, state, block);
 
     // DD#70 (B): `match` and a bare `[[ … ]]` are booleans that must be
     // consumed — a bare or `-`-suppressed one is a compile error.
@@ -99,7 +100,8 @@ fn try_handle_match_into(
     }
     let subject = expr_to_value(&c.args[0], state);
     let pattern = expr_to_value(&c.args[1], state);
-    let array = super::expressions::fill_target_name(&c.args[2], state);
+    let destination = super::expressions::fill_target_name(&c.args[2], state);
+    let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
     // DD#63: the out-array form fills (and auto-declares) its trailing
     // array, for singular `match` exactly as for `matchall`.
     autodeclare_bulk_target(&array, ssa, state, block);
@@ -109,8 +111,11 @@ fn try_handle_match_into(
         array: array.clone(),
         all: kind == BuiltinCmd::MatchAll,
     });
-    if state.failed_attests.contains(&array) {
-        push_attest_retag(ssa, state, block, &array);
+    if array != destination {
+        super::statements::publish_collection(&destination, &array, ssa, state, block);
+    }
+    if state.failed_attests.contains(&destination) {
+        push_attest_retag(ssa, state, block, &destination);
     }
     Some(block)
 }
@@ -335,6 +340,7 @@ pub(super) fn push_attest_arith_convert(
     value: &crate::ir::ArithExpr,
     span: crate::ir::Span,
 ) {
+    super::statements::restart_scratch(target_name, ssa, state, block);
     let source = state.lookup(source_name);
     let test = SsaTest::Unary {
         op: "i?".to_string(),
@@ -1052,6 +1058,7 @@ fn handle_pipe_while_or_array_read(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    super::statements::restart_scratch_statement(last.body, ssa, state, block);
     let site = state.next_reader_site;
     state.next_reader_site += 1;
     let pipeline = build_pipeline_inst(
@@ -1122,6 +1129,7 @@ fn handle_lastpipe_read(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    super::statements::restart_scratch_statement(last.body, ssa, state, block);
     let producers = &p.commands[..p.commands.len() - 1];
     let site = state.next_reader_site;
     state.next_reader_site += 1;
@@ -1318,6 +1326,7 @@ pub(super) fn handle_assignment(
     if a.op == crate::ir::AssignOp::Append {
         return handle_append_assign(a, state, ssa, block);
     }
+    super::statements::restart_scratch(&a.name, ssa, state, block);
     handle_plain_assign(a, state, ssa, block)
 }
 

@@ -98,6 +98,7 @@ fn lower_if_attest_convert(
     // `0` is what a declared-but-unassigned int reads as everywhere else in
     // sash (`int x; echo "$x $(( x ))"` → `0 0`), so the else path agrees with
     // the rest of the language rather than yielding an empty arithmetic value.
+    super::statements::restart_scratch(target_name, ssa, state, block);
     let declared = state.define(target_name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target: declared,
@@ -722,6 +723,7 @@ fn lower_for_static(
         };
         state.loop_stack.push((continue_target, exit_block));
 
+        super::statements::restart_scratch(&f.variable, ssa, state, current);
         let val = expr_to_value(word, state);
         let loop_var = state.define(&f.variable);
         ssa.block_mut(current).insts.push(SsaInst::Assign {

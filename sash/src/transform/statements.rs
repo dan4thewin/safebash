@@ -38,6 +38,18 @@ pub(super) fn lower_one(
         matches!(stmt.kind, StmtKind::For(_)),
         block,
     );
+    let constructions: std::collections::HashSet<_> = crate::scratch::constructions(stmt)
+        .into_iter()
+        .map(|construction| construction.name)
+        .filter(|name| state.scratch.contains(name))
+        .collect();
+    if !constructions.is_empty() {
+        ssa.scratch_constructions.insert(
+            ssa.current_origin
+                .expect("the statement just entered its source origin"),
+            constructions,
+        );
+    }
     let block = lower_stmt_kind(stmt, ssa, state, block);
     ssa.leave_source(origin, block);
     state.flush_expr_diagnostics();
@@ -52,6 +64,87 @@ fn source_attest_span(stmt: &Statement) -> Option<Span> {
         _ => stmt,
     };
     attest_command(candidate).map(|_| candidate.span)
+}
+
+pub(super) fn restart_scratch(
+    name: &str,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    if !state.scratch.contains(name) {
+        return;
+    }
+    let collection = state.checked_collections.get(name).copied();
+    if let Some(is_assoc) = collection {
+        register_collection_name(name, true, is_assoc, state);
+    }
+    let target = state.define_initial(name);
+    ssa.block_mut(block).insts.push(SsaInst::LifetimeStart {
+        target,
+        collection: collection.is_some(),
+    });
+    ssa.scratch_constructions
+        .entry(
+            ssa.current_origin
+                .expect("a scratch construction has a source origin"),
+        )
+        .or_default()
+        .insert(name.to_string());
+}
+
+pub(super) fn restart_scratch_statement(
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    let stmt = stmt.stage_marks().0;
+    if matches!(stmt.kind, StmtKind::For(_) | StmtKind::Declaration(_)) {
+        return;
+    }
+    for construction in crate::scratch::constructions(stmt) {
+        restart_scratch(&construction.name, ssa, state, block);
+    }
+}
+
+pub(super) fn collection_fill_target(
+    name: &str,
+    is_assoc: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> String {
+    if !state.scratch.contains(name) {
+        return name.to_string();
+    }
+    let var_type = state.lookup(name).var_type;
+    let temporary = state.reserve_temp_name(format!("__batch_{name}"), var_type);
+    register_collection_name(&temporary, true, is_assoc, state);
+    let target = state.define(&temporary);
+    let value = if is_assoc {
+        SsaValue::AssocArray(Vec::new())
+    } else {
+        SsaValue::IndexedArray(Vec::new())
+    };
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Assign { target, value });
+    temporary
+}
+
+pub(super) fn publish_collection(
+    name: &str,
+    source: &str,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    let source = state.lookup(source);
+    let target = state.define(name);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::CollectionPublish { target, source });
 }
 
 fn lower_stmt_kind(
@@ -292,6 +385,7 @@ fn lower_redirected_stmt(
     // the list, so it gets a real scope — parked here and opened by
     // `inline_function_call`, which holds those blocks. Without it the
     // redirect attached to nothing and was silently dropped.
+    restart_scratch_statement(&r.body, ssa, state, block);
     let redirects = spill_scalar_redirect_targets(&r.redirects, ssa, state, block);
     let bracketed = body_calls_user_function(&r.body, state);
     if bracketed {
@@ -428,11 +522,12 @@ pub(super) fn spill_scalar_redirect_targets(
 /// the suite, which stayed green; spec `rdr.47`-`rdr.49` cover the real path.
 fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirects: &[Redirect]) {
     let blk = ssa.block_mut(blk_id);
-    let Some(inst) = blk
-        .insts
-        .iter_mut()
-        .rfind(|inst| !matches!(inst, SsaInst::SourceOrigin(..)))
-    else {
+    let Some(inst) = blk.insts.iter_mut().rfind(|inst| {
+        !matches!(
+            inst,
+            SsaInst::SourceOrigin(..) | SsaInst::CollectionPublish { .. }
+        )
+    }) else {
         panic!(
             "ICE: a statement carrying {} redirect(s) lowered to no instruction at all — \
              SB4046 (resolve::head_may_take_redirect) should have rejected it at parse",
@@ -451,6 +546,8 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
             }
         }
         SsaInst::Assign { .. }
+        | SsaInst::LifetimeStart { .. }
+        | SsaInst::CollectionPublish { .. }
         | SsaInst::Test(..)
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
@@ -697,6 +794,7 @@ fn lower_one_declaration(
     mut block: BlockId,
 ) -> BlockId {
     // DD#99: `map m = @{a:DISP}` fills a map from an array, pairwise.
+    restart_scratch(&a.name, ssa, state, block);
     if is_assoc && lower_map_from_array(a, ssa, state, block) {
         return block;
     }
@@ -720,7 +818,7 @@ fn shape_declared_value(val: SsaValue, d: &Declaration, is_collection: bool) -> 
 }
 
 fn note_readonly(a: &DeclAssignment, d: &Declaration, state: &mut VersionState) {
-    if d.keyword == crate::ir::DeclKeyword::Readonly {
+    if d.keyword == crate::ir::DeclKeyword::Readonly && !state.scratch.contains(&a.name) {
         state.readonly_vars.insert(a.name.clone());
     }
 }
@@ -1038,15 +1136,18 @@ fn lower_map_from_array(
         return false;
     };
     let source = state.lookup(&source);
+    let destination = collection_fill_target(&a.name, true, ssa, state, block);
     state.collections.insert(a.name.clone());
     state.assoc_arrays.insert(a.name.clone());
-    let target = state.define_replacement(&a.name);
-    ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target,
-        value: SsaValue::AssocArray(vec![]),
-    });
+    if destination == a.name {
+        let target = state.define_replacement(&destination);
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target,
+            value: SsaValue::AssocArray(vec![]),
+        });
+    }
     // The fill is a separate definition from the empty-map initialization.
-    let target = state.define_replacement(&a.name);
+    let target = state.define_replacement(&destination);
     ssa.block_mut(block).insts.push(SsaInst::MapFromArray {
         source,
         target,
@@ -1055,6 +1156,9 @@ fn lower_map_from_array(
         message,
         taint_off,
     });
+    if destination != a.name {
+        publish_collection(&a.name, &destination, ssa, state, block);
+    }
     true
 }
 

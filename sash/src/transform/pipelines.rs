@@ -102,6 +102,7 @@ pub(super) fn lower_for_array(
 
     // x = table_value(arr, __ai)
     let idx_ref = state.lookup(&idx_name);
+    super::statements::restart_scratch(&f.variable, ssa, state, body_block);
     let loop_var = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
@@ -142,6 +143,7 @@ pub(super) fn lower_for_array(
     };
 
     let idx_ref_2 = state.lookup(&idx_name);
+    super::statements::restart_scratch(&f.variable, ssa, state, body_block);
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,
@@ -234,6 +236,7 @@ pub(super) fn lower_for_argv_slice(
 
     // Assign loop variable: x = argv[__fi]
     let idx_ref = state.lookup(&idx_name);
+    super::statements::restart_scratch(&f.variable, ssa, state, body_block);
     let loop_var = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
@@ -278,6 +281,7 @@ pub(super) fn lower_for_argv_slice(
 
     // Re-assign loop variable from argv
     let idx_ref_2 = state.lookup(&idx_name);
+    super::statements::restart_scratch(&f.variable, ssa, state, body_block);
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,

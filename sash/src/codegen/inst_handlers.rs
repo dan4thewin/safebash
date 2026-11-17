@@ -765,6 +765,32 @@ fn emit_pipeline_abort_check(
     builder.seal_block(cont_block);
 }
 
+pub(super) fn handle_lifetime_start(
+    target: &VarRef,
+    collection: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    if collection {
+        let table = ctx.vars[&target.display()].str_ptr().load(builder);
+        let clear = module.declare_func_in_func(ctx.externs.table_clear, builder.func);
+        builder.ins().call(clear, &[table]);
+    } else {
+        let zero = match target.var_type {
+            crate::ir::VarType::Int => "0",
+            crate::ir::VarType::String => "",
+        };
+        handle_assign(
+            target,
+            &SsaValue::Literal(zero.to_string()),
+            builder,
+            module,
+            ctx,
+        );
+    }
+}
+
 /// Handle SsaInst::Assign.
 pub(super) fn handle_assign(
     target: &VarRef,

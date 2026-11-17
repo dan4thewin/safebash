@@ -59,9 +59,11 @@ bare-literal-only glob sugar. These settle the previously deferred source
 choices; they do not adopt the package on main.
 
 The independently accepted const-validation prerequisite is implemented
-and gated on this branch (journal 644). Scratch construction, fillers,
-selectors and regex proof remain the next implementation work; this owner
-stays open through the integrated trial and DG's evaluation.
+and gated on this branch (journal 644). Source-identity immutable scratch,
+fresh lifetime starts and private scratch collection publication are also
+implemented and gated (journal 645). Ordinary accumulating fillers,
+selectors, caught-scratch permissions and regex proof remain implementation
+work; this owner stays open through the integrated trial and DG's evaluation.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record
@@ -367,8 +369,29 @@ Keep that distinction when reconciling individual sections.
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
-disposition and the reconciliation commit. Currently every trial outcome
-is **pending**; the table records policy edits, not implementation results.
+disposition and the reconciliation commit. DG's adoption dispositions
+remain **pending**; the table records policy edits. Implementation evidence
+is tracked separately below.
+
+### Trial delivery evidence
+
+The scratch unit follows `e053b852a96428dca076c30d9d036e3a91fb68e0`;
+[journal 645](../journal/645-immutable-scratch-construction.md) records its
+implementation, controls and publication boundary. Its 51 dual-mode cases
+cover scalar/collection construction, helper/slot immutability,
+initializer self-reads, repeated/skipped sites, reader and conversion
+failure state, independent snapshots and private-body lifetimes.
+The final gate has 11765 checks, no failures or status flips, and 102 added
+mode IDs over the const baseline. Ten independent reversions pin the source
+and SSA guards, shared read traversal, both backend resets and private fills.
+
+The implementation reuses valid empty table headers and publishes completed
+private tables without a runtime ABI change. It deliberately adds private
+batch storage; its repeated-use memory cost remains to be measured with the
+ordinary accumulating fillers and useful-program evaluation. These results
+do not establish DD132's caught-read/proof rules or complete either selector.
+No DD was revised by the scratch implementation unit, and no part of the
+trial has been adopted on main.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

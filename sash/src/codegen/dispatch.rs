@@ -36,6 +36,22 @@ impl SsaInst {
         let capture_slots = ctx.capture_slots;
         match self {
             SsaInst::SourceOrigin(..) => {}
+            SsaInst::LifetimeStart { target, collection } => {
+                super::inst_handlers::handle_lifetime_start(
+                    target,
+                    *collection,
+                    builder,
+                    module,
+                    ctx,
+                );
+            }
+            SsaInst::CollectionPublish { target, source } => {
+                let source = vars[&source.display()].str_ptr().load(builder);
+                let slot = vars[&target.display()];
+                slot.str_ptr().store(builder, source);
+                let zero = builder.ins().iconst(I64, 0);
+                slot.str_len().store(builder, zero);
+            }
             SsaInst::Assign { target, value } => {
                 return super::inst_handlers::handle_assign(target, value, builder, module, ctx);
             }

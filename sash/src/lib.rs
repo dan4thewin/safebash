@@ -12,6 +12,7 @@ pub(crate) mod diagnostic;
 pub(crate) mod output_taint;
 pub(crate) mod regex_validate;
 pub(crate) mod resolve;
+pub(crate) mod scratch;
 pub(crate) mod signals;
 pub(crate) mod ssa;
 pub(crate) mod ssa_taint;
@@ -435,21 +436,18 @@ pub fn cli_main(args: Vec<String>) {
 
     let program = parse_and_resolve(input, &source);
     let (bound, names) = bindings::resolve(&program, &source);
-    let (type_map, taint_analysis) = run_semantic_checks(input, &bound, &parsed.flags, &names);
+    let (type_map, taint_analysis, scratch) =
+        run_semantic_checks(input, &bound, &parsed.flags, &names);
 
     // Transform-time compile errors precede the dead-variable gate for every backend.
-    let mut ssa = transform_or_exit(input, &bound, &names, type_map);
+    let mut ssa = transform_or_exit(input, &bound, &names, type_map, &scratch);
     ssa.source_names = names.clone();
+    reject_bound_diagnostics(input, &names, scratch::check_writes(&ssa, &scratch));
     signals::prepare(&mut ssa, &taint_analysis.signal_pairs);
     check_terminal_or_exit(input, &bound, &ssa, &taint_analysis, &parsed.flags, &names);
 
     // DD#86: more-specific semantic/type/transform errors win over SB5050.
-    let mut dead = validate::check_dead_variables(&bound);
-    if !dead.is_empty() {
-        restore_diagnostics(&mut dead, &names);
-        print_diags(input, &dead);
-        std::process::exit(1);
-    }
+    reject_bound_diagnostics(input, &names, validate::check_dead_variables(&bound));
 
     if maybe_emit_alt_output(input, &parsed.flags, &program, &ssa) {
         return;
@@ -464,6 +462,19 @@ pub fn cli_main(args: Vec<String>) {
         parsed.inline_source.is_some(),
         &parsed.flags,
     );
+}
+
+fn reject_bound_diagnostics(
+    input: &str,
+    names: &bindings::SourceNames,
+    mut diags: Vec<diagnostic::Diagnostic>,
+) {
+    if diags.is_empty() {
+        return;
+    }
+    restore_diagnostics(&mut diags, names);
+    print_diags(input, &diags);
+    std::process::exit(1);
 }
 
 fn parse_and_resolve(input: &str, source: &str) -> ir::Program {
@@ -669,12 +680,18 @@ fn run_semantic_checks(
     program: &crate::ir::Program,
     flags: &[&str],
     names: &bindings::SourceNames,
-) -> (type_check::CheckedTypes, validate::TaintAnalysis) {
+) -> (
+    type_check::CheckedTypes,
+    validate::TaintAnalysis,
+    scratch::Bindings,
+) {
     // SB4044 sits outside the taint switch: a const write is no taint
     // question, and `--no-taint` must not carry one into lowering, where
     // `VersionState::define` asserts it never arrives.
     let mut tdiags = validate::check_const_writes(program);
-    let mut taint_analysis = validate::check_taint(program);
+    let (scratch, scratch_errors) = validate::check_scratch_bindings(program, names);
+    tdiags.extend(scratch_errors);
+    let mut taint_analysis = validate::check_taint(program, &scratch);
     if !cst_taint_disabled(flags) {
         tdiags.append(&mut taint_analysis.diagnostics);
     }
@@ -719,7 +736,11 @@ fn run_semantic_checks(
         std::process::exit(1);
     }
 
-    (type_check_or_exit(input, program, names), taint_analysis)
+    (
+        type_check_or_exit(input, program, names),
+        taint_analysis,
+        scratch,
+    )
 }
 
 /// Type check, reporting every SB4030 before exiting. Split out of
@@ -763,8 +784,9 @@ fn transform_or_exit(
     program: &crate::ir::Program,
     names: &bindings::SourceNames,
     type_map: type_check::CheckedTypes,
+    scratch: &scratch::Bindings,
 ) -> crate::ssa::SsaProgram {
-    let (ssa, diags) = transform::ir_to_ssa_typed(program, type_map);
+    let (ssa, diags) = transform::ir_to_ssa_typed(program, type_map, scratch);
     if !diags.is_empty() {
         for d in &diags {
             eprintln!("{}:{}", input, names.restore(d));

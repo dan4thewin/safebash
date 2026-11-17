@@ -42,9 +42,11 @@ fn lower_newread(
             "SB5057 requires one or two read operands; a malformed read must not disappear"
         ),
     };
-    super::stmt_handlers::autodeclare_bulk_target(&target, ssa, state, block);
+    let destination = target;
+    let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
+    super::stmt_handlers::autodeclare_bulk_target(&array, ssa, state, block);
     // The completed fill is a separate definition from the empty initialization.
-    let target = state.define_replacement(&target);
+    let target = state.define_replacement(&array);
     let fd = state.pipe_reader.unwrap_or(0);
     let inst = match source {
         Some(source) => SsaInst::SplitValue { source, target },
@@ -55,6 +57,9 @@ fn lower_newread(
         },
     };
     ssa.block_mut(block).insts.push(inst);
+    if array != destination {
+        super::statements::publish_collection(&destination, &array, ssa, state, block);
+    }
     block
 }
 

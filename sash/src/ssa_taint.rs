@@ -663,6 +663,10 @@ fn definition_taint<'a>(
     user_functions: &HashSet<String>,
 ) -> Option<(&'a VarRef, Taint, bool)> {
     let (value, preserves) = match inst {
+        SsaInst::LifetimeStart { .. } => (Taint::Clean, false),
+        SsaInst::CollectionPublish { source, .. } => {
+            (taint_of_flag(is_tainted(taint, source)), true)
+        }
         SsaInst::Assign { value, .. } => (value_is_tainted(value, taint, user_functions), true),
         SsaInst::Attest { .. } | SsaInst::AttestRetag { .. } => (Taint::Clean, false),
         SsaInst::ReadLine { target, .. } | SsaInst::ReadArray { target, .. } => {

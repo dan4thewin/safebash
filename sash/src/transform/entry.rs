@@ -6,14 +6,16 @@ use crate::ssa::*;
 use std::collections::HashSet;
 
 /// Transform an IR Program into SSA form with type information.
-pub fn ir_to_ssa_typed(
+pub(crate) fn ir_to_ssa_typed(
     program: &Program,
     types: crate::type_check::CheckedTypes,
+    scratch: &crate::scratch::Bindings,
 ) -> (SsaProgram, Vec<String>) {
     let mut ssa = SsaProgram::new();
     ssa.globals = source_globals(program, &types);
     ssa.user_fds = program_referenced_fds(program);
     let mut state = VersionState::with_types(types.vars);
+    state.scratch = scratch.clone();
     state.checked_collections = types.collections;
     seed_global_collections(program, &ssa, &mut state);
     reserve_source_names(program, &mut state.reserved_names);
