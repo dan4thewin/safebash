@@ -45,12 +45,19 @@ impl SsaInst {
                     ctx,
                 );
             }
-            SsaInst::CollectionPublish { target, source } => {
-                let source = vars[&source.display()].str_ptr().load(builder);
-                let slot = vars[&target.display()];
-                slot.str_ptr().store(builder, source);
-                let zero = builder.ins().iconst(I64, 0);
-                slot.str_len().store(builder, zero);
+            SsaInst::CollectionPublish {
+                target,
+                source,
+                append_to,
+            } => {
+                super::inst_handlers::handle_collection_publish(
+                    target,
+                    source,
+                    append_to.as_ref(),
+                    builder,
+                    module,
+                    ctx,
+                );
             }
             SsaInst::Assign { target, value } => {
                 return super::inst_handlers::handle_assign(target, value, builder, module, ctx);
@@ -839,9 +846,8 @@ impl SsaInst {
         let sv = find_array_slot(vars, array, "array");
         let table_ptr = sv.str_ptr().load(builder);
 
-        // Get current length as the next integer key
-        let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
-        let call = builder.ins().call(len_ref, &[table_ptr]);
+        let next_ref = module.declare_func_in_func(externs.array_next_index, builder.func);
+        let call = builder.ins().call(next_ref, &[table_ptr]);
         let next_idx = builder.inst_results(call)[0];
 
         let idx_slot =

@@ -183,6 +183,8 @@ pub(super) struct ExternFuncs {
     pub(super) argv_guard: cranelift_module::FuncId,
     pub(super) table_new: cranelift_module::FuncId,
     pub(super) table_clear: cranelift_module::FuncId,
+    pub(super) array_next_index: cranelift_module::FuncId,
+    pub(super) array_append_batch: cranelift_module::FuncId,
     pub(super) table_set: cranelift_module::FuncId,
     pub(super) table_get: cranelift_module::FuncId,
     pub(super) table_len: cranelift_module::FuncId,

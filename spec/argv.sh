@@ -295,9 +295,9 @@ run_sash 'array a=(old); argv 1 "a"; echo $(len a)' x y z
 run_sash 'str t=a; array a=(old); argv 1 $t; echo "$(len a)$t"' x y z
 [[ $rc != 0 && -z $out && $err == *SB5063* ]]; chk av.rej5
 
-# av.rej6 control: the bare target still binds, taints, and needs an attest
+# DD131: the bare target accumulates, taints, and needs an attest.
 run_sash 'array a=(old); argv 1 a; attest x in a [[ -n $x ]]; echo $(len a)' x y z
-[[ $rc = 0 && $out = "3" && -z $err ]]; chk av.rej6
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk fillmig.1
 
 # ── The FORM is checked at compile time (SB4045 / SB5085) ────────────
 # av.rej4/5 fixed the quoted *target*. The index and the arity had no

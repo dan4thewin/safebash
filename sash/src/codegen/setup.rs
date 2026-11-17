@@ -573,6 +573,18 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let table_clear_func = module
         .declare_function("sash_table_clear", Linkage::Import, &table_clear_sig)
         .expect("declare sash_table_clear");
+    let array_next_index_func = module
+        .declare_function("sash_array_next_index", Linkage::Import, &table_new_sig)
+        .expect("declare sash_array_next_index");
+    let mut array_append_batch_sig = module.make_signature();
+    push_i64s(&mut array_append_batch_sig, 2, 0);
+    let array_append_batch_func = module
+        .declare_function(
+            "sash_array_append_batch",
+            Linkage::Import,
+            &array_append_batch_sig,
+        )
+        .expect("declare sash_array_append_batch");
 
     // sash_table_set(table, key_ptr, key_len, val_ptr, val_len)
     let mut table_set_sig = module.make_signature();
@@ -924,6 +936,8 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         strcmp: strcmp_func,
         table_new: table_new_func,
         table_clear: table_clear_func,
+        array_next_index: array_next_index_func,
+        array_append_batch: array_append_batch_func,
         table_set: table_set_func,
         table_get: table_get_func,
         table_len: table_len_func,

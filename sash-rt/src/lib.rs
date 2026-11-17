@@ -2329,9 +2329,70 @@ pub unsafe extern "C" fn sash_table_len(t: *const SashTable) -> i64 {
     (*t).live_count as i64
 }
 
-/// Reset a table to empty in place, preserving its allocation. Used for
-/// the clear-on-entry semantics of `match S P ARR` (DD#63): each match
-/// call replaces the array contents, and a no-match leaves it empty.
+#[no_mangle]
+pub unsafe extern "C" fn sash_array_next_index(t: *const SashTable) -> i64 {
+    let mut next = 0;
+    for i in 0..(*t).entry_count as usize {
+        let entry = &*(*t).entries.add(i);
+        if !entry.deleted {
+            let key = core::ptr::read_unaligned(entry.key_ptr.cast::<i64>());
+            if key >= next {
+                next = key.checked_add(1).unwrap_or_else(|| sash_arith_overflow());
+            }
+        }
+    }
+    next
+}
+
+/// Clone only mutable table storage; keys and values keep their existing backing.
+unsafe fn table_clone_storage(t: *const SashTable) -> SashTable {
+    if (*t).entry_capacity == 0 {
+        return table_contents(4);
+    }
+    let mut copy = core::ptr::read(t);
+    let index_count = copy.index_mask as usize + 1;
+    copy.indices = sash_alloc(index_count * core::mem::size_of::<i32>()).cast();
+    core::ptr::copy_nonoverlapping((*t).indices, copy.indices, index_count);
+    copy.entries =
+        sash_alloc(copy.entry_capacity as usize * core::mem::size_of::<TableEntry>()).cast();
+    core::ptr::copy_nonoverlapping((*t).entries, copy.entries, copy.entry_count as usize);
+    copy
+}
+
+/// Every allocation precedes publication, so ERR sees the original destination on failure.
+#[no_mangle]
+pub unsafe extern "C" fn sash_array_append_batch(t: *mut SashTable, batch: *const SashTable) {
+    if (*batch).live_count == 0 {
+        return;
+    }
+    let first = sash_array_next_index(t);
+    let mut merged = table_clone_storage(t);
+    let mut offset = 0;
+    for i in 0..(*batch).entry_count as usize {
+        let entry = &*(*batch).entries.add(i);
+        if entry.deleted {
+            continue;
+        }
+        let key = first
+            .checked_add(offset)
+            .unwrap_or_else(|| sash_arith_overflow());
+        sash_table_set(
+            &mut merged,
+            (&key as *const i64).cast(),
+            8,
+            entry.val_ptr,
+            entry.val_len,
+        );
+        offset += 1;
+    }
+    let previous = core::ptr::replace(t, merged);
+    if previous.entry_capacity != 0 {
+        sash_free_c(previous.indices.cast());
+        sash_free_c(previous.entries.cast());
+    }
+}
+
+/// Reset private fill tables or fresh scratch lifetimes without allocating.
 #[no_mangle]
 pub unsafe extern "C" fn sash_table_clear(t: *mut SashTable) {
     if (*t).entry_capacity == 0 {

@@ -664,9 +664,15 @@ fn definition_taint<'a>(
 ) -> Option<(&'a VarRef, Taint, bool)> {
     let (value, preserves) = match inst {
         SsaInst::LifetimeStart { .. } => (Taint::Clean, false),
-        SsaInst::CollectionPublish { source, .. } => {
-            (taint_of_flag(is_tainted(taint, source)), true)
-        }
+        SsaInst::CollectionPublish {
+            source, append_to, ..
+        } => (
+            taint_of_flag(
+                is_tainted(taint, source)
+                    || append_to.as_ref().is_some_and(|old| is_tainted(taint, old)),
+            ),
+            true,
+        ),
         SsaInst::Assign { value, .. } => (value_is_tainted(value, taint, user_functions), true),
         SsaInst::Attest { .. } | SsaInst::AttestRetag { .. } => (Taint::Clean, false),
         SsaInst::ReadLine { target, .. } | SsaInst::ReadArray { target, .. } => {

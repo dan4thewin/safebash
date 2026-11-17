@@ -965,7 +965,7 @@ run_sash 'ERR {
   if match abc "a(b)" captures { if /bin/echo @{captures:-} { : } }
 }
 fail'
-[[ $rc = 1 && $out = 'ab b' && -z $err && -z $rerr ]]; chk errnul.37
+[[ $rc = 1 && $out = 'old ab b' && -z $err && -z $rerr ]]; chk fillmig.20
 
 run_sash 'fn change -> int { work=$'\''bad\x00value'\''; return 1 }
 ERR {

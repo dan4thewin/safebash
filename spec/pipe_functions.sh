@@ -553,19 +553,19 @@ run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat | re
 
 run_sash 'array a=(old)
 - echo data | read a
-echo ${a[0]:!}'
-[[ $rc = 0 && $out = data && -z $rerr ]]; chk p518.25
+echo "${a[0]:!},${a[1]:!}"'
+[[ $rc = 0 && $out = old,data && -z $rerr ]]; chk fillmig.15
 
 run_sash 'array a=(old)
 - echo data < missing | read a
 echo $(len a)'
-[[ $rc = 0 && $out = 0 && -z $rerr ]]; chk p518.26
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk fillmig.16
 
 run_sash 'array a=(a b c)
 s=new
 read $s a
-echo "$(len a):${a[0]}"'
-[[ $rc = 0 && $out = 1:new && -z $rerr ]]; chk p518.27
+echo "$(len a):$(join a ,)"'
+[[ $rc = 0 && $out = 4:a,b,c,new && -z $rerr ]]; chk fillmig.17
 
 # pipe2 may succeed while relocating an endpoint away from an authored fd
 # fails. This is still construction failure, before either output is consumed.

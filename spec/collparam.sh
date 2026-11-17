@@ -942,7 +942,7 @@ fn f { /bin/echo =a; echo "$(len A)" }
 f =a'
 [[ $rc = 0 && $out = $'=a\n1' && -z $err ]]; chk noalias.16
 
-# DD#127: slots use the same independent summaries as globals.
+# DD127/DD131: appending new input cannot authorize inherited-taint attests.
 run_sash 'fn clean {
 argv 1 A
 attest v in A [[ -n $v ]] || exit 3
@@ -950,7 +950,8 @@ attest v in A [[ -n $v ]] || exit 3
 argv 1 a
 clean =a
 echo "${a[0]}"' safe
-[[ $rc = 0 && $out = safe && -z $err && -z $rerr ]]; chk sflow.1
+[[ $rc != 0 && $err == *SB5088* \
+   && $err == *'`clean`, called here with `a` tainted'* ]]; chk fillmig.8
 
 run_sash 'fn clean {
 argv 1 A
@@ -963,7 +964,7 @@ clean =b
 echo "${a[0]} ${b[0]}"' safe
 [[ $rc = 0 && $out = 'safe safe' && -z $err && -z $rerr ]]; chk sflow.2
 
-# Forwarding permutes the input and output identities, not just their names.
+# Forwarding preserves the inherited-taint refusal at the mapped identity.
 run_sash 'fn clean {
 argv 1 B
 attest v in B [[ -n $v ]]
@@ -974,7 +975,8 @@ argv 1 a
 array b=(keep)
 outer =a =b
 echo "${a[0]}"' safe
-[[ $rc = 0 && $out = $'keep\nsafe' && -z $err && -z $rerr ]]; chk sflow.3
+[[ $rc != 0 && $err == *SB5088* \
+   && $err == *'`outer`, called here with `a` tainted'* ]]; chk fillmig.9
 
 run_sash 'fn show { echo "${A[0]}" }
 argv 1 a
@@ -990,7 +992,7 @@ array a=(clean)
 show =a
 argv 1 a
 echo "${a[0]:!}"' dirty
-[[ $rc = 0 && $out = $'clean\ndirty' && -z $err && -z $rerr ]]; chk sflow.19
+[[ $rc = 0 && $out = $'clean\nclean' && -z $err && -z $rerr ]]; chk fillmig.10
 
 run_sash 'fn check { attest v in A [[ -n $v ]]; echo ok }
 fn outer { check =A }
@@ -1088,7 +1090,8 @@ array d=()
 argv 1 e
 clean =a =b =c =d =e
 echo "${e[0]}"' safe
-[[ $rc = 0 && $out = $'0 0 0 0\nsafe' && -z $err && -z $rerr ]]; chk sflow.15
+[[ $rc != 0 && $err == *SB5088* \
+   && $err == *'`clean`, called here with `e` tainted'* ]]; chk fillmig.11
 
 run_sash 'fn maybe {
 if [[ $1 == yes ]] { argv 1 A; attest v in A [[ -n $v ]] }

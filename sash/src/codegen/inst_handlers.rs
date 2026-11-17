@@ -765,6 +765,29 @@ fn emit_pipeline_abort_check(
     builder.seal_block(cont_block);
 }
 
+pub(super) fn handle_collection_publish(
+    target: &VarRef,
+    source: &VarRef,
+    append_to: Option<&VarRef>,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let source = ctx.vars[&source.display()].str_ptr().load(builder);
+    let published = if let Some(previous) = append_to {
+        let table = ctx.vars[&previous.display()].str_ptr().load(builder);
+        let append = module.declare_func_in_func(ctx.externs.array_append_batch, builder.func);
+        builder.ins().call(append, &[table, source]);
+        table
+    } else {
+        source
+    };
+    let slot = ctx.vars[&target.display()];
+    slot.str_ptr().store(builder, published);
+    let zero = builder.ins().iconst(I64, 0);
+    slot.str_len().store(builder, zero);
+}
+
 pub(super) fn handle_lifetime_start(
     target: &VarRef,
     collection: bool,

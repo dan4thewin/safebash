@@ -3825,10 +3825,9 @@ echo "[$(join a ,)]"' dirty
 run_sash 'argv 1 a
 attest v in a [[ $v == allowed ]] || read "fallback" a
 echo "${a[0]}"' dirty
-[[ $rc = 0 && $out = fallback && -z $err && -z $rerr ]]; chk adjresolve.14
+[[ $rc != 0 && $err == *SB5089* ]]; chk fillmig.12
 
-# A genuine acquisition in a helper has its own adjacent resolution. Unlike
-# a reset helper, this can resolve taint that the slot carried on entry.
+# A helper's new batch cannot justify attesting inherited retained entries.
 run_sash 'fn recover {
     argv 1 A
     attest v in A [[ $v == allowed ]] || unset A
@@ -3836,7 +3835,8 @@ run_sash 'fn recover {
 argv 1 a
 recover =a
 echo "[$(join a ,)]"' dirty
-[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk adjresolve.15
+[[ $rc != 0 && $err == *SB5088* \
+   && $err == *'`recover`, called here with `a` tainted'* ]]; chk fillmig.13
 
 run_sash 'fn reset { unset A }
 argv 1 a

@@ -98,19 +98,17 @@ echo after'
 [[ $rc = 0 && $out = "after" && -z $err ]]; chk 63.2f
 
 # ── D. captures: out-array form `match S P ARR` (DD#63) ───────────────
-# `match S P ARR` fills ARR with [whole, g1..gN] (array is the trailing
-# positional, like read -a / mapfile) and returns the boolean. Bash-parity
-# (DG, D1-B): ARR length = (#capturing groups in pattern)+1; an interior
+# `match S P ARR` appends [whole, g1..gN] and returns the boolean.
+# Batch length = (#capturing groups in pattern)+1; an interior
 # group that exists but didn't participate is "" (counted, not skipped).
-# Clear-on-entry (D3): each call replaces ARR; no match → ARR is emptied.
+# DD131: existing entries survive; no match appends nothing.
 # Still a (B) must-consume boolean (DG, D2): a bare 3-arg `match` is an
 # error — consume it with if / && / `|| :`.
 
-# 63.cap1 one group: ARR = [whole, g1], length 2 (pre-populated → stale
-# entries are cleared on a successful match, not appended)
+# One group appends the whole match and capture after existing entries.
 run_sash 'array g=(old1 old2 old3)
-if match "aXXb" "a(X+)b" g; then echo "$(len g) ${g[0]} ${g[1]}"; fi'
-[[ $rc = 0 && $out = "2 aXXb XX" && -z $err ]]; chk 63.cap1
+if match "aXXb" "a(X+)b" g; then echo "$(len g) $(join g ,)"; fi'
+[[ $rc = 0 && $out = "5 old1,old2,old3,aXXb,XX" && -z $err ]]; chk fillmig.2
 
 # 63.cap2 no groups: ARR = [whole] only, length 1 (bash-parity, NOT 10)
 run_sash 'array g=()
@@ -129,11 +127,10 @@ run_sash 'array g=()
 if match "ac" "(a)(b)?(c)" g; then echo "$(len g) [${g[1]}][${g[2]}][${g[3]}]"; fi'
 [[ $rc = 0 && $out = "4 [a][][c]" && -z $err ]]; chk 63.cap4
 
-# 63.cap5 no match → ARR cleared (length 0) even when pre-populated;
-# boolean consumed by if/else. Tests clear-on-entry on the no-match path.
+# No match retains the pre-populated array and returns false.
 run_sash 'array g=(x y z)
 if match "abc" "zzz" g; then echo "y ${g[0]}"; else echo "n $(len g)"; fi'
-[[ $rc = 0 && $out = "n 0" && -z $err ]]; chk 63.cap5
+[[ $rc = 0 && $out = "n 3" && -z $err ]]; chk fillmig.3
 
 # 63.cap6 bare 3-arg `match S P ARR` is a must-consume compile error (SB4018)
 # 63.cap7 `- match S P ARR` — `-` discards the boolean and KEEPS the array,
@@ -331,10 +328,10 @@ map m = @{pairs:~}
 echo "$(len m):${m[name]}:${m[key]}"'
 [[ $rc = 0 && $out = "2:Alice:val=ue" && -z $err ]]; chk 63.ma3
 
-# 63.ma4 no match → array cleared, non-zero (clear-on-entry like `match`)
+# No match retains the array and returns false, like `match`.
 run_sash 'array a=(x y z)
 if matchall "abc" "zzz" a; then echo "y"; else echo "n $(len a)"; fi'
-[[ $rc = 0 && $out = "n 0" && -z $err ]]; chk 63.ma4
+[[ $rc = 0 && $out = "n 3" && -z $err ]]; chk fillmig.4
 
 # 63.ma5 a single match behaves like the plural case, not like `match`
 run_sash 'array a=()
@@ -443,7 +440,7 @@ run_sash 'array g=(x y z)
 if match ab "(a)" g { - echo hit }
 echo "n=$(len g)"'
 [[ $rc = 0 && $out = "hit
-n=2" && -z $err ]]; chk 63.mi4
+n=5" && -z $err ]]; chk fillmig.5
 
 # 63.mi5 the two-arg boolean `match S P` still declares NOTHING — the
 # pattern is not a binding, so a later read of it is SB5039
@@ -818,12 +815,12 @@ p="(^cd)"
 echo "[$(match "$s" "$p")]"'
 [[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk 39.60
 
-# The out-array boolean and clear-on-no-match agree with the other match forms.
+# Whole-subject anchors still return false, retaining the old destination.
 run_sash 'array g=(stale)
 s="ab
 cd"
 if match "$s" "(ab$)" g { echo wrong } else { echo "miss $(len g)" }'
-[[ $rc = 0 && $out = 'miss 0' && -z $err && -z $rerr ]]; chk 39.61
+[[ $rc = 0 && $out = 'miss 1' && -z $err && -z $rerr ]]; chk fillmig.6
 
 run_sash 's="ab
 cd"
@@ -897,7 +894,7 @@ run_sash 's=$'"'"'a\x00b'"'"'
 echo "$(len m)"
 - matchall "$s" "" m
 echo "$(len m)"'
-[[ $rc = 0 && $out = $'1\n2' && -z $err && -z $rerr ]]; chk 39.73
+[[ $rc = 0 && $out = $'1\n3' && -z $err && -z $rerr ]]; chk fillmig.7
 
 run_sash 's=$'"'"'\x00b'"'"'
 want=$'"'"'X\x00b'"'"'

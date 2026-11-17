@@ -190,6 +190,19 @@ impl Proof {
             self.count = None;
         }
     }
+
+    fn append(mut self, other: Self) -> Self {
+        let count = self
+            .count
+            .zip(other.count)
+            .and_then(|(a, b)| a.checked_add(b));
+        let may_empty = self.may_empty && other.may_empty;
+        self.join(other);
+        self.count = count;
+        self.may_empty = may_empty;
+        self.text = None;
+        self
+    }
 }
 
 enum Definition<'a> {
@@ -429,11 +442,19 @@ impl<'a> Facts<'a> {
             SsaInst::LifetimeStart {
                 collection: false, ..
             } => Proof::text(""),
-            SsaInst::CollectionPublish { source, .. } => self.variable(source),
+            SsaInst::CollectionPublish {
+                source,
+                append_to: Some(previous),
+                ..
+            } => self.variable(previous).append(self.variable(source)),
             SsaInst::Assign { value, .. } => self.value(value),
-            SsaInst::Attest { source, .. } | SsaInst::AttestRetag { source, .. } => {
-                self.variable(source)
+            SsaInst::CollectionPublish {
+                source,
+                append_to: None,
+                ..
             }
+            | SsaInst::Attest { source, .. }
+            | SsaInst::AttestRetag { source, .. } => self.variable(source),
             SsaInst::ReadArray { .. } | SsaInst::SplitValue { .. } | SsaInst::ArgvFill { .. } => {
                 Proof::c_string()
             }

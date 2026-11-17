@@ -519,8 +519,12 @@ pub enum SsaInst {
     SourceOrigin(Option<usize>, bool),
     /// Begin a fresh source lifetime without allocating or retaining old taint.
     LifetimeStart { target: VarRef, collection: bool },
-    /// Publish an already complete table, including an integer-element table.
-    CollectionPublish { target: VarRef, source: VarRef },
+    /// Publish a complete table, or atomically append its batch to an existing array.
+    CollectionPublish {
+        target: VarRef,
+        source: VarRef,
+        append_to: Option<VarRef>,
+    },
     /// x_n = value
     Assign { target: VarRef, value: SsaValue },
     /// A command (no variable defined)

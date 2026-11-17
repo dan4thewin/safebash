@@ -298,7 +298,7 @@ ERR {
    - match none "^x$" a
    - /bin/echo @{a:?empty}
 }'
-[[ $err == *SB5101* && $err == *"empty-splat"* ]]; chk migratea.33
+[[ $rc = 1 && $out = x && -z $err && -z $rerr ]]; chk fillmig.14
 
 run_sash '
 fail 1

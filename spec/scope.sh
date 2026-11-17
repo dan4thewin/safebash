@@ -599,13 +599,12 @@ run_sash 'str x=hi
 match "abc" "b" x'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.63
 
-# 86.64 control: filling a name already declared a collection is not a
-# rebinding — the type does not change
+# Filling a declared collection preserves its type and appends after its data.
 run_sash 'array x=(a)
 argv x
 attest e in x [[ -n $e ]]
-echo "${x[1]}"' p q
-[[ $rc = 0 && $out = "p" && -z $err ]]; chk 86.64
+echo "${x[2]}"' p q
+[[ $rc = 0 && $out = "p" && -z $err ]]; chk fillmig.19
 
 # 86.65 control: two bulk binders on one name agree on the type
 run_sash 'argv x

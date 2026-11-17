@@ -536,7 +536,19 @@ impl<'a, 'p> Prover<'a, 'p> {
             SsaInst::LifetimeStart { .. } => {
                 Some(Value::leaf(Form::Known(self.facts.instruction(inst))))
             }
-            SsaInst::CollectionPublish { source, .. } => Some(Value::binding(source)),
+            SsaInst::CollectionPublish {
+                source,
+                append_to: Some(previous),
+                ..
+            } => Some(Value::apply(
+                Form::Append,
+                vec![Value::binding(previous), Value::binding(source)],
+            )),
+            SsaInst::CollectionPublish {
+                source,
+                append_to: None,
+                ..
+            } => Some(Value::binding(source)),
             SsaInst::Assign { value, .. } => self.value(value),
             SsaInst::ReadArray { .. } | SsaInst::ArgvFill { .. } | SsaInst::SplitValue { .. } => {
                 Some(Value::leaf(Form::Known(Proof {

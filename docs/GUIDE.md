@@ -151,8 +151,25 @@ The same SSA instructions feed both backends and the taint/handler analyses.
 
 Revisiting one construction site is allowed; skipped sites and zero-trip
 loop binders do not reset storage. This adds neither block scope nor automatic
-destruction at loop exit. Caught-attest permissions, regex proofs, selectors
-and accumulating ordinary fillers remain subsequent trial work.
+destruction at loop exit. Caught-attest permissions, regex proofs and selectors
+remain subsequent trial work.
+
+Ordinary array fillers now build private batches too. `CollectionPublish`
+carries the previous destination explicitly; the shared runtime prepares a
+merged table and publishes its header only after all fallible work succeeds.
+The header address remains stable for aliases and live iteration. Empty
+batches change nothing, and EOF/no-match truth belongs to the producer, not
+the accumulated population. Assignment, scalar `readline` and map conversion
+retain replacement semantics.
+
+Sparse append uses one past the greatest live nonnegative index, or zero
+when none exists, with checked overflow. It does not confuse population
+with the next free index. Integer literal appends and replacements reuse
+the checked element types and normal integer-cell encoding. Source and SSA
+taint, terminal facts and ERR's NUL analysis all retain the old destination's
+contribution; appending clean data is not failed-attest replacement.
+Private batches and cloned index/entry storage cost memory. Repeated-use
+allocation and useful-program evaluation remain part of the trial.
 
 ## Taint analysis
 

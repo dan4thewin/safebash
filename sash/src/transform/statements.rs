@@ -115,18 +115,16 @@ pub(super) fn collection_fill_target(
     state: &mut VersionState,
     block: BlockId,
 ) -> String {
-    if !state.scratch.contains(name) {
+    if is_assoc && !state.scratch.contains(name) {
         return name.to_string();
+    }
+    if !is_assoc {
+        super::stmt_handlers::autodeclare_bulk_target(name, ssa, state, block);
     }
     let var_type = state.lookup(name).var_type;
     let temporary = state.reserve_temp_name(format!("__batch_{name}"), var_type);
-    register_collection_name(&temporary, true, is_assoc, state);
+    let value = empty_collection_value(&temporary, is_assoc, state);
     let target = state.define(&temporary);
-    let value = if is_assoc {
-        SsaValue::AssocArray(Vec::new())
-    } else {
-        SsaValue::IndexedArray(Vec::new())
-    };
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value });
@@ -141,10 +139,13 @@ pub(super) fn publish_collection(
     block: BlockId,
 ) {
     let source = state.lookup(source);
+    let append_to = (!state.scratch.contains(name)).then(|| state.lookup(name));
     let target = state.define(name);
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::CollectionPublish { target, source });
+    ssa.block_mut(block).insts.push(SsaInst::CollectionPublish {
+        target,
+        source,
+        append_to,
+    });
 }
 
 fn lower_stmt_kind(
@@ -799,7 +800,7 @@ fn lower_one_declaration(
         return block;
     }
     let val = compute_declaration_value(a, is_array, is_assoc, ssa, state, &mut block);
-    let val = shape_declared_value(val, d, is_array || is_assoc);
+    let val = shape_collection_value(val, &a.name, state);
     let target = state.define_replacement(&a.name);
     ssa.block_mut(block)
         .insts
@@ -809,8 +810,8 @@ fn lower_one_declaration(
 }
 
 /// DD#76: an `int array`/`int map` stores each element as an int cell.
-fn shape_declared_value(val: SsaValue, d: &Declaration, is_collection: bool) -> SsaValue {
-    if d.var_type == crate::ir::VarType::Int && is_collection {
+pub(super) fn shape_collection_value(val: SsaValue, name: &str, state: &VersionState) -> SsaValue {
+    if state.collections.contains(name) && state.type_map.get(name) == Some(&VarType::Int) {
         wrap_int_cells(val)
     } else {
         val

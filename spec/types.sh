@@ -2348,15 +2348,14 @@ array k
 keys m k
 echo "n=$(len k)"'
 [[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 75.136
-# 75.137 the fill REPLACES the target. A prior three-element array does not
-# survive underneath a one-key snapshot.
+# DD131: a snapshot appends after the prior three-element array.
 run_sash 'map m
 m[only]=1
 echo "${m[only]}" > /dev/null
 array k=(x y z)
 keys m k
-echo "n=$(len k) first=${k[0]}"'
-[[ $rc = 0 && $out = "n=1 first=only" && -z $err ]]; chk 75.137
+echo "n=$(len k) $(join k ,)"'
+[[ $rc = 0 && $out = "n=4 x,y,z,only" && -z $err ]]; chk fillmig.18
 # 75.138 DD#100: the source may be a collection-parameter slot, so a function
 # can snapshot the keys of a map it was passed.
 run_sash "$MAPKV

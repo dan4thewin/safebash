@@ -2094,7 +2094,15 @@ fn check_assign_type_match(
         return;
     }
     let ltype = env.var_type(&a.name);
-    check_type_match(ltype, &a.value, &a.name, span, env, errors);
+    if ltype == VarType::Int
+        && a.index.is_none()
+        && env.collections.contains(&a.name)
+        && matches!(a.value.kind, ExprKind::Array(_) | ExprKind::AssocArray(_))
+    {
+        check_int_collection_elements(&a.value, &a.name, span, env, errors);
+    } else {
+        check_type_match(ltype, &a.value, &a.name, span, env, errors);
+    }
 }
 
 /// The single place a scalar string↔int mismatch is diagnosed.

@@ -102,21 +102,13 @@ fn try_handle_match_into(
     let pattern = expr_to_value(&c.args[1], state);
     let destination = super::expressions::fill_target_name(&c.args[2], state);
     let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
-    // DD#63: the out-array form fills (and auto-declares) its trailing
-    // array, for singular `match` exactly as for `matchall`.
-    autodeclare_bulk_target(&array, ssa, state, block);
     ssa.block_mut(block).insts.push(SsaInst::MatchInto {
         subject,
         pattern,
         array: array.clone(),
         all: kind == BuiltinCmd::MatchAll,
     });
-    if array != destination {
-        super::statements::publish_collection(&destination, &array, ssa, state, block);
-    }
-    if state.failed_attests.contains(&destination) {
-        push_attest_retag(ssa, state, block, &destination);
-    }
+    super::statements::publish_collection(&destination, &array, ssa, state, block);
     Some(block)
 }
 
@@ -705,7 +697,7 @@ fn handle_argv(
     let Some(target) = args.last() else {
         unreachable!("SB4045 rejects a zero-argument `argv`")
     };
-    let array = super::expressions::resolve_args_name(target, state);
+    let destination = super::expressions::resolve_args_name(target, state);
     let start = match args.len() {
         1 => 0,
         2 => match args[0].parse::<i64>() {
@@ -714,10 +706,7 @@ fn handle_argv(
         },
         _ => unreachable!("SB4045 rejects `argv` with more than two arguments"),
     };
-    // Auto-declare (DG 2026-07-08): if `a` isn't already an array, create
-    // the versioned slot the same way `array a=()` does, so the fill and later
-    // len/iteration/element reads agree with no prior `array a=()`.
-    autodeclare_bulk_target(&array, ssa, state, block);
+    let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
     // Define a LATER version than the autodeclare's empty-array Assign, so the
     // SSA taint backstop resolves this array to the fill's taint, not to the
     // clean empty array the declaration produced.
@@ -725,6 +714,7 @@ fn handle_argv(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::ArgvFill { target, start });
+    super::statements::publish_collection(&destination, &array, ssa, state, block);
     block
 }
 
@@ -752,13 +742,14 @@ fn handle_keys(
         unreachable!("SB5073/SB4045 reject every `keys` statement but `keys m k`")
     };
     let source = super::expressions::resolve_args_name(literal_name_of(map), state);
-    let array = super::expressions::resolve_args_name(literal_name_of(dest), state);
-    autodeclare_bulk_target(&array, ssa, state, block);
+    let destination = super::expressions::resolve_args_name(literal_name_of(dest), state);
+    let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
     // Later uses refer to the fill, not its empty initialization.
     let target = state.define_replacement(&array);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::KeysFill { source, target });
+    super::statements::publish_collection(&destination, &array, ssa, state, block);
     block
 }
 
@@ -1463,8 +1454,7 @@ fn save_subscript_operand(
 /// SB5090 rejects every non-`( … )` value on an array, so by the time lowering
 /// runs the only collection append left is the one that works. This used to
 /// branch on `state.assoc_arrays` and emit an `ArrayAppend` carrying a whole
-/// `AssocArray`: `emit_array_append_c` appends at the integer index
-/// `sash_table_len(tbl)`, which is meaningless for a map, and the SSA taint
+/// `AssocArray`: array appends use integer keys, meaningless for a map, and the SSA taint
 /// pass classes `AssocArray` as assign-only, so the same shape also ICEd.
 fn handle_append_assign(
     a: &Assignment,
@@ -1476,6 +1466,7 @@ fn handle_append_assign(
     // Option C: `var += $(f)` on an `-> int` function is an IntFuncCall;
     // materialize it (like `$((f))`) before the append. No-op otherwise.
     let val = lift_int_func_calls(val, ssa, state, &mut block);
+    let val = super::statements::shape_collection_value(val, &a.name, state);
     match val {
         SsaValue::IndexedArray(elems) => {
             for elem in elems {
@@ -1539,6 +1530,7 @@ fn handle_plain_assign(
     }
     // DD#58 / Option C: lift IntFuncCall (from `$(f)` / `$((f))`) into a temp.
     let val = lift_int_func_calls(val, ssa, state, &mut block);
+    let val = super::statements::shape_collection_value(val, &a.name, state);
     let target = state.define_replacement(&a.name);
     ssa.block_mut(block)
         .insts

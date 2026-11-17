@@ -356,6 +356,16 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern void sash_table_clear(SashTable* table);").unwrap();
     writeln!(
         out,
+        "extern i64 sash_array_next_index(const SashTable* table);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern void sash_array_append_batch(SashTable* table, const SashTable* batch);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern void sash_table_set(SashTable* t, const char* kp, i64 kl, const char* vp, i64 vl);"
     )
     .unwrap();
@@ -604,11 +614,25 @@ fn insert_string_target_types(targets: &[VarRef], types: &mut VarTypes) {
     }
 }
 
+fn collect_publish_var_types(
+    target: &VarRef,
+    source: &VarRef,
+    append_to: Option<&VarRef>,
+    types: &mut VarTypes,
+) {
+    insert_string_target_types(&[target.clone(), source.clone()], types);
+    if let Some(previous) = append_to {
+        insert_string_target_types(std::slice::from_ref(previous), types);
+    }
+}
+
 fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
     match inst {
-        SsaInst::CollectionPublish { target, source } => {
-            insert_string_target_types(&[target.clone(), source.clone()], types);
-        }
+        SsaInst::CollectionPublish {
+            target,
+            source,
+            append_to,
+        } => collect_publish_var_types(target, source, append_to.as_ref(), types),
         SsaInst::Assign { target, value } => {
             types.insert(
                 (target.name.clone(), target.version),
@@ -872,15 +896,12 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
             key,
             ..
         } => emit_map_from_array(e, &source.name, &target.name, *mode, key, types),
-        // a+=( … ) — append at the next integer index (len). Mirrors native
-        // emit_array_append (dispatch.rs:69).
         SsaInst::ArrayAppend { array, value } => emit_array_append_c(e, array, value, types),
         _ => return false,
     }
     true
 }
 
-/// `a+=( v )` — set v at integer key `sash_table_len(a)` (the next index).
 /// DD#99 `map m = @{a:DISP}`: pairwise fill. The runtime performs the
 /// odd-count disposition, including the `:?` abort.
 fn emit_map_from_array(
@@ -927,7 +948,7 @@ fn emit_array_append_c(e: &mut Emit, array: &str, value: &SsaValue, types: &VarT
     let t = e.fresh();
     writeln!(
         e.out,
-        "    SashTable* {t}_tbl = (SashTable*){table}; i64 {t}_k = sash_table_len({t}_tbl);",
+        "    SashTable* {t}_tbl = (SashTable*){table}; i64 {t}_k = sash_array_next_index({t}_tbl);",
         t = t,
         table = table_expr
     )
@@ -1219,11 +1240,11 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         SsaInst::LifetimeStart { target, collection } => {
             emit_lifetime_start(e, target, *collection, types);
         }
-        SsaInst::CollectionPublish { target, source } => {
-            let target = c_var_name(&target.name, target.version);
-            let source = c_var_name(&source.name, source.version);
-            writeln!(e.out, "    {target}_ptr = {source}_ptr; {target}_len = 0;").unwrap();
-        }
+        SsaInst::CollectionPublish {
+            target,
+            source,
+            append_to,
+        } => emit_collection_publish(e, target, source, append_to.as_ref()),
         SsaInst::Assign { target, value } => emit_assign(e, target, value, types),
         SsaInst::Command {
             name,
@@ -1305,9 +1326,32 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
     }
 }
 
-/// `x = value;` — mirrors codegen's variable assignment.
-/// For string targets: assign both `_ptr` and `_len`.
-/// For int targets: assign the single i64.
+fn emit_collection_publish(
+    e: &mut Emit,
+    target: &VarRef,
+    source: &VarRef,
+    append_to: Option<&VarRef>,
+) {
+    let target = c_var_name(&target.name, target.version);
+    let source = c_var_name(&source.name, source.version);
+    let published = if let Some(previous) = append_to {
+        let previous = c_var_name(&previous.name, previous.version);
+        writeln!(
+            e.out,
+            "    sash_array_append_batch((SashTable*){previous}_ptr, (SashTable*){source}_ptr);"
+        )
+        .unwrap();
+        previous
+    } else {
+        source
+    };
+    writeln!(
+        e.out,
+        "    {target}_ptr = {published}_ptr; {target}_len = 0;"
+    )
+    .unwrap();
+}
+
 fn emit_lifetime_start(e: &mut Emit, target: &VarRef, collection: bool, types: &VarTypes) {
     if collection {
         let target = c_var_name(&target.name, target.version);

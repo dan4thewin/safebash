@@ -4834,7 +4834,7 @@ fn handler_requirements(body: &[Statement], cx: &SlotCx) -> HandlerRequirements 
         let mut entry = Tainted::default();
         entry.replace(name, Origins::from([TaintOrigin::Incoming]));
         let (walk, _) = walk_scope(body, "", &entry, cx);
-        let inherited = inherited_attest_requirements(&walk, name);
+        let inherited = inherited_attest_requirements(&walk, name, "handler");
         let mut required = diag_difference(walk.diags, &base.diags);
         required.extend(inherited);
         if !required.is_empty() {
@@ -4848,17 +4848,21 @@ fn handler_requirements(body: &[Statement], cx: &SlotCx) -> HandlerRequirements 
     }
 }
 
-fn inherited_attest_requirements(walk: &BodyWalk, name: &str) -> Vec<Diagnostic> {
+fn inherited_attest_requirements(walk: &BodyWalk, name: &str, body: &str) -> Vec<Diagnostic> {
     walk.ownership_reads(&TaintOrigin::Incoming)
         .into_iter()
+        .filter(|site| {
+            !walk
+                .diags
+                .iter()
+                .any(|diag| diag.code == "SB5088" && diag.line == site.line && diag.col == site.col)
+        })
         .map(|site| {
             Diagnostic::error_at(
                 site.line,
                 site.col,
                 "SB5088",
-                format!(
-                    "attest of inherited `{name}` requires a fresh acquisition in this handler"
-                ),
+                format!("attest of inherited `{name}` requires a fresh acquisition in this {body}"),
             )
         })
         .collect()
@@ -7497,10 +7501,22 @@ fn taint_command(
     // the set before its effect: `f "${g[0]}" =g` reads the `g` that held
     // before `f` fills it.
     check_command_reads(c, tainted, sx.output, diags);
-    resolve_command_replacement(c, tainted, sx);
+    if name == "unset" {
+        resolve_unset_replacement(c, tainted, sx);
+    }
     taint_call(c, name, span, tainted, sx, diags);
     if let Some(target) = tainted_read_target(c) {
-        tainted.replace(target, reader_origins(name, sx));
+        taint_reader_target(name, target, tainted, sx);
+    }
+}
+
+fn taint_reader_target(name: &str, target: &str, tainted: &mut Tainted, sx: &SlotCx) {
+    let origins = reader_origins(name, sx);
+    if name == "readline" {
+        tainted.replace(target, origins);
+    } else {
+        tainted.insert(target.to_string());
+        tainted.add_origins(target, origins);
     }
 }
 
@@ -7509,16 +7525,6 @@ fn reader_origins(name: &str, cx: &SlotCx) -> Origins {
         return Origins::new();
     }
     cx.pipe_reader.unwrap_or(cx.stdin).clone()
-}
-
-fn resolve_command_replacement(c: &Command, tainted: &mut Tainted, sx: &SlotCx) {
-    match (expr_literal_str(&c.name), c.args.as_slice()) {
-        ("read" | "keys", [_, target]) | ("match" | "matchall", [_, _, target]) => {
-            sx.resolve_replacement(expr_literal_str(target), tainted);
-        }
-        ("unset", _) => resolve_unset_replacement(c, tainted, sx),
-        _ => {}
-    }
 }
 
 fn resolve_unset_replacement(c: &Command, tainted: &mut Tainted, sx: &SlotCx) {
@@ -10391,12 +10397,12 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
         summary
             .origin_reads
             .insert(name.clone(), walk.ownership_reads(&TaintOrigin::Incoming));
+        let mut reads = inherited_attest_requirements(&walk, name, "body");
+        reads.extend(diag_difference(walk.diags, &base.diags));
+        summary.reads.insert(name.clone(), reads);
         summary
             .exit_flows
             .insert(name.clone(), walk.terminals.exits);
-        summary
-            .reads
-            .insert(name.clone(), diag_difference(walk.diags, &base.diags));
     }
     summary
 }

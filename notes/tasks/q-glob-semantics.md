@@ -61,9 +61,10 @@ choices; they do not adopt the package on main.
 The independently accepted const-validation prerequisite is implemented
 and gated on this branch (journal 644). Source-identity immutable scratch,
 fresh lifetime starts and private scratch collection publication are also
-implemented and gated (journal 645). Ordinary accumulating fillers,
-selectors, caught-scratch permissions and regex proof remain implementation
-work; this owner stays open through the integrated trial and DG's evaluation.
+implemented and gated (journal 645). Ordinary accumulating fillers and their
+atomic publication are implemented and gated too (journal 646). Selectors,
+caught-scratch permissions and regex proof remain implementation work; this
+owner stays open through the integrated trial and DG's evaluation.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record
@@ -393,6 +394,29 @@ do not establish DD132's caught-read/proof rules or complete either selector.
 No DD was revised by the scratch implementation unit, and no part of the
 trial has been adopted on main.
 
+The accumulation unit follows `67e99309674c73f687782f3dac252af3edf1e5dd`;
+[journal 646](../journal/646-atomic-accumulating-fillers.md) records 31
+dual-mode filler cases and 20 migrated contracts at fresh IDs. Ordinary
+`argv`, array `read`, `keys` and regex out-arrays stage complete batches.
+The shared runtime clones table metadata, appends privately and publishes
+into the original header, retaining alias/live-iteration identity.
+Late index overflow and late entry-growth OOM leave ERR the original
+contents. The corrected OOM control proves failure after private insertions,
+not merely during the initial clone.
+
+Thirteen independent reversion campaigns pin publication, sparse indices,
+both backends, source/SSA taint, inherited attest ownership, integer cells,
+terminal facts and the separate ERR NUL prover. The final gate has 11827
+checks, no failures or flips. Against the accepted scratch baseline,
+11725 retained statuses are unchanged, with 102 added and 40 retired
+mode IDs. No source/artifact mutation remains active.
+
+Sparse append's next-index implementation uses one past the greatest live
+nonnegative key, or zero. This is the AI's reversible trial choice to avoid
+overwriting sparse entries, not a separate DG indexing ruling. Private
+batches and cloned metadata still need repeated-use memory/time evaluation;
+no consuming-batch ABI was selected. No DD was revised by this unit.
+
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.
 Ordinary const validation, strict non-aliasing, resultless assignment,
@@ -408,7 +432,7 @@ GUIDE, status, this owner, companion tasks and journal 604 as well.
 Do not mark this task done merely because the policy was recorded or a
 prototype compiled: implementation evidence and DG's evaluation remain.
 
-## Current mechanism (source inspection, not new runtime evidence)
+## Pre-trial mechanism (historical source inspection)
 
 At `bad3ff56`, `try_array_single_glob` in
 `sash/src/transform/expressions.rs:452-467` requires exactly one lowered
@@ -426,14 +450,15 @@ returns an empty table on any failed open and breaks on both EOF and
 negative `getdents64` results. It appends matches in enumeration order.
 The shared runtime and its callers need coherent error/result handling.
 
-Existing fillers do not already implement unchanged-on-error:
-`sash_split_into_array` clears at `sash-rt/src/lib.rs:3896`; native/C
-bulk reads call `sash_read_all` before that splitter, so a real read
-error aborts before clearing an existing target. `sash_regex_match_into`
-and `sash_regex_matchall_into` instead clear at 2588/2660 before
-compilation and allocation. `sash_argv_snapshot`/`sash_keys_snapshot`
-(1099-1145) return fresh replacement tables. These inspected paths are
-not a universal guarantee about every failure and were not re-probed.
+Before the accumulation unit, fillers did not uniformly implement
+unchanged-on-error: `sash_split_into_array` cleared at
+`sash-rt/src/lib.rs:3896`; native/C bulk reads called `sash_read_all`
+before that splitter, so a real read error aborted before clearing an
+existing target. `sash_regex_match_into` and `sash_regex_matchall_into`
+instead cleared at 2588/2660 before compilation and allocation.
+`sash_argv_snapshot`/`sash_keys_snapshot` (1099-1145) returned fresh
+replacement tables. These historical inspected paths were not a universal
+failure guarantee. Journal 646 records the replacement of that model.
 
 ## Historical F13 evidence
 

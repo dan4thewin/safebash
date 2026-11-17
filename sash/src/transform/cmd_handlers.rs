@@ -44,7 +44,6 @@ fn lower_newread(
     };
     let destination = target;
     let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
-    super::stmt_handlers::autodeclare_bulk_target(&array, ssa, state, block);
     // The completed fill is a separate definition from the empty initialization.
     let target = state.define_replacement(&array);
     let fd = state.pipe_reader.unwrap_or(0);
@@ -57,9 +56,7 @@ fn lower_newread(
         },
     };
     ssa.block_mut(block).insts.push(inst);
-    if array != destination {
-        super::statements::publish_collection(&destination, &array, ssa, state, block);
-    }
+    super::statements::publish_collection(&destination, &array, ssa, state, block);
     block
 }
 
