@@ -41,7 +41,7 @@ reordered draft and accepted-policy updates are now committed on `spec-outline`.
 This is not a shipped-language reference or a completed specification.
 
 The [GitHub tour](../docs/tour/README.md) contains recorded output from all
-56 programs in the authored [presenterm tour](../docs/tour/tour.md).
+71 programs in the authored [presenterm tour](../docs/tour/tour.md).
 Run `mk -p 1 tour` to build and launch the presentation, or
 `mk -p 1 tour-doc` to regenerate the checked-in GitHub edition.
 `target/tour/check` checks the same snippets without publishing.
@@ -53,12 +53,24 @@ validation in ordinary code or a content-independent operation such as `strlen`.
 PID/status examples use named intrinsics with their punctuation aliases noted;
 familiar function positionals are paired with the canonical `args` forms.
 Attest examples lead with `p?`/`g?`, with a compound predicate for optional
-printable input. The expanded regex section teaches `match`/`sub`/`gsub`
-before their convenience spellings, with a regex attest, chained edits,
-and the distinction between literal word backslashes and necessary quoting.
+printable input. The expanded glob section demonstrates explicit selectors,
+pattern lists, dotfiles, ordering, duplicates, list sugar and failure handling.
+Accumulating fills, immutable snapshots, repeated scratch construction and
+caught-attest permissions have their own examples. Regex examples cover
+whole-subject anchors, `r?`, immutable runtime-pattern proofs, fresh captures,
+`rglob` and text-plus-Boolean results before the convenience spellings.
+The provisional branch boundary and converter-review caveat are explicit.
+[Journal 656](journal/656-tour-globs-scratch-regex.md) records the expansion.
 
 ## Just completed
 
+- **Tour expanded for the provisional package.**
+  Fifteen new programs and a fuller glob example demonstrate the recently
+  delivered features and their important contrasts. The GitHub edition is
+  regenerated from the single authored deck; the native helpers and
+  presenterm configuration are unchanged.
+  [Journal 656](journal/656-tour-globs-scratch-regex.md) records the examples
+  and verification. This does not adopt DD131/DD132 or repair the converter.
 - **Append scan/clone costs removed on the trial branch.**
   Maintained next-index metadata and whole-batch capacity reservation permit
   allocation-free publication by transferring owned keys. ERR still sees

@@ -9,6 +9,10 @@ Using this tour
 Every `sash` snippet in this tour is a complete program. The
 [GitHub edition](README.md) includes recorded output.
 
+**Trial features:** this edition includes the provisional selectors,
+immutable scratch values and validated regexes on `glob-scratch-trial`.
+They are implemented on that branch, not yet adopted on `main`.
+
 **When running under presenterm** (`mk -p 1 tour`):
 
 * `→` / `l` and `←` / `h` move between slides; `Ctrl+P` opens the slide index.
@@ -534,6 +538,84 @@ when declared `int`, integers.
 
 <!-- end_slide -->
 
+Fillers accumulate
+===
+
+```bash +exec:sash
+array words=(first)
+read $'second\x00third' words
+more=fourth
+read $more words
+echo accumulated: $(join words ", ")
+words=(replacement)
+echo assigned: $(join words ", ")
+```
+
+`read STRING ARRAY` splits a string on NUL bytes, not spaces or newlines.
+Each call appends its complete batch to an ordinary destination.
+
+The array forms of `argv`, `keys`, `match`, `matchall` and the selectors
+also accumulate. Assignment with `=` still replaces the contents.
+
+<!-- end_slide -->
+
+Immutable snapshots
+===
+
+```bash +exec:sash
+array builder=(a b)
+array _snapshot=(@builder)
+builder[0]=changed
+builder+=(c)
+echo snapshot: $(join _snapshot ", ")
+echo builder: $(join builder ", ")
+```
+
+A leading underscore requests a **scratch binding**: a fresh, immutable
+value. Its contents cannot change through another name either.
+
+The builder stays mutable; `_snapshot` keeps the values it was given.
+Bare `_` remains the unreadable discard binder.
+
+<!-- end_slide -->
+
+Fresh on every visit
+===
+
+```bash +exec:sash
+for _text in first second {
+  read $_text _words
+  echo $(join _words ", ")
+}
+```
+
+Each visit to the same scratch construction site starts a new immutable
+instance. Here both the loop variable `_text` and the array `_words` are
+fresh each time: the second result is `second`, not `first, second`.
+
+This is not reassignment or a new block scope. Skipping the construction
+does not reset it, and leaving a loop does not destroy its last value.
+
+<!-- end_slide -->
+
+Scratch does not mean mutable temporary
+===
+
+```bash +exec:sash +expect:failure
+str _name=first
+echo $_name
+_name=second # immutable scratch
+```
+
+Scratch works for scalars as well as collections, without an extra
+`const`. A later write, append, cell update or `unset` is rejected.
+An initializer cannot read its own preceding instance.
+
+Use an ordinary name for a mutable builder, then construct a scratch
+value when a fresh result is wanted.
+
+<!-- end_slide -->
+
 Splatting into commands
 ===
 
@@ -555,15 +637,83 @@ Globs
 ===
 
 ```bash +exec:sash
-touch notes.txt todo.txt
-array txt=(*.txt)
+touch todo.txt notes.txt .draft.txt
+array txt=(*.txt .*)
 for f in @txt { echo $f }
 ```
 
-Globs appear only where an array is built. Each match is an absolute path,
+Each pattern's matches are sorted bytewise, then the batches are joined in
+pattern order: `notes.txt`, `todo.txt`, then `.draft.txt`, not a global sort.
+Hidden names need an explicit leading dot; `.` and `..` are never matches.
+
+Each match is an absolute path,
 so a file named `-rf` can never be mistaken for an option.
 
-A glob supports one `*`, in the final path component.
+A pattern supports at most one `*`, in its final path component.
+Literal directory prefixes are allowed; wildcard directory traversal is not.
+
+<!-- end_slide -->
+
+Selecting into an array
+===
+
+```bash +exec:sash
+mkdir reports
+touch reports/b.log reports/a.log reports/notes.txt
+array patterns=("reports/*.log" "reports/*.txt")
+array files
+glob files @{patterns:~}
+glob files reports/*.log
+for file in @files { echo $(basename $file) }
+```
+
+`glob ARRAY PATTERN...` accepts ordinary string operands, including computed
+strings and pattern-list splats. The quoted stars above are stored as data;
+`glob` interprets those strings as patterns.
+
+The second call appends again. Pattern order and duplicate matches are
+preserved; it does not replace the first result.
+
+<!-- end_slide -->
+
+List sugar and literal stars
+===
+
+```bash +exec:sash
+touch a.txt b.txt
+array files=("*.txt")
+files+=(*.txt)
+echo literal: $files[0]
+echo appended: $(basename $files[1]), $(basename $files[2])
+for file in *.txt { echo loop: $(basename $file) }
+```
+
+Bare literal glob words expand in array initializers, appends and `for`
+lists. Quoted or computed list strings remain data, without another round
+of expansion.
+
+For a computed pattern such as `$directory/*.txt`, construct the string
+and pass it to explicit `glob`; mixed literal/computed glob sugar rejects.
+
+<!-- end_slide -->
+
+No matches are not an error
+===
+
+```bash +exec:sash
+array files=(kept)
+if glob files *.absent { echo no matches: $(len files) }
+if ! glob files missing/*.txt {
+  echo failed, still: $(join files ", ")
+}
+```
+
+Successful enumeration with no matches is success and appends nothing.
+A failed directory operation is a different result, handled here with `if`.
+
+Publication is whole-batch: an error leaves an ordinary destination
+unchanged, even if an earlier pattern found matches. An empty `:~` pattern
+list succeeds without directory work.
 
 <!-- end_slide -->
 
@@ -831,6 +981,45 @@ program itself, not a child, so variables it sets survive.
 
 <!-- end_slide -->
 
+Catching a scratch attest
+===
+
+```bash +exec:sash
+printf 'apple\nbad value\npear\n' | while readline _word {
+  if attest _word g? {
+    echo accepted: $_word
+  } else {
+    echo rejected length: $(strlen $_word:!)
+  }
+}
+```
+
+`readline _word` constructs a fresh immutable value on every attempt.
+The failed value may remain unresolved: no replacement or forced exit is
+needed. Here its trusted read only measures the length.
+
+Normal reads belong inside the attest's success arm. A failed value is
+still present, not silently cleaned or replaced.
+
+<!-- end_slide -->
+
+Success permission stays inside the arm
+===
+
+```bash +exec:sash +expect:failure
+str _word=$(arg 1 "")
+if attest _word g? { echo inside: $_word }
+echo outside: $_word # caught permission ended
+```
+
+Even an `else` arm that exits would not export caught-scratch permission.
+Outside the successful arm, only an explicit trusted **data** read is legal.
+
+Use a standalone `attest _word g?` when failure should stop the program
+and subsequent code should use the validated value.
+
+<!-- end_slide -->
+
 <!-- jump_to_middle -->
 
 Regular expressions
@@ -857,6 +1046,69 @@ arguments. Quoting does not make regex metacharacters literal.
 
 <!-- end_slide -->
 
+Anchors cover the subject
+===
+
+```bash +exec:sash
+text=$'apple\npear'
+if [[ $text =~ ^[a-z]+$ ]] {
+  echo one word
+} else {
+  echo not one word
+}
+if [[ $text =~ pear$ ]] { echo ends with pear }
+```
+
+`^` and `$` mean the beginning and end of the original regex subject,
+not the beginning and end of each line. A global search does not create
+a new beginning when it resumes later in the subject.
+
+`.` and negated character classes still exclude newline. Regex matching
+stops at the first NUL byte, so anchors are not a check for NUL-free data.
+
+<!-- end_slide -->
+
+Checking a pattern
+===
+
+```bash +exec:sash
+for _pattern in '^[a-z]+$' '[' {
+  if [[ r? $_pattern ]] {
+    if match apple $_pattern { echo matches: $_pattern }
+  } else {
+    echo invalid pattern: $_pattern
+  }
+}
+```
+
+`r?` asks whether the complete candidate is a valid regex, not whether it
+matches a subject. Invalid syntax is quiet false, even for the literal `[`;
+the message here is our own. Allocation failure is still fatal.
+
+The successful test proves this immutable `_pattern` is valid for the
+following match. An ordinary test does not clear taint.
+
+<!-- end_slide -->
+
+A runtime pattern needs a proof
+===
+
+```bash +exec:sash
+const pattern=$(arg 3 '^[a-z]+-[0-9]+$')
+attest pattern r?
+if match build-7 $pattern { echo matched a validated pattern }
+```
+
+The tour has no third argument, so this uses the default pattern.
+An attest can validate a const without changing its value.
+
+Every runtime pattern must be immutable and successfully checked before
+use. A literal pattern in the call is checked at compile time. Concatenating
+or transforming a proved pattern makes a new candidate that needs its own
+check; `:!` cannot substitute for regex validation.
+
+<!-- end_slide -->
+
 Capturing matches
 ===
 
@@ -878,6 +1130,50 @@ groups 1-9. A newly introduced array starts empty.
 
 `matchall` collects successive whole matches when the pattern has no groups,
 or just the capture groups when it does.
+
+<!-- end_slide -->
+
+Fresh captures for each attempt
+===
+
+```bash +exec:sash
+for text in build-7 invalid app-12 {
+  if match $text '^([a-z]+)-([0-9]+)$' _parts {
+    echo $_parts[1]:$_parts[2]
+  } else {
+    echo no match: $(len _parts) cells
+  }
+}
+```
+
+`_parts` is a new immutable result on every attempt. No match leaves this
+attempt empty, not the preceding groups.
+
+An ordinary output array would accumulate, so its early indices could
+still name an older match. Scratch keeps group 1 and group 2 about this
+invocation.
+
+<!-- end_slide -->
+
+Selecting filenames with regexes
+===
+
+```bash +exec:sash
+mkdir reports
+touch reports/build-7.log reports/app-12.log reports/.draft.log reports/notes.txt
+array _patterns=(^app-[0-9]+\.log$ \.log$)
+attest pattern in _patterns r?
+rglob _files reports @{_patterns:~}
+for file in @_files { echo $(basename $file) }
+```
+
+`rglob ARRAY DIRECTORY REGEX...` matches **basenames**, returning absolute
+paths. It has no glob-style hidden-file exclusion: the second pattern also
+selects `.draft.log`. Anchors are explicit, as with ordinary matching.
+
+Each pattern's results are sorted and appended in pattern order, including
+duplicates. Attest-all proves the immutable pattern list's elements.
+Zero matches still mean successful selection, not a failed regex test.
 
 <!-- end_slide -->
 
@@ -916,6 +1212,26 @@ Both produce text without changing `s`, plus a boolean saying whether a
 match occurred. An identity replacement still counts as a match; no match
 returns the original subject. Handle the boolean with a capture-condition
 or discard it with `$(- ...)`. The call form needs no slash delimiters.
+
+<!-- end_slide -->
+
+No match still returns text
+===
+
+```bash +exec:sash
+for text in apple build-7 {
+  if normalized=$(sub $text - _) {
+    echo matched: $normalized
+  } else {
+    echo no match: $normalized
+  }
+}
+if same=$(sub apple p p) { echo matched, unchanged: $same }
+```
+
+The boolean answers **did the pattern match?**, not **did the bytes change?**
+The no-match arm receives the original `apple`; the identity replacement
+also returns `apple`, but its boolean is true.
 
 <!-- end_slide -->
 
@@ -1087,3 +1403,7 @@ sash-convert old.sh
 
 This safebash snippet creates a two-line Bash script and runs `sash-convert`
 on it.
+
+For this trial, converter output still needs review for accumulating fills,
+mutable underscore names and runtime regexes. The converter has not yet been
+adapted to these provisional rules.
