@@ -1915,7 +1915,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     check_signal(name, c, span, diags);
     check_test_constructs(name, c, span, diags);
     check_attest_convert_names(name, c, span, diags);
-    check_static_regex_operand(name, c, diags);
+    check_regex_operand(name, c, diags);
     check_inline_glob(c, diags);
     check_glob_command(name, c, span, diags);
 }
@@ -2207,11 +2207,12 @@ fn check_test_constructs(name: &str, c: &Command, span: Span, diags: &mut Vec<Di
         return;
     }
     for arg in &c.args {
-        if let ExprKind::Test(ref test) = arg.kind {
-            check_unsupported_test_ops(test, diags);
-            check_vacuous_test(test, diags);
-            check_regex_literal(test, span, diags);
-        }
+        let ExprKind::Test(test) = &arg.kind else {
+            continue;
+        };
+        check_unsupported_test_ops(test, diags);
+        check_vacuous_test(test, diags);
+        check_test_regex_patterns(test, span, diags);
     }
 }
 
@@ -2811,61 +2812,66 @@ fn test_references_var(test: &TestExpr, var: &str) -> bool {
     }
 }
 
-/// SB5023: validate a *static* regex pattern at compile time. The operand
-/// word may be a `Literal`, a quoted string, or a `Concat` of static parts
-/// (bare `(?=h)ello`); any interpolation makes it dynamic → validated at
-/// runtime instead (DD#71).
+/// Check every test's regex-pattern operand, including DD132's trust
+/// prohibition and SB5023's static syntax validation.
 ///
 /// Every `=~` in the test is checked, not just a lone top-level one: under
 /// `&&`, `||` or `!` the check used to be skipped, so `[[ $x =~ a && $x =~ ( ]]`
 /// compiled and died at runtime with `regexp error`.
-fn check_regex_literal(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+fn check_test_regex_patterns(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>) {
     match test {
         TestExpr::Binary { op, right, .. } => {
             if op == "=~" {
-                check_static_regex(right, "invalid regex pattern", span, diags);
+                check_regex_pattern(right, "invalid regex pattern", span, diags);
             }
         }
         TestExpr::Unary { .. } => {}
-        TestExpr::Not(inner) => check_regex_literal(inner, span, diags),
+        TestExpr::Not(inner) => check_test_regex_patterns(inner, span, diags),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
-            check_regex_literal(l, span, diags);
-            check_regex_literal(r, span, diags);
+            check_test_regex_patterns(l, span, diags);
+            check_test_regex_patterns(r, span, diags);
         }
     }
 }
 
-/// SB5023 for the regex operand of `sub`/`gsub`/`match`/`matchall` (DD#39).
+/// Check the regex operand of `sub`/`gsub`/`match`/`matchall` (DD#39/DD132).
 /// The runtime compiles all of them with the same engine as `=~`, so a static
 /// pattern that cannot compile is a compile error here too — it used to
 /// compile and die at runtime with `regexp error`. The `${x:s/…}` sugar, every
 /// edit of a `,` chain, and the `x =~ s/…` statement all desugar to `sub`/
 /// `gsub` and reach this through their capture bodies.
-fn check_static_regex_operand(name: &str, c: &Command, diags: &mut Vec<Diagnostic>) {
+fn check_regex_operand(name: &str, c: &Command, diags: &mut Vec<Diagnostic>) {
     let what = match name {
         "sub" | "gsub" => "invalid regex in substitution",
         "match" | "matchall" => "invalid regex pattern",
         _ => return,
     };
     if let Some(re) = c.args.get(1) {
-        check_static_regex(re, what, re.span, diags);
+        check_regex_pattern(re, what, re.span, diags);
     }
 }
 
-/// SB5023 for a regex dispatch's patterns (`[[ $x =~ p { … } ]]`, DD#66): each
-/// static pattern is compiled now, exactly as a `[[ =~ ]]` operand is.
+/// A regex dispatch's patterns obey the same rules as `[[ =~ ]]` operands.
 fn check_dispatch_regex_patterns(c: &Case, diags: &mut Vec<Diagnostic>) {
     if c.op != "=~" {
         return;
     }
     for p in c.items.iter().flat_map(|it| &it.patterns) {
-        check_static_regex(p, "invalid regex pattern", p.span, diags);
+        check_regex_pattern(p, "invalid regex pattern", p.span, diags);
     }
 }
 
-/// SB5023 if `expr` is a static regex that the engine rejects. A dynamic
-/// pattern is left to the runtime regcomp (DD#71).
-fn check_static_regex(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+fn check_regex_pattern(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if let Some(at) = trusted_pattern_read(expr) {
+        diags.push(Diagnostic::error_span(
+            at,
+            "SB5105",
+            "a regex-pattern operand cannot contain a trusted (`:!`) read; \
+             validate an immutable candidate with `r?` and use it without `:!`"
+                .to_string(),
+        ));
+        return;
+    }
     let Some(pattern) = static_word_text(expr) else {
         return;
     };
@@ -2876,6 +2882,28 @@ fn check_static_regex(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diagn
             format!("{what}: {msg}"),
         ));
     }
+}
+
+fn trusted_pattern_read(expr: &Expr) -> Option<Span> {
+    let mut found = None;
+    crate::ir::walk_expr_tree(expr, &mut |part| {
+        found = found.or(expansion_is_trusted(part).then_some(part.span));
+        if let ExprKind::CommandSubstitution(body) = &part.kind {
+            found = found.or_else(|| trusted_pattern_body_read(body));
+        }
+    });
+    found
+}
+
+// walk_expr_tree stops at captures; walk_all_exprs owns their nested bodies.
+fn trusted_pattern_body_read(body: &[Statement]) -> Option<Span> {
+    let mut found = None;
+    for stmt in body {
+        crate::ir::walk_all_exprs(stmt, &mut |part| {
+            found = found.or(expansion_is_trusted(part).then_some(part.span));
+        });
+    }
+    found
 }
 
 /// The decoded constant string, or `None` if any part is a runtime expansion.
@@ -7089,7 +7117,7 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
     let Some(arr) = splat_array_name(w) else {
         return;
     };
-    if splat_vouched(w) {
+    if expansion_is_trusted(w) {
         return;
     }
     if tainted.contains(arr) {
@@ -7104,8 +7132,7 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
     }
 }
 
-/// DD#91 (2026-09-09 addendum): does this splat carry the `!` taint-off
-/// MODIFIER (`@{a:!}`)?
+/// DD#91: the independent `!` trust modifier on a scalar, cell or splat.
 ///
 /// Deliberately separate from `splat_array_name`, which answers a purely
 /// structural question ("is this word a value splat, and of what?"). Folding
@@ -7115,7 +7142,7 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
 /// which forced the trust to inherit the elide's position restriction. `!` is
 /// a modifier, so a vouched splat is legal wherever a bare one is — including
 /// here, as a `for`-in source.
-fn splat_vouched(w: &Expr) -> bool {
+fn expansion_is_trusted(w: &Expr) -> bool {
     matches!(&w.kind, ExprKind::ParameterExpansion(pe) if pe.taint_off)
 }
 

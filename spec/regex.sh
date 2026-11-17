@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=158
+plan=179
 echo "1..$plan" >&3
 
 set +e
@@ -1032,6 +1032,93 @@ run_sash 'str s=a; if [[ $s =~ "^a{4294967297}$" ]] { echo wrong }'
 
 run_sash 'str s=a; if [[ $s =~ "^a{1,4294967297}$" ]] { echo wrong }'
 [[ $rc != 0 && $err == *SB5023* && $err == *'invalid repetition range'* ]]; chk regexvalid.23
+
+# DD132 trial: trust is not a pattern proof, in any consumer or operand depth.
+run_sash 'const p=a; if match a ${p:!} { echo matched }'
+[[ $rc != 0 && $err == *SB5105* && $err == *'regex-pattern operand'* ]]; chk regextrust.1
+
+run_sash 'const p=a
+if match a ${p:!} hits { echo "$(len hits)" } else { echo no }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.2
+
+run_sash 'const p=a
+if matchall aa ${p:!} hits { echo "$(len hits)" } else { echo no }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.3
+
+run_sash 'const p=a; echo $(sub aba ${p:!} X)'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.4
+
+run_sash 'const p=a; echo $(gsub aba ${p:!} X)'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.5
+
+run_sash 'const p=a; str s=a
+if [[ $s == a || $s =~ ${p:!} ]] { echo matched }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.6
+
+run_sash 'const p=a
+[[ a =~ a { echo first } ${p:!} { echo second } || { echo no } ]]'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.7
+
+run_sash 'str s=aba; const p=a; echo "${s:s/${p:!}/X/}"'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.8
+
+run_sash 'str s=aba; const p=b
+s =~ s/a/X/,s/${p:!}/Y/
+echo $s'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.9
+
+run_sash 'array s=(aba); const p=a; echo "${s[0]:s/${p:!}/X/}"'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.10
+
+run_sash 'const p=a
+if match aa "${p:!-x}${p:!?missing}" { echo matched }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.11
+
+run_sash 'map patterns=([key]=a); str key=key
+if match a "${patterns[${key:!}]}" { echo matched }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.12
+
+run_sash 'str n=1
+if match 1 "^$(( ${n:!-0} ))$" { echo matched }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.13
+
+run_sash 'const p=a
+if match a "$(echo "$(echo ${p:!})")" { echo matched }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.14
+
+SASH_CFLAGS=--no-taint run_sash '_p=$(arg 1)
+if attest _p r? { if match a ${_p:!} { echo matched } } else { exit 1 }' a
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.15
+
+SASH_CFLAGS=--no-taint-cst run_sash 'const p=a; if match a ${p:!} { echo matched }'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.16
+
+run_sash '_p=$(arg 1)
+if attest _p r? { if match a ${_p:!} { echo matched } } else { exit 1 }' a
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.17
+
+run_sash 'fn select { if match a ${args[0]:!} { echo matched } }; select a'
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.18
+
+run_sash 'str s=$(arg 1); str replacement=$(arg 2)
+if match ${s:!} a { echo match }
+if [[ ${s:!} =~ a ]] { echo test }
+[[ ${s:!} =~ a { echo dispatch } || { echo wrong } ]]
+echo $(sub ${s:!} a ${replacement:!})
+echo $(gsub ${s:!} a ${replacement:!})' aba X
+[[ $rc = 0 && $out = $'match\ntest\ndispatch\nXba\nXbX' \
+   && -z $err && -z $rerr ]]; chk regextrust.19
+
+run_sash 'str s=":!"
+if match "$s" ":!" { echo literal }
+if [[ "$s" =~ ":!" ]] { echo test }
+echo $(sub ":!" ":!" yes)'
+[[ $rc = 0 && $out = $'literal\ntest\nyes' && -z $err && -z $rerr ]]; chk regextrust.20
+
+run_sash 'str p=$(arg 1)
+if [[ r? ${p:!} ]] { echo candidate } else { echo invalid }
+echo ${p:!}' a
+[[ $rc = 0 && $out = $'candidate\na' && -z $err && -z $rerr ]]; chk regextrust.21
 
 set -e
 tally

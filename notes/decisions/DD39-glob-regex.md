@@ -97,8 +97,9 @@ runtime regex operands must be immutable and successfully checked with
 `r?` before use. Invalid candidates give quiet false at the predicate;
 actual literal regex use retains static validation, and allocation
 faults remain fatal. The predicate is implemented on `glob-scratch-trial`
-(journal 648); mandatory consumer proofs and the remaining integrated
-trial are not complete.
+(journal 648), as is the unconditional SB5105 refusal of trusted reads
+within pattern operands (journal 649). Mandatory consumer proofs and the
+remaining integrated trial are not complete.
 
 ## Whole-subject anchors (DG, 2026-11-16)
 
@@ -298,7 +299,7 @@ better diagnostics do not make those candidates static-regex errors or
 select runtime caching.
 
 **Current implementation baseline, not the new diagnostic design:**
-one constructor, `validate.rs::check_static_regex`, raises it for all three
+one constructor, `validate.rs::check_regex_pattern`, raises it for all three
 callers (the `[[ ]]` walk, the builtin operand, the dispatch arm). The message
 is `invalid regex in substitution: …` for `sub`/`gsub` and
 `invalid regex pattern: …` otherwise. An operand or a dispatch arm reports its

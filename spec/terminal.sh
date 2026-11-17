@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#128 — checked EXIT and explicitly handled ERR.
 . common.sh
-plan=78
+plan=79
 setup terminal
 
 set +e
@@ -608,7 +608,12 @@ ERR { str report=$(- echo cleanup; :); - echo "${pending:!}:$report" }
 run_sash 'pattern=$(getenv DD128_PATTERN)
 fail 1
 ERR { - match x "${pattern:!}" }'
-[[ $err == *SB5101* && $err == *"dynamic-regex"* ]]; chk migratea.48
+[[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.22
+
+run_sash 'pattern=$(getenv DD128_PATTERN)
+fail 1
+ERR { str candidate=${pattern:!}; - match x "$candidate" }'
+[[ $err == *SB5101* && $err == *"dynamic-regex"* ]]; chk regextrust.23
 
 run_sash 'fail 1; ERR {
     v=$(arg 999)

@@ -67,6 +67,8 @@ coarse `glob` and source-provenance-aware list sugar are now implemented and
 gated (journal 647), including the coupled private-batch allocation repair.
 The quiet actual-engine `r?` predicate is implemented and gated
 (journal 648), with trailing-escape and repetition-count overflow repairs.
+The independent structural refusal of trusted pattern reads is implemented
+and gated with SB5105 (journal 649), including with taint checking disabled.
 `rglob`, caught-scratch permissions and regex proof/result handling remain
 implementation work; this owner stays open through the integrated trial
 and DG's evaluation.
@@ -377,6 +379,11 @@ The predicate unit updates delivery notices, not policy, from baseline
 DD93's provisional `r?` section and DD132's implementation boundary.
 No new DD or additional language contract is introduced.
 
+The pattern-trust unit updates DD39's delivery/validator-name references and
+DD132's implementation boundary from
+`516944b539bcf9cf5a2d4c06a23fa43517f30679`. It enforces the existing
+provisional trust prohibition, without selecting a proof representation.
+
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
@@ -467,6 +474,24 @@ controls are not the integrated allocation/time evaluation. Consumer
 proofs, caught permissions, result channels and `rglob` remain pending.
 The independent pre-existing map-literal element-loss defect discovered
 while correcting a fixture has its own backlog owner.
+
+The pattern-trust unit follows `516944b539bcf9cf5a2d4c06a23fa43517f30679`;
+[journal 649](../journal/649-regex-pattern-trust-guard.md) records SB5105
+across every existing regex consumer and substitution spelling, including
+nested capture/arithmetic/index reads. Subjects, replacements, literal
+modifier-like text and `r?` candidates retain their existing behavior.
+Eighteen regex refusals fail on the frozen compiler in each mode; a separate
+ERR migration fails because it formerly received SB5101. A trusted ordinary
+data copy retains coverage of that independent ERR dynamic-regex rule.
+
+Two independent reversions pin the common guard and nested capture walk.
+All mutations are restored, with source/compiler/runtime/lock identities
+matching the positive snapshot. The gate has 12043 checks: 12030 passing
+and 13 existing skips, 46 first-ever mode IDs, two expected retirements and
+no flips. All 11997 retained predicate-baseline statuses are unchanged.
+No runtime, ABI or retained allocation was added. Exact immutable-value
+proofs, lexical caught permissions, result channels, `rglob` and integrated
+evaluation remain open.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

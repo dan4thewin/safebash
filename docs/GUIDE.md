@@ -340,8 +340,12 @@ compilation entry. The runtime rejects counted interior NUL, copies
 exactly the candidate's bytes into a terminated buffer, and releases both
 that copy and the compiled program. Invalid syntax is false; allocation
 failure follows fatal ERR routing. No compiled handle or cache persists.
-This predicate does not yet enforce DD132's immutable-pattern proofs or
-caught-scratch permissions, and it does not change consumer result kinds.
+The shared structural pattern check rejects trusted (`:!`) reads with SB5105
+before its dynamic-pattern early return. It composes the canonical expression
+and statement walkers to cover indices, arithmetic and nested captures;
+trusted subjects, replacements and predicate candidates remain legal.
+Immutable-pattern proofs, caught-scratch permissions and consumer result-kind
+changes are still pending.
 
 EXIT and ERR are private generated callbacks over real global storage,
 with their own locals and entry status. Selection is by cause:

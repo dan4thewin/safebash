@@ -276,6 +276,12 @@ quiet actual-engine `r?` predicate is implemented (journal 648).
 Invalid candidates return false; candidate-copy and engine allocation
 failures remain fatal. These are trial deliveries, not adoption on main.
 
+The shared consumer-pattern validator now rejects actual `:!`-bearing reads
+with SB5105, including nested indices, arithmetic and capture bodies, even
+with taint checking disabled (journal 649). Trusted subjects, replacements
+and `r?` candidates remain ordinary data uses; literal `:!` text is not a
+trust modifier. This structural guard does not establish pattern validity.
+
 Mandatory regex proofs, caught-scratch permissions, substitution booleans
 and `rglob` remain implementation work. The predicate retains no compiled
 program; it does not select a cache, proof-pass architecture or later
