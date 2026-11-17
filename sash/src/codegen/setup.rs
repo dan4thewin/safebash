@@ -438,6 +438,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let has_nul_func = module
         .declare_function("sash_has_nul", Linkage::Import, &is_int_sig)
         .expect("declare sash_has_nul");
+    let is_regex_func = module
+        .declare_function("sash_is_regex", Linkage::Import, &is_int_sig)
+        .expect("declare sash_is_regex");
 
     // sash_atoi_or(s_ptr, s_len, default) -> i64 — DD#77 arith `${s:-N}`
     let mut atoi_or_sig = Signature::new(CallConv::SystemV);
@@ -921,6 +924,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         is_print: is_print_func,
         is_graph: is_graph_func,
         has_nul: has_nul_func,
+        is_regex: is_regex_func,
         atoi_or: atoi_or_func,
         atoi_or_abort: atoi_or_abort_func,
         itoa: itoa_func,

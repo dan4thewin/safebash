@@ -167,8 +167,12 @@ DD131's immutable scratch may be attested without a write. In caught
 forms its normal reads and `r?` proof are confined to the success arm;
 failure/post-merge reads require explicit trust as data, and pattern
 operands forbid `:!` altogether. Ordinary consts retain their separate
-caught-resolution rules. This is provisional, unimplemented work in
+caught-resolution rules. This remains provisional work in
 `q-glob-semantics`, not a relaxation of predicate shape or locality.
+
+The predicate itself is implemented on `glob-scratch-trial`, including
+full/shorthand and collection attests (journal 648). Mandatory consumer
+proofs and caught-scratch permissions are not implemented by that unit.
 
 ### Part D — arith-assign attest: `attest numstr (( myint = numstr ))`
 

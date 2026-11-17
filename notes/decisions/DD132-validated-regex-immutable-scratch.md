@@ -270,7 +270,13 @@ gate predictions. Pattern validation must agree with actual consumers;
 syntax validity alone does not repair the separately owned regex-anchor
 bug. Ordinary const validation remains its existing prerequisite.
 
-This is policy/backlog recording only. The compiler does not yet implement
-`r?`, mandatory regex proofs, immutable scratch or substitution booleans.
-No diagnostic number, lowering/proof-pass architecture, compiled-program
-retention scheme or final scratch declaration grammar is selected.
+DG authorized implementation on 2026-11-17. On `glob-scratch-trial`,
+immutable scratch construction is implemented (journal 645), and the
+quiet actual-engine `r?` predicate is implemented (journal 648).
+Invalid candidates return false; candidate-copy and engine allocation
+failures remain fatal. These are trial deliveries, not adoption on main.
+
+Mandatory regex proofs, caught-scratch permissions, substitution booleans
+and `rglob` remain implementation work. The predicate retains no compiled
+program; it does not select a cache, proof-pass architecture or later
+consumer representation. The construction spelling is settled in DD131.

@@ -2633,7 +2633,32 @@ pub unsafe extern "C" fn regerror9(s: *const u8) {
 
 extern "C" {
     fn regcomp9(pattern: *const u8) -> *mut u8;
+    fn regcompcheck9(pattern: *const u8, failed_alloc: *mut usize) -> *mut u8;
     fn regexec9(prog: *mut u8, str: *const u8, match_: *mut u8, ms: i32) -> i32;
+}
+
+/// DD132: quiet actual-engine validation of the complete counted candidate.
+#[no_mangle]
+pub unsafe extern "C" fn sash_is_regex(s_ptr: *const u8, s_len: i64) -> i64 {
+    if sash_has_nul(s_ptr, s_len) != 0 {
+        return 0;
+    }
+    let len = s_len as usize;
+    let pattern = alloc_cstr(len);
+    if len != 0 {
+        core::ptr::copy_nonoverlapping(s_ptr, pattern, len);
+    }
+    let mut failed_alloc = 0;
+    let program = regcompcheck9(pattern, &mut failed_alloc);
+    sash_free_ptr(pattern);
+    if failed_alloc != 0 {
+        sash_panic_oom(failed_alloc);
+    }
+    if program.is_null() {
+        return 0;
+    }
+    sash_free_ptr(program);
+    1
 }
 
 /// Match a string against a regex pattern.

@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=135
+plan=158
 echo "1..$plan" >&3
 
 set +e
@@ -927,6 +927,111 @@ sash-regex gsub a 'a|$' X
 echo ."
 [[ $rc = 0 && $out = $'X.\nY.\n.a.b./\nXX.' \
    && -z $err && -z $rerr ]]; chk 39.77
+
+# DD132 trial: validity is a quiet, counted, actual-engine predicate.
+run_sash 'if [[ r? "" && r? "a{32}" && r? "\x00" && r? "\\" && r? "\q" ]] { echo valid }'
+[[ $rc = 0 && $out = valid && -z $err && -z $rerr ]]; chk regexvalid.1
+
+run_sash 'if [[ r? "(" ]] { echo wrong } else { echo invalid }'
+[[ $rc = 0 && $out = invalid && -z $err && -z $rerr ]]; chk regexvalid.2
+
+run_sash 'int accepted=0; int rejected=0
+for p in "" "a{1,32}" "\d+" "(" "[" "\" "\x" "a{33}" "(ab){2}" "[\D]" "a{5,3}" "a{4294967297}" "a{1,4294967297}" {
+    if [[ r? $p ]] { (( accepted += 1 )) } else { (( rejected += 1 )) }
+}
+echo "$accepted:$rejected"'
+[[ $rc = 0 && $out = 3:10 && -z $err && -z $rerr ]]; chk regexvalid.3
+
+run_sash "int rejected=0
+for p in \$'\\x00a' \$'a\\x00b' \$'a\\x00' {
+    if [[ r? \$p ]] { echo wrong } else { (( rejected += 1 )) }
+}
+echo \$rejected"
+[[ $rc = 0 && $out = 3 && -z $err && -z $rerr ]]; chk regexvalid.4
+
+run_sash 'str text="a("; str prefix=$(match "$text" a)
+if [[ r? $prefix ]] { echo prefix } else { echo wrong }
+if [[ r? $text ]] { echo wrong } else { echo whole }'
+[[ $rc = 0 && $out = $'prefix\nwhole' && -z $err && -z $rerr ]]; chk regexvalid.5
+
+run_sash 'const p=$(arg 1); attest p r?; echo $p' '[a-z]+'
+[[ $rc = 0 && $out = '[a-z]+' && -z $err && -z $rerr ]]; chk regexvalid.6
+
+run_sash '_p=$(arg 1); attest _p [[ r? $_p ]]; echo $_p' '^x$'
+[[ $rc = 0 && $out = '^x$' && -z $err && -z $rerr ]]; chk regexvalid.7
+
+run_sash '_p=$(arg 1); attest _p r?; echo after' '('
+[[ $rc = 1 && -z $out && -z $err && $rerr == *"attest: _p = '(' failed the gate"* \
+   && $rerr != *'regexp error'* ]]; chk regexvalid.8
+
+run_sash 'p=$(arg 1)
+if attest p r? { echo $p } else { p=fallback; echo $p }' '('
+[[ $rc = 0 && $out = fallback && -z $err && -z $rerr ]]; chk regexvalid.9
+
+run_sash 'argv 1 _patterns; attest p in _patterns r?; echo "$(join _patterns ,)"' '[a-z]+' '^x$'
+[[ $rc = 0 && $out = '[a-z]+,^x$' && -z $err && -z $rerr ]]; chk regexvalid.10
+
+run_sash 'map _patterns=([a]=b [+]=good)
+if attest k v in _patterns r? { echo wrong } else { echo invalid }'
+[[ $rc = 0 && $out = invalid && -z $err && -z $rerr ]]; chk regexvalid.11
+
+run_sash 'argv 1 _patterns; attest p in _patterns r?; echo after' a '(' b
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'failed the gate'* \
+   && $rerr != *'regexp error'* ]]; chk regexvalid.12
+
+run_sash 'p=$(arg 1); if [[ r? ${p:!} ]] { echo $p }' a
+[[ $rc != 0 && $err == *SB5020* ]]; chk regexvalid.13
+
+run_sash 'int n=1; if [[ r? $n ]] { echo wrong }'
+[[ $rc != 0 && $err == *SB4030* ]]; chk regexvalid.14
+
+SASH_CFLAGS=--heap-size=16K run_sash 'str choice=yes
+if [[ $choice == no && r? a ]] { echo wrong } else { echo and }
+if [[ $choice == yes || r? a ]] { echo or }'
+[[ $rc = 0 && $out = $'and\nor' && -z $err && -z $rerr ]]; chk regexvalid.15
+
+SASH_CFLAGS=--heap-size=64K run_sash 'int i=0
+while (( i < 500 )) {
+    if [[ r? "[a-z]{1,3}" && ! r? "(" && r? "" ]] { (( i += 1 )) } else { fail 7 }
+}
+echo $i'
+[[ $rc = 0 && $out = 500 && -z $err && -z $rerr ]]; chk regexvalid.16
+
+SASH_CFLAGS=--heap-size=16K run_sash 'ERR { - echo fatal }
+if [[ r? a ]] { echo valid } else { echo invalid }
+echo after'
+[[ $rc = 1 && $out = fatal && -z $err && $rerr == *'out of memory'* \
+   && $rerr != *'regexp error'* ]]; chk regexvalid.17
+
+SASH_CFLAGS=--heap-size=16K run_sash 'ERR { - echo fatal }
+if ! [[ r? a ]] { echo invalid } else { echo valid }
+echo after'
+[[ $rc = 1 && $out = fatal && -z $err && $rerr == *'out of memory'* \
+   && $rerr != *'regexp error'* ]]; chk regexvalid.18
+
+SASH_CFLAGS=--heap-size=16K run_sash 'ERR { - echo fatal }
+fn candidate -> int { echo entered >&2; return 1 }
+- [[ r? "$(candidate)" ]]
+echo after'
+[[ $rc = 1 && $out = fatal && -z $err && $rerr == *entered* \
+   && $rerr == *'out of memory'* && $rerr != *'regexp error'* ]]; chk regexvalid.19
+
+printf -v _regex_long '%20000s' ''
+_regex_long=${_regex_long// /a}
+SASH_CFLAGS=--heap-size=16K run_sash "ERR { - echo fatal }
+if [[ r? \"$_regex_long\" ]] { echo valid } else { echo invalid }"
+[[ $rc = 1 && $out = fatal && -z $err \
+   && $rerr == *'out of memory (requested 20001 bytes)'* ]]; chk regexvalid.20
+
+# These were accepted by both static validation and runtime compilation.
+run_sash 'str s=abc; if [[ $s =~ "\" ]] { echo wrong }'
+[[ $rc != 0 && $err == *SB5023* && $err == *'trailing backslash in regex'* ]]; chk regexvalid.21
+
+run_sash 'str s=a; if [[ $s =~ "^a{4294967297}$" ]] { echo wrong }'
+[[ $rc != 0 && $err == *SB5023* && $err == *'repetition count too large'* ]]; chk regexvalid.22
+
+run_sash 'str s=a; if [[ $s =~ "^a{1,4294967297}$" ]] { echo wrong }'
+[[ $rc != 0 && $err == *SB5023* && $err == *'invalid repetition range'* ]]; chk regexvalid.23
 
 set -e
 tally

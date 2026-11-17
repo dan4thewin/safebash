@@ -65,6 +65,8 @@ implemented and gated (journal 645). Ordinary accumulating fillers and their
 atomic publication are implemented and gated too (journal 646). Explicit
 coarse `glob` and source-provenance-aware list sugar are now implemented and
 gated (journal 647), including the coupled private-batch allocation repair.
+The quiet actual-engine `r?` predicate is implemented and gated
+(journal 648), with trailing-escape and repetition-count overflow repairs.
 `rglob`, caught-scratch permissions and regex proof/result handling remain
 implementation work; this owner stays open through the integrated trial
 and DG's evaluation.
@@ -370,6 +372,11 @@ DD24, DD35, DD86 and DD93. Those implement the independently accepted
 2026-11-09 rule, not a provisional contract to withdraw with this trial.
 Keep that distinction when reconciling individual sections.
 
+The predicate unit updates delivery notices, not policy, from baseline
+`3ddaab5536b17f0091e790d1974844892ea653e8`: DD39's engine/vendor sections,
+DD93's provisional `r?` section and DD132's implementation boundary.
+No new DD or additional language contract is introduced.
+
 Before the implementation branch changes more DDs, add each file and its
 pre-change commit/section here. For each contract evaluated, record the
 trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
@@ -442,6 +449,24 @@ accumulation baseline, all 11821 retained statuses are unchanged, with
 132 added and six retired IDs. The independent directory-prefix and
 multi-star owners record this verified trial implementation but remain
 open pending adoption. No DD was revised by this unit.
+
+The predicate unit follows `3ddaab5536b17f0091e790d1974844892ea653e8`;
+[journal 648](../journal/648-quiet-regex-validity.md) records 23 new
+dual-mode assertions, all red on the matched frozen compiler/runtime and
+green after implementation. Nine independent reversions pin quiet syntax
+failure, counted NUL and slice boundaries, both temporary allocations,
+fatal engine OOM, trailing escapes and both repetition-count bounds.
+Every reversion is restored. The ordinary gate has 11999 checks,
+11986 passing and 13 existing skips, with 46 first-ever mode IDs and no
+flips or retirements. All 11953 selector-baseline statuses are unchanged.
+
+The predicate compiles and frees each candidate; it retains no handle or
+cache. A short engine program still requests roughly 34 KB, while 500
+valid/invalid/empty cycles fit a 64K heap with reclamation. These bounded
+controls are not the integrated allocation/time evaluation. Consumer
+proofs, caught permissions, result channels and `rglob` remain pending.
+The independent pre-existing map-literal element-loss defect discovered
+while correcting a fixture has its own backlog owner.
 
 Reconcile affected text **in place**. Do not blindly restore whole files
 over independent later changes, or leave contradictory amendments.

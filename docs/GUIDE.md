@@ -335,6 +335,14 @@ The Plan 9 regex engine is built into the compiler for literal-pattern
 validation and into the runtime for matching and substitution; both build
 scripts must track its shared C sources and headers.
 
+On `glob-scratch-trial`, `r?` uses that same engine through a quiet
+compilation entry. The runtime rejects counted interior NUL, copies
+exactly the candidate's bytes into a terminated buffer, and releases both
+that copy and the compiled program. Invalid syntax is false; allocation
+failure follows fatal ERR routing. No compiled handle or cache persists.
+This predicate does not yet enforce DD132's immutable-pattern proofs or
+caught-scratch permissions, and it does not change consumer result kinds.
+
 EXIT and ERR are private generated callbacks over real global storage,
 with their own locals and entry status. Selection is by cause:
 fall-through, explicit `exit` (including nonzero) and configured EXIT

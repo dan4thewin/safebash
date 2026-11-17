@@ -1,5 +1,6 @@
 #ifndef _REGEXP9_H_
 #define _REGEXP9_H_ 1
+#include <stddef.h>
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -67,6 +68,8 @@ struct Reprog{
 };
 
 extern Reprog	*regcomp9(char*);
+/* Quiet syntax rejection; allocation failure reports its requested size. */
+extern Reprog	*regcompcheck9(char*, size_t*);
 extern Reprog	*regcomplit9(char*);
 extern Reprog	*regcompnl9(char*);
 extern void	regerror9(char*);

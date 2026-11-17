@@ -35,6 +35,7 @@ static	Reclass*classp;
 static	Reinst*	freep;
 static	Reinst*	freeend;	/* one past the last usable slot */
 static	int	errors;
+static	int	quiet;
 static	Rune	yyrune;		/* last lex'd rune */
 static	Reclass*yyclassp;	/* last lex'd class */
 
@@ -66,11 +67,10 @@ parsecounted(void)
 	p++;
 	if(*p >= '0' && *p <= '9'){
 		have_n = 1;
-		while(*p >= '0' && *p <= '9')
+		while(*p >= '0' && *p <= '9'){
 			n = n*10 + (*p++ - '0');
-		if(n > 32){
-			rcerror("repetition count too large");
-			return 0;
+			if(n > 32)
+				rcerror("repetition count too large");
 		}
 	}
 	if(*p == '}' && have_n){
@@ -91,11 +91,14 @@ parsecounted(void)
 	}
 	if(!(*p >= '0' && *p <= '9'))
 		return 0;
-	while(*p >= '0' && *p <= '9')
+	while(*p >= '0' && *p <= '9'){
 		m = m*10 + (*p++ - '0');
+		if(m > 32)
+			rcerror("invalid repetition range");
+	}
 	if(*p != '}')
 		return 0;
-	if(m > 32 || m < n){
+	if(m < n){
 		rcerror("invalid repetition range");
 		return 0;
 	}
@@ -111,7 +114,8 @@ static	void
 rcerror(char *s)
 {
 	errors++;
-	regerror(s);
+	if(!quiet)
+		regerror(s);
 	longjmp(regkaboom, 1);
 }
 
@@ -420,6 +424,8 @@ nextc(Rune *rp)
 	}
 	exprp += chartorune(rp, exprp);
 	if(*rp == '\\'){
+		if(*exprp == 0)
+			rcerror("trailing backslash in regex");
 		exprp += chartorune(rp, exprp);
 		if(*rp == 'x'){
 			/* \xNN — exactly two hex digits become one byte.
@@ -651,12 +657,13 @@ bldcclass(void)
 }
 
 static	Reprog*
-regcomp1(char *s, int literal, int dot_type)
+regcomp1(char *s, int literal, int dot_type, size_t *failed_alloc)
 {
 	int token;
-	size_t nslots;
+	size_t nslots, bytes;
 	Reprog *volatile pp;
 
+	quiet = failed_alloc != 0;
 	/* get memory for the program.
 	 *
 	 * Six instructions per pattern character is Pike's original budget,
@@ -680,9 +687,13 @@ regcomp1(char *s, int literal, int dot_type)
 			if(*q == '{')
 				nslots += 128;
 	}
-	pp = malloc(sizeof(Reprog) + nslots*sizeof(Reinst));
+	bytes = sizeof(Reprog) + nslots*sizeof(Reinst);
+	pp = malloc(bytes);
 	if(pp == 0){
-		regerror("out of memory");
+		if(failed_alloc)
+			*failed_alloc = bytes;
+		else
+			regerror("out of memory");
 		return 0;
 	}
 	freep = pp->firstinst;
@@ -813,17 +824,24 @@ out:
 extern	Reprog*
 regcomp(char *s)
 {
-	return regcomp1(s, 0, ANY);
+	return regcomp1(s, 0, ANY, 0);
+}
+
+extern	Reprog*
+regcompcheck9(char *s, size_t *failed_alloc)
+{
+	*failed_alloc = 0;
+	return regcomp1(s, 0, ANY, failed_alloc);
 }
 
 extern	Reprog*
 regcomplit(char *s)
 {
-	return regcomp1(s, 1, ANY);
+	return regcomp1(s, 1, ANY, 0);
 }
 
 extern	Reprog*
 regcompnl(char *s)
 {
-	return regcomp1(s, 0, ANYNL);
+	return regcomp1(s, 0, ANYNL, 0);
 }

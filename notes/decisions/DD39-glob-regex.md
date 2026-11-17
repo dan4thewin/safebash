@@ -96,7 +96,9 @@ DD132 provisionally replaces that consumer-side invalid-data path:
 runtime regex operands must be immutable and successfully checked with
 `r?` before use. Invalid candidates give quiet false at the predicate;
 actual literal regex use retains static validation, and allocation
-faults remain fatal. The integrated trial is not yet implemented.
+faults remain fatal. The predicate is implemented on `glob-scratch-trial`
+(journal 648); mandatory consumer proofs and the remaining integrated
+trial are not complete.
 
 ## Whole-subject anchors (DG, 2026-11-16)
 
@@ -249,7 +251,11 @@ The upstream reference under `contrib/plan9port-regexp/` is unchanged.
 `regaux.c` remains byte-identical to it; `regexec.c` now has the
 whole-subject anchor changes above. The existing parser additions include
 counted repetition and its cap, shorthand classes and hex escapes, with
-local bounds/group-repeat checks. Integration headers also differ.
+local bounds/group-repeat checks. On the trial branch, journal 648 adds
+quiet predicate compilation with a distinct allocation-failure channel.
+It also rejects a trailing backslash before reading past the terminator
+and checks each repetition-count digit before the accumulator can
+overflow the existing limit of 32. Integration headers also differ.
 
 ### Follow-up
 
