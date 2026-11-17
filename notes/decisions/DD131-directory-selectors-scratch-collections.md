@@ -340,8 +340,12 @@ empty-list success, immutable regex proofs and atomic publication use shared
 lowering and runtime traversal. Scratch and accumulating fillers are recorded
 in journals 645-646; DD132's proof/read/result units are in journals 648-652.
 Journal 654 records the integrated utility, migration and memory/time
-evaluation. Sequential converted mapfile fills need reconciliation, and
-repeated append has substantial scan/clone costs in the current runtime.
-Hand adaptations are not a converter repair. DG's adoption decision remains
-pending; these delivery records do not change this decision's provisional
+evaluation. DG subsequently authorized the append optimization recorded in
+[journal 655](../journal/655-append-reservation-and-index-cache.md):
+maintained next-index metadata, complete reservation and allocation-free
+owned-key transfer replace repeated scans and destination cloning. The
+old-logical-contents guarantee on fatal failure and stable collection identity
+remain intact. Sequential converted mapfile fills still need reconciliation;
+hand adaptations are not a converter repair. DG's adoption decision remains
+pending, and these delivery records do not change this decision's provisional
 status.

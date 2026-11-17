@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup fillers
-plan=31
+plan=35
 echo "1..$plan" >&3
 
 set +e
@@ -177,5 +177,46 @@ SASH_CFLAGS=--no-taint-cst run_sash 'argv 1 a
 if attest v in a [[ $v == safe ]] { : } else { - match safe "safe" a }
 echo "$(join a ,)"' unsafe
 [[ $rc != 0 && $err == *tainted* ]]; chk fillacc.31
+
+SASH_CFLAGS=--heap-size=256K run_sash 'array a
+int i=0
+while (( i < 1000 )) { a+=(left right); (( i++ )) }
+echo "${a[0]}:${a[1999]}:$(len a)"'
+[[ $rc = 0 && $out = left:right:2000 && -z $err && -z $rerr ]]; chk appendperf.1
+
+run_sash "fn grow { read \$'new\\x00next' A }
+array a=(zero one two)
+unset a[2]; grow =a
+echo \"\${a[2]}:\${a[3]}:\$(len a)\"
+unset a[3]; unset a[2]; a[10]=ten; grow =a
+echo \"\${a[10]}:\${a[11]}:\${a[12]}:\$(len a)\"
+a=(); int neg=-2; a[\$neg]=negative; a[9223372036854775807]=last
+unset a[9223372036854775807]; grow =a
+echo \"\${a[\$neg]}:\${a[0]}:\${a[1]}:\$(len a)\"
+unset a; grow =a
+echo \"\${a[0]}:\${a[1]}:\$(len a)\"
+unset a[0]; unset a[1]; grow =a
+echo \"\${a[0]}:\${a[1]}:\$(len a)\""
+[[ $rc = 0 && $out = $'new:next:4\nten:new:next:5\nnegative:new:next:3\nnew:next:2\nnew:next:2' && -z $err && -z $rerr ]]; chk appendperf.2
+
+run_sash "fn grow { read \$'e\\x00f\\x00g\\x00h\\x00i\\x00j\\x00k\\x00l\\x00m\\x00n\\x00o\\x00p' A }
+array a=(a b c d); array _snapshot=(@a)
+for v in @a {
+    echo \"\$v\"
+    if [[ \$v == b ]] { unset a[2]; grow =a }
+}
+echo \"\$(join _snapshot ,):\$(len a)\""
+[[ $rc = 0 && $out = $'a\nb\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\na,b,c,d:15' && -z $err && -z $rerr ]]; chk appendperf.3
+
+# The complete batch is ready before the destination's entry reservation fails.
+printf -v batch 'new\\x00%.0s' {1..200}
+SASH_CFLAGS=--heap-size=64K run_sash "array a=()
+int i=0
+while (( i < 400 )) { a+=(old); (( i++ )) }
+ERR { - echo \"\${a[399]}:\${a[400]}:\$(len a)\" }
+echo ready
+read \$'$batch' a
+echo unexpected"
+[[ $rc = 1 && $out = $'ready\nold::400' && -z $err && $rerr == *"out of memory (requested 40960 bytes)"* ]]; chk appendperf.4
 
 tally

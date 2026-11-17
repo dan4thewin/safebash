@@ -161,26 +161,33 @@ binding's requirement to replace it or leave the path. This does not relax
 adjacency, ownership or the separate regex-proof requirement described below.
 
 Ordinary array fillers now build private batches too. `CollectionPublish`
-carries the previous destination explicitly; the shared runtime prepares a
-merged table and publishes its header only after all fallible work succeeds.
-A one-cell batch uses the existing allocation-before-insertion table setter
-without a full clone.
-The header address remains stable for aliases and live iteration. Empty
-batches change nothing, and EOF/no-match truth belongs to the producer, not
-the accumulated population. Assignment, scalar `readline` and map conversion
-retain replacement semantics.
+carries the previous destination explicitly. The shared runtime checks the
+complete append-index range and reserves all destination index/entry capacity
+before adding cells. Publication then transfers the private batch's owned
+integer keys without allocation, rather than cloning the whole destination.
+Reservation can compact or grow physical storage, but failure leaves the old
+logical contents intact for ERR. The header address remains stable for aliases
+and live iteration. Both backends reserve the same 40-byte runtime header.
+Empty batches change nothing, and EOF/no-match truth belongs to the producer,
+not the accumulated population. Assignment, scalar `readline` and map
+conversion retain replacement semantics.
 
 Sparse append uses one past the greatest live nonnegative index, or zero
 when none exists, with checked overflow. It does not confuse population
-with the next free index. Integer literal appends and replacements reuse
-the checked element types and normal integer-cell encoding. Source and SSA
+with the next free index. The runtime maintains that index on insertion;
+deleting the highest key marks it for one lazy rescan, and clearing or
+deleting the last cell resets it. Ordinary repeated appends no longer scan
+the growing destination. Integer literal appends and replacements reuse the
+checked element types and normal integer-cell encoding. Source and SSA
 taint, terminal facts and ERR's NUL analysis all retain the old destination's
 contribution; appending clean data is not failed-attest replacement.
-Append consumes the private batch's keys, header and index/entry storage,
-while retaining borrowed value backing. Replaced destination metadata is
-freed too. This is not general reclamation: other snapshots and retained
-strings still cost memory. Repeated-use allocation and useful-program
-evaluation remain part of the trial.
+Transferred keys belong to the destination; the remaining private batch keys,
+header and index/entry storage are released, while borrowed value backing is
+retained. Destination metadata is replaced and freed only when capacity needs
+it, not on every append. This is not general reclamation: other snapshots and
+retained strings still cost memory. The matched before/after costs and
+failure controls are recorded in
+[journal 655](../notes/journal/655-append-reservation-and-index-cache.md).
 
 ### Directory selection on the trial branch
 

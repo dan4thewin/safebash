@@ -2080,6 +2080,7 @@ pub unsafe extern "C" fn sash_splice_argv(
 
 const TABLE_EMPTY: i32 = -1;
 const TABLE_DELETED: i32 = -2;
+const ARRAY_INDEX_DIRTY: u64 = u64::MAX;
 
 #[repr(C)]
 struct TableEntry {
@@ -2098,10 +2099,12 @@ pub struct SashTable {
     entry_count: u32,
     entry_capacity: u32,
     live_count: u32,
+    // Maps share this header but never consume the integer-key cache.
+    next_index: u64,
 }
 
 // Both code generators reserve this C ABI header for an empty global table.
-const _: () = assert!(core::mem::size_of::<SashTable>() == 32);
+const _: () = assert!(core::mem::size_of::<SashTable>() == 40);
 
 /// Safe view of the index array for table operations.
 /// entries_eq(i, key) returns true if entry i's key matches key.
@@ -2131,9 +2134,8 @@ fn table_find_slot_inner(
     }
 }
 
-unsafe fn table_grow(t: *mut SashTable) {
+unsafe fn table_grow(t: *mut SashTable, new_index_size: u32) {
     let old_indices = (*t).indices;
-    let new_index_size = ((*t).index_mask + 1) * 2;
     let new_mask = new_index_size - 1;
     let new_indices = sash_alloc((new_index_size as usize) * 4) as *mut i32;
     // Init to EMPTY
@@ -2183,6 +2185,61 @@ unsafe fn table_grow(t: *mut SashTable) {
     }
 }
 
+unsafe fn table_reserve_entries(t: *mut SashTable, capacity: u32) {
+    let entries = sash_alloc(capacity as usize * core::mem::size_of::<TableEntry>()).cast();
+    core::ptr::copy_nonoverlapping((*t).entries, entries, (*t).entry_count as usize);
+    let previous = (*t).entries;
+    (*t).entries = entries;
+    (*t).entry_capacity = capacity;
+    sash_free_c(previous.cast());
+}
+
+unsafe fn table_reserve_batch(t: *mut SashTable, count: u32) {
+    if (*t).entry_capacity == 0 {
+        t.write(table_contents(i64::from(count)));
+        return;
+    }
+    let required = (*t)
+        .entry_count
+        .checked_add(count)
+        .unwrap_or_else(|| sash_arith_overflow());
+    let index_size = (*t).index_mask + 1;
+    if u64::from(required) * 4 > u64::from(index_size) * 3 {
+        let size = (*t)
+            .live_count
+            .checked_add(count)
+            .and_then(|n| n.checked_mul(2))
+            .and_then(u32::checked_next_power_of_two)
+            .unwrap_or_else(|| sash_arith_overflow());
+        table_grow(t, index_size.max(size));
+    }
+    let required = (*t)
+        .entry_count
+        .checked_add(count)
+        .unwrap_or_else(|| sash_arith_overflow());
+    if required > (*t).entry_capacity {
+        table_reserve_entries(
+            t,
+            required
+                .checked_next_power_of_two()
+                .unwrap_or_else(|| sash_arith_overflow()),
+        );
+    }
+}
+
+unsafe fn table_insert_entry(t: *mut SashTable, pos: u32, entry: TableEntry) {
+    if entry.key_len == 8 {
+        let key = core::ptr::read_unaligned(entry.key_ptr.cast::<i64>());
+        if key >= 0 {
+            (*t).next_index = (*t).next_index.max(key as u64 + 1);
+        }
+    }
+    (*t).entries.add((*t).entry_count as usize).write(entry);
+    *(*t).indices.add(pos as usize) = (*t).entry_count as i32;
+    (*t).entry_count += 1;
+    (*t).live_count += 1;
+}
+
 unsafe fn table_contents(capacity: i64) -> SashTable {
     let cap = if capacity < 4 {
         4u32
@@ -2204,6 +2261,7 @@ unsafe fn table_contents(capacity: i64) -> SashTable {
         entry_count: 0,
         entry_capacity: cap,
         live_count: 0,
+        next_index: 0,
     }
 }
 
@@ -2226,7 +2284,10 @@ pub unsafe extern "C" fn sash_table_set(
         t.write(table_contents(4));
     }
     if (*t).entry_count * 4 >= ((*t).index_mask + 1) * 3 {
-        table_grow(t);
+        let size = ((*t).index_mask + 1)
+            .checked_mul(2)
+            .unwrap_or_else(|| sash_arith_overflow());
+        table_grow(t, size);
     }
     let key = core::slice::from_raw_parts(key_ptr, key_len as usize);
     // NOTE: indices slice must be created AFTER potential grow, which reallocates
@@ -2255,34 +2316,26 @@ pub unsafe extern "C" fn sash_table_set(
         e.val_len = val_len;
     } else {
         if (*t).entry_count >= (*t).entry_capacity {
-            let new_cap = (*t).entry_capacity * 2;
-            let new_entries = sash_alloc((new_cap as usize) * core::mem::size_of::<TableEntry>())
-                as *mut TableEntry;
-            core::ptr::copy_nonoverlapping((*t).entries, new_entries, (*t).entry_count as usize);
-            let old_entries = (*t).entries;
-            (*t).entries = new_entries;
-            (*t).entry_capacity = new_cap;
-            // Freeing the previous generation: it was leaked on every
-            // doubling. Entries own no memory themselves — `key_ptr` blocks
-            // are copied by pointer into the new array — so only the array
-            // itself is released.
-            if !old_entries.is_null() {
-                sash_free_c(old_entries as *mut u8);
-            }
+            let capacity = (*t)
+                .entry_capacity
+                .checked_mul(2)
+                .unwrap_or_else(|| sash_arith_overflow());
+            table_reserve_entries(t, capacity);
         }
-        let ei = (*t).entry_count as usize;
-        let e = &mut *(*t).entries.add(ei);
         // Copy key to heap so table owns it (caller's key may be stack-allocated)
         let key_copy = alloc_cstr(key_len as usize);
         core::ptr::copy_nonoverlapping(key_ptr, key_copy, key_len as usize);
-        e.key_ptr = key_copy;
-        e.key_len = key_len;
-        e.val_ptr = val_ptr;
-        e.val_len = val_len;
-        e.deleted = false;
-        *(*t).indices.add(pos as usize) = ei as i32;
-        (*t).entry_count += 1;
-        (*t).live_count += 1;
+        table_insert_entry(
+            t,
+            pos,
+            TableEntry {
+                key_ptr: key_copy,
+                key_len,
+                val_ptr,
+                val_len,
+                deleted: false,
+            },
+        );
     }
 }
 
@@ -2332,21 +2385,24 @@ pub unsafe extern "C" fn sash_table_len(t: *const SashTable) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sash_array_next_index(t: *const SashTable) -> i64 {
-    let mut next = 0;
-    for i in 0..(*t).entry_count as usize {
-        let entry = &*(*t).entries.add(i);
-        if !entry.deleted {
-            let key = core::ptr::read_unaligned(entry.key_ptr.cast::<i64>());
-            if key >= next {
-                next = key.checked_add(1).unwrap_or_else(|| sash_arith_overflow());
+pub unsafe extern "C" fn sash_array_next_index(t: *mut SashTable) -> i64 {
+    if (*t).next_index == ARRAY_INDEX_DIRTY {
+        let mut next = 0;
+        for i in 0..(*t).entry_count as usize {
+            let entry = &*(*t).entries.add(i);
+            if !entry.deleted {
+                let key = core::ptr::read_unaligned(entry.key_ptr.cast::<i64>());
+                if key >= 0 {
+                    next = next.max(key as u64 + 1);
+                }
             }
         }
+        (*t).next_index = next;
     }
-    next
+    i64::try_from((*t).next_index).unwrap_or_else(|_| sash_arith_overflow())
 }
 
-/// A private heap table owns its keys and metadata, not its values.
+/// A private heap table owns its remaining keys and metadata, not its values.
 struct TableBatch(*mut SashTable);
 
 impl Drop for TableBatch {
@@ -2354,7 +2410,10 @@ impl Drop for TableBatch {
         unsafe {
             let table = &*self.0;
             for i in 0..table.entry_count as usize {
-                sash_free_c((*table.entries.add(i)).key_ptr.cast_mut());
+                let key = (*table.entries.add(i)).key_ptr;
+                if !key.is_null() {
+                    sash_free_c(key.cast_mut());
+                }
             }
             if table.entry_capacity != 0 {
                 sash_free_c(table.entries.cast());
@@ -2365,38 +2424,21 @@ impl Drop for TableBatch {
     }
 }
 
-/// Clone only mutable table storage; keys and values keep their existing backing.
-unsafe fn table_clone_storage(t: *const SashTable) -> SashTable {
-    if (*t).entry_capacity == 0 {
-        return table_contents(4);
-    }
-    let mut copy = core::ptr::read(t);
-    let index_count = copy.index_mask as usize + 1;
-    copy.indices = sash_alloc(index_count * core::mem::size_of::<i32>()).cast();
-    core::ptr::copy_nonoverlapping((*t).indices, copy.indices, index_count);
-    copy.entries =
-        sash_alloc(copy.entry_capacity as usize * core::mem::size_of::<TableEntry>()).cast();
-    core::ptr::copy_nonoverlapping((*t).entries, copy.entries, copy.entry_count as usize);
-    copy
-}
-
-unsafe fn table_append_entries(t: *mut SashTable, batch: *const SashTable, first: i64) {
+/// Reservation and index checks precede this allocation-free ownership transfer.
+unsafe fn table_append_entries(t: *mut SashTable, batch: *mut SashTable, first: i64) {
     let mut offset = 0;
     for i in 0..(*batch).entry_count as usize {
-        let entry = &*(*batch).entries.add(i);
+        let entry = &mut *(*batch).entries.add(i);
         if entry.deleted {
             continue;
         }
-        let key = first
-            .checked_add(offset)
-            .unwrap_or_else(|| sash_arith_overflow());
-        sash_table_set(
-            t,
-            (&key as *const i64).cast(),
-            8,
-            entry.val_ptr,
-            entry.val_len,
-        );
+        // The private batch already owns an integer-key buffer for each cell.
+        core::ptr::write_unaligned(entry.key_ptr.cast_mut().cast::<i64>(), first + offset);
+        let key = core::slice::from_raw_parts(entry.key_ptr, entry.key_len as usize);
+        let indices = core::slice::from_raw_parts((*t).indices, (*t).index_mask as usize + 1);
+        let pos = table_find_slot_inner(indices, |_, _| false, (*t).index_mask, key);
+        table_insert_entry(t, pos, core::ptr::read(entry));
+        entry.key_ptr = core::ptr::null();
         offset += 1;
     }
 }
@@ -2410,18 +2452,11 @@ pub unsafe extern "C" fn sash_array_append_batch(t: *mut SashTable, batch: *mut 
         return;
     }
     let first = sash_array_next_index(t);
-    if (*batch).live_count == 1 {
-        // A single table_set publishes its cell only after its last allocation.
-        table_append_entries(t, batch, first);
-        return;
-    }
-    let mut merged = table_clone_storage(t);
-    table_append_entries(&mut merged, batch, first);
-    let previous = core::ptr::replace(t, merged);
-    if previous.entry_capacity != 0 {
-        sash_free_c(previous.indices.cast());
-        sash_free_c(previous.entries.cast());
-    }
+    first
+        .checked_add(i64::from((*batch).live_count) - 1)
+        .unwrap_or_else(|| sash_arith_overflow());
+    table_reserve_batch(t, (*batch).live_count);
+    table_append_entries(t, batch, first);
 }
 
 /// Reset private fill tables or fresh scratch lifetimes without allocating.
@@ -2437,6 +2472,7 @@ pub unsafe extern "C" fn sash_table_clear(t: *mut SashTable) {
     }
     (*t).entry_count = 0;
     (*t).live_count = 0;
+    (*t).next_index = 0;
 }
 
 #[no_mangle]
@@ -2471,6 +2507,14 @@ pub unsafe extern "C" fn sash_table_delete(
     e.deleted = true;
     *(*t).indices.add(pos as usize) = TABLE_DELETED;
     (*t).live_count -= 1;
+    if (*t).live_count == 0 {
+        (*t).next_index = 0;
+    } else if e.key_len == 8 {
+        let key = core::ptr::read_unaligned(e.key_ptr.cast::<i64>());
+        if key >= 0 && key as u64 + 1 == (*t).next_index {
+            (*t).next_index = ARRAY_INDEX_DIRTY;
+        }
+    }
     0 // success
 }
 

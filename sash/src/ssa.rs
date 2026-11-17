@@ -2011,7 +2011,7 @@ pub(crate) fn sets_condition_status(inst: &SsaInst) -> bool {
 }
 
 /// The zero-initialized C ABI header for `sash_rt::SashTable`.
-pub(crate) const EMPTY_TABLE_BYTES: usize = 32;
+pub(crate) const EMPTY_TABLE_BYTES: usize = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GlobalType {

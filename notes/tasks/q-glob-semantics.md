@@ -84,9 +84,16 @@ the integrated evaluation is recorded in
 [journal 654](../journal/654-glob-scratch-regex-evaluation.md). Eight practical
 scenarios pass both backends; 58 resource configurations quantify the costs.
 Unchanged converter output silently retains old entries in sequential
-mapfile fills, and repeated append has substantial scan/clone costs. Working
-hand adaptations do not supply a converter repair. This owner stays open for
-DG's evaluation and adoption/revision/withdrawal decision; main is unchanged.
+mapfile fills. DG then authorized addressing the measured append costs:
+[journal 655](../journal/655-append-reservation-and-index-cache.md) records
+cached next indices and whole-batch reservation followed by allocation-free
+publication, without destination cloning or weakened failure atomicity.
+The matched 4,000 two-cell append workload falls from about 328 ms to
+2.7-2.9 ms; its 1,000-iteration configured-heap passing endpoint falls from
+324 KiB to 164 KiB in both backends. Those are new matched measurements,
+not a revision of journal 654's historical results. Working hand adaptations
+still do not supply a converter repair. This owner stays open for DG's
+evaluation and adoption/revision/withdrawal decision; main is unchanged.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record

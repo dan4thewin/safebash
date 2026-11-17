@@ -355,11 +355,7 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "typedef struct SashTable SashTable;").unwrap();
     writeln!(out, "extern SashTable* sash_table_new(i64 capacity);").unwrap();
     writeln!(out, "extern void sash_table_clear(SashTable* table);").unwrap();
-    writeln!(
-        out,
-        "extern i64 sash_array_next_index(const SashTable* table);"
-    )
-    .unwrap();
+    writeln!(out, "extern i64 sash_array_next_index(SashTable* table);").unwrap();
     writeln!(
         out,
         "extern void sash_array_append_batch(SashTable* table, SashTable* batch);"
