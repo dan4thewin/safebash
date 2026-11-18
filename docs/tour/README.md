@@ -777,112 +777,60 @@ when declared `int`, integers.
 
 
 
-Fillers accumulate
+Freeze the rollout plan
 ---
 
 ```bash
-array words=(first)
-read $'second\x00third' words
-more=fourth
-read $more words
-echo accumulated: $(join words ", ")
-words=(replacement)
-echo assigned: $(join words ", ")
+array candidates=(api worker)
+array _rollout=(@candidates)
+candidates[0]=api-v2
+candidates+=(scheduler)
+echo this rollout: $(join _rollout ", ")
+echo next candidates: $(join candidates ", ")
 ```
 
 **Output:**
 
 ```text
-accumulated: first, second, third, fourth
-assigned: replacement
+this rollout: api, worker
+next candidates: api-v2, worker, scheduler
 ```
 
 
-`read STRING ARRAY` splits a string on NUL bytes, not spaces or newlines.
-Each call appends its complete batch to an ordinary destination.
-
-The array forms of `argv`, `keys`, `match`, `matchall` and the selectors
-also accumulate. Assignment with `=` still replaces the contents.
-
-
-
-Immutable snapshots
----
-
-```bash
-array builder=(a b)
-array _snapshot=(@builder)
-builder[0]=changed
-builder+=(c)
-echo snapshot: $(join _snapshot ", ")
-echo builder: $(join builder ", ")
-```
-
-**Output:**
-
-```text
-snapshot: a, b
-builder: changed, b, c
-```
-
+A rollout should use the plan that was reviewed, not whatever the working
+list contains later. `_rollout` keeps the original services while
+`candidates` is edited for the next rollout.
 
 A leading underscore requests a **scratch binding**: a fresh, immutable
-value. Its contents cannot change through another name either.
-
-The builder stays mutable; `_snapshot` keeps the values it was given.
+value. Neither later code nor a helper receiving the collection can change
+this instance. You do not have to trace their writes to know its contents.
 Bare `_` remains the unreadable discard binder.
 
 
 
-Fresh on every visit
+The plan cannot drift
 ---
 
 ```bash
-for _text in first second {
-  read $_text _words
-  echo $(join _words ", ")
-}
-```
-
-**Output:**
-
-```text
-first
-second
-```
-
-
-Each visit to the same scratch construction site starts a new immutable
-instance. Here both the loop variable `_text` and the array `_words` are
-fresh each time: the second result is `second`, not `first, second`.
-
-This is not reassignment or a new block scope. Skipping the construction
-does not reset it, and leaving a loop does not destroy its last value.
-
-
-
-Scratch does not mean mutable temporary
----
-
-```bash
-str _name=first
-echo $_name
-_name=second # immutable scratch
+array _rollout=(api worker)
+echo reviewed: $(join _rollout ", ")
+_rollout+=(scheduler) # immutable plan
 ```
 
 **Output (expected failure):**
 
 ```text
-snippet.sh:3:1: error [SB5103] scratch `_name` already has a construction site at 1:1; use a different name for a new immutable result
+snippet.sh:3:1: error [SB5103] cannot modify immutable scratch `_rollout`; introduce it with a whole-value construction instead
 ```
 
 
-Scratch works for scalars as well as collections, without an extra
-`const`. A later write, append, cell update or `unset` is rejected.
-An initializer cannot read its own preceding instance.
+Adding a service after freezing the plan is a compile error, not an
+unreviewed addition to the rollout.
 
-Use an ordinary name for a mutable builder, then construct a scratch
-value when a fresh result is wanted.
+Scratch works for scalars as well as collections, without an extra `const`.
+A later assignment, append, cell update or `unset` is rejected; an
+initializer cannot read its own preceding instance. Use an ordinary name
+while building a value, then construct scratch when it should stop changing.
 
 
 
@@ -1031,6 +979,38 @@ A failed directory operation is a different result, handled here with `if`.
 Publication is whole-batch: an error leaves an ordinary destination
 unchanged, even if an earlier pattern found matches. An empty `:~` pattern
 list succeeds without directory work.
+
+
+
+A fresh batch per directory
+---
+
+```bash
+mkdir api worker empty
+touch api/start.log api/stop.log worker/run.log
+for service in api worker empty {
+  glob _logs "$service/*.log"
+  echo $service: $(len _logs) log files
+}
+```
+
+**Output:**
+
+```text
+api: 2 log files
+worker: 1 log files
+empty: 0 log files
+```
+
+
+Each service needs its own report. The counts are **2, 1, 0**, not **2, 3, 3**:
+`glob logs` would accumulate earlier services' files; `glob _logs` constructs
+only this directory's batch. There is no clearing step to forget, and the
+empty directory cannot reuse the previous result.
+
+Each execution of that construction site starts a new immutable instance.
+This is not block scope: skipping the site does not reset it, and leaving
+the loop does not destroy its last value.
 
 
 
@@ -1409,34 +1389,79 @@ program itself, not a child, so variables it sets survive.
 
 
 
-Catching a scratch attest
+Filenames are not lines
 ---
 
 ```bash
-printf 'apple\nbad value\npear\n' | while readline _word {
-  if attest _word g? {
-    echo accepted: $_word
-  } else {
-    echo rejected length: $(strlen $_word:!)
-  }
-}
+mkdir inbox sent archive
+touch 'inbox/annual report.txt' $'sent/two\nlines.txt'
+find inbox -type f -print0 | read files
+attest file in files [[ -f $file ]]
+find sent -type f -print0 | read files
+attest file in files [[ -f $file ]]
+cp -- @{files:?no input files} archive
+echo copied: $(len files)
+printf '<%s>\n' @{files:~}
 ```
 
 **Output:**
 
 ```text
-accepted: apple
-rejected length: 9
-accepted: pear
+copied: 2
+<inbox/annual report.txt>
+<sent/two
+lines.txt>
 ```
 
 
-`readline _word` constructs a fresh immutable value on every attempt.
-The failed value may remain unresolved: no replacement or forced exit is
-needed. Here its trusted read only measures the length.
+A Unix filename may contain spaces, tabs or newlines, but never a NUL byte.
+That is why `find -print0` and `xargs -0` use NUL boundaries. `read` uses the
+same protocol: the second filename above contains a newline, but stays
+**one element and one command argument**.
 
-Normal reads belong inside the attest's success arm. A failed value is
-still present, not silently cleaned or replaced.
+Both reads append to `files`, gathering two batches for one copy. Array
+fillers accumulate; assignment with `=` replaces. The attest checks that
+each input path names a regular file, without banning unusual filenames.
+
+`read ARRAY` consumes stdin; `read STRING ARRAY` splits an in-memory string
+on the same NUL boundary. Use `readline` when the records really are lines.
+
+
+
+Reject a record, not the whole job
+---
+
+```bash
+int total=0 rejected=0
+printf '12\nnot-a-number\n30\n' | while readline _amount {
+  if attest _amount (( _n = _amount )) {
+    (( total += _n ))
+  } else {
+    (( rejected++ ))
+  }
+}
+echo total: $total
+echo rejected: $rejected
+```
+
+**Output:**
+
+```text
+total: 42
+rejected: 1
+```
+
+
+An import often needs to count malformed records and keep going. Scratch
+lets the failed record remain unresolved: no dummy zero, replacement
+string or forced jump is needed just to satisfy the taint rules.
+
+`readline _amount` starts fresh on every attempt. Successful conversion
+constructs the immutable `_n` used in the success arm; invalid input is
+neither added to the total nor silently cleaned. Only `total` and `rejected`
+are mutable running state.
+
+Normal reads of the caught scratch input belong inside the success arm.
 
 
 

@@ -1,5 +1,5 @@
 title: Status
-modified: 2026-11-17
+modified: 2026-11-18
 
 # Current status
 
@@ -55,15 +55,26 @@ familiar function positionals are paired with the canonical `args` forms.
 Attest examples lead with `p?`/`g?`, with a compound predicate for optional
 printable input. The expanded glob section demonstrates explicit selectors,
 pattern lists, dotfiles, ordering, duplicates, list sugar and failure handling.
-Accumulating fills, immutable snapshots, repeated scratch construction and
-caught-attest permissions have their own examples. Regex examples cover
+NUL-only `read` gathers and copies actual filenames containing spaces and
+newlines from `find -print0`. Scratch examples freeze a rollout plan, keep
+per-directory log batches independent and count bad numeric records without
+inventing fallback values. Regex examples cover
 whole-subject anchors, `r?`, immutable runtime-pattern proofs, fresh captures,
 `rglob` and text-plus-Boolean results before the convenience spellings.
 The provisional branch boundary and converter-review caveat are explicit.
 [Journal 656](journal/656-tour-globs-scratch-regex.md) records the expansion.
+[Journal 657](journal/657-motivated-read-and-scratch.md) records the
+practical read/scratch examples and their rationale.
 
 ## Just completed
 
+- **Read and scratch tour examples now explain their purpose.**
+  `find -print0` demonstrates why filename records need NUL boundaries.
+  Frozen plans, fresh per-service batches and a numeric import show how
+  scratch removes changing inputs, forgotten clears and dummy fallback
+  values from the reader's reasoning. Five programs are revised; the tour
+  remains 71 programs, with the other 66 programs and outputs unchanged.
+  [Journal 657](journal/657-motivated-read-and-scratch.md) records the update.
 - **Tour expanded for the provisional package.**
   Fifteen new programs and a fuller glob example demonstrate the recently
   delivered features and their important contrasts. The GitHub edition is
