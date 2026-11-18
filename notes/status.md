@@ -41,7 +41,7 @@ reordered draft and accepted-policy updates are now committed on `spec-outline`.
 This is not a shipped-language reference or a completed specification.
 
 The [GitHub tour](../docs/tour/README.md) contains recorded output from all
-71 programs in the authored [presenterm tour](../docs/tour/tour.md).
+70 programs in the authored [presenterm tour](../docs/tour/tour.md).
 Run `mk -p 1 tour` to build and launch the presentation, or
 `mk -p 1 tour-doc` to regenerate the checked-in GitHub edition.
 `target/tour/check` checks the same snippets without publishing.
@@ -56,25 +56,29 @@ Attest examples lead with `p?`/`g?`, with a compound predicate for optional
 printable input. The expanded glob section demonstrates explicit selectors,
 pattern lists, dotfiles, ordering, duplicates, list sugar and failure handling.
 NUL-only `read` gathers and copies actual filenames containing spaces and
-newlines from `find -print0`. Scratch examples freeze a rollout plan, keep
-per-directory log batches independent and count bad numeric records without
-inventing fallback values. Regex examples cover
+newlines from `find -print0`. Scratch is introduced beside the glob loaders:
+ordinary targets gather batches, whereas scratch supplies only the current
+directory's result. A separate second construction site is rejected.
+The numeric import counts bad records without inventing fallback values.
+Regex examples cover
 whole-subject anchors, `r?`, immutable runtime-pattern proofs, fresh captures,
 `rglob` and text-plus-Boolean results before the convenience spellings.
 The provisional branch boundary and converter-review caveat are explicit.
 [Journal 656](journal/656-tour-globs-scratch-regex.md) records the expansion.
 [Journal 657](journal/657-motivated-read-and-scratch.md) records the
-practical read/scratch examples and their rationale.
+NUL filename and numeric-import examples.
+[Journal 658](journal/658-scratch-starts-with-the-loader.md) replaces the
+rollout analogy with the bulk-loader contrast.
 
 ## Just completed
 
-- **Read and scratch tour examples now explain their purpose.**
-  `find -print0` demonstrates why filename records need NUL boundaries.
-  Frozen plans, fresh per-service batches and a numeric import show how
-  scratch removes changing inputs, forgotten clears and dummy fallback
-  values from the reader's reasoning. Five programs are revised; the tour
-  remains 71 programs, with the other 66 programs and outputs unchanged.
-  [Journal 657](journal/657-motivated-read-and-scratch.md) records the update.
+- **Scratch tour is grounded in bulk loading.**
+  The rollout pair is removed. Per-directory log counts introduce fresh
+  scratch results beside accumulating ordinary loaders, followed by a
+  rejected second construction site and the ordinary gathering alternatives.
+  The tour now has 70 programs; all 69 retained programs and outputs are
+  unchanged. [Journal 658](journal/658-scratch-starts-with-the-loader.md)
+  records the revision.
 - **Tour expanded for the provisional package.**
   Fifteen new programs and a fuller glob example demonstrate the recently
   delivered features and their important contrasts. The GitHub edition is

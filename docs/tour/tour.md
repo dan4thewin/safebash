@@ -538,48 +538,6 @@ when declared `int`, integers.
 
 <!-- end_slide -->
 
-Freeze the rollout plan
-===
-
-```bash +exec:sash
-array candidates=(api worker)
-array _rollout=(@candidates)
-candidates[0]=api-v2
-candidates+=(scheduler)
-echo this rollout: $(join _rollout ", ")
-echo next candidates: $(join candidates ", ")
-```
-
-A rollout should use the plan that was reviewed, not whatever the working
-list contains later. `_rollout` keeps the original services while
-`candidates` is edited for the next rollout.
-
-A leading underscore requests a **scratch binding**: a fresh, immutable
-value. Neither later code nor a helper receiving the collection can change
-this instance. You do not have to trace their writes to know its contents.
-Bare `_` remains the unreadable discard binder.
-
-<!-- end_slide -->
-
-The plan cannot drift
-===
-
-```bash +exec:sash +expect:failure
-array _rollout=(api worker)
-echo reviewed: $(join _rollout ", ")
-_rollout+=(scheduler) # immutable plan
-```
-
-Adding a service after freezing the plan is a compile error, not an
-unreviewed addition to the rollout.
-
-Scratch works for scalars as well as collections, without an extra `const`.
-A later assignment, append, cell update or `unset` is rejected; an
-initializer cannot read its own preceding instance. Use an ordinary name
-while building a value, then construct scratch when it should stop changing.
-
-<!-- end_slide -->
-
 Splatting into commands
 ===
 
@@ -693,14 +651,42 @@ for service in api worker empty {
 }
 ```
 
-Each service needs its own report. The counts are **2, 1, 0**, not **2, 3, 3**:
-`glob logs` would accumulate earlier services' files; `glob _logs` constructs
-only this directory's batch. There is no clearing step to forget, and the
-empty directory cannot reuse the previous result.
+Bulk loaders append to ordinary arrays. That is useful for gathering many
+batches into one job, but a per-directory report needs **only this batch**.
 
-Each execution of that construction site starts a new immutable instance.
-This is not block scope: skipping the site does not reset it, and leaving
-the loop does not destroy its last value.
+A leading underscore requests a **scratch binding**. Each execution of
+`glob _logs` constructs a fresh, immutable result: the counts are **2, 1, 0**,
+not the **2, 3, 3** that `glob logs` would accumulate. No clearing step is
+needed, and an empty batch cannot reuse the previous directory's files.
+
+Freshness belongs to the construction site, not a new block scope: skipping
+the site changes nothing, and leaving the loop does not destroy its last value.
+
+<!-- end_slide -->
+
+A scratch batch cannot grow
+===
+
+```bash +exec:sash +expect:failure
+mkdir api worker
+touch api/start.log worker/run.log
+glob _logs api/*.log
+echo api logs: $(len _logs)
+glob _logs worker/*.log # cannot append another batch
+```
+
+An ordinary destination would append the worker's files. Scratch means
+**the result of one load**, so a second construction site for `_logs` is
+an error. Repeating the *same* site in a loop instead creates a new instance.
+
+To gather both batches, use an ordinary name:
+`glob logs api/*.log worker/*.log`, or call `glob logs` twice.
+The same destination rule applies to the other bulk array loaders.
+
+Scratch works for scalars too, without an extra `const`. Assignment, append,
+cell updates, `unset` and helper writes cannot change an instance; an
+initializer cannot read its own preceding instance.
+Bare `_` remains the unreadable discard binder.
 
 <!-- end_slide -->
 
