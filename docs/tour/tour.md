@@ -1059,21 +1059,28 @@ Anchors cover the subject
 ===
 
 ```bash +exec:sash
-text=$'apple\npear'
-if [[ $text =~ ^[a-z]+$ ]] {
-  echo one word
-} else {
-  echo not one word
+for text in apple $'apple\npear' $'apple\x00pear' {
+  if [[ ! 0? $text && $text =~ ^[a-z]+$ ]] {
+    echo accepted
+  } else {
+    echo rejected
+  }
 }
-if [[ $text =~ pear$ ]] { echo ends with pear }
 ```
 
 `^` and `$` mean the beginning and end of the original regex subject,
 not the beginning and end of each line. A global search does not create
-a new beginning when it resumes later in the subject.
+a new beginning when it resumes later in the subject. `.` and negated
+character classes still exclude newline.
 
-`.` and negated character classes still exclude newline. Regex matching
-stops at the first NUL byte, so anchors are not a check for NUL-free data.
+`0?` is true if the counted string **contains a NUL byte**; `! 0?` requires
+NUL-free data. Regex matching stops at the first NUL, so anchors alone would
+accept the `apple` prefix of the third input. The combined check accepts
+only the first input, rejecting both the newline and the hidden NUL suffix.
+
+Put `! 0?` before the regex when validating a whole string. For tainted
+input, put both checks in the same `attest` predicate; an ordinary `if`
+does not clear taint.
 
 <!-- end_slide -->
 

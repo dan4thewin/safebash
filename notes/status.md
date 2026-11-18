@@ -61,7 +61,8 @@ ordinary targets gather batches, whereas scratch supplies only the current
 directory's result. A separate second construction site is rejected.
 The numeric import counts bad records without inventing fallback values.
 Regex examples cover
-whole-subject anchors, `r?`, immutable runtime-pattern proofs, fresh captures,
+whole-subject anchors guarded with `! 0?` against NUL truncation, `r?`,
+immutable runtime-pattern proofs, fresh captures,
 `rglob` and text-plus-Boolean results before the convenience spellings.
 The provisional branch boundary and converter-review caveat are explicit.
 [Journal 656](journal/656-tour-globs-scratch-regex.md) records the expansion.
@@ -69,9 +70,16 @@ The provisional branch boundary and converter-review caveat are explicit.
 NUL filename and numeric-import examples.
 [Journal 658](journal/658-scratch-starts-with-the-loader.md) replaces the
 rollout analogy with the bulk-loader contrast.
+[Journal 659](journal/659-regex-tour-nul-guard.md) pairs the regex NUL
+limitation with its guard and the combined-attest guidance.
 
 ## Just completed
 
+- **Regex validation now shows the NUL guard.**
+  `0?` detects NUL, so `! 0?` precedes the anchored regex. The example
+  accepts a plain word and rejects newline and NUL variants; tainted
+  input uses both checks in one attest.
+  [Journal 659](journal/659-regex-tour-nul-guard.md) records the correction.
 - **Scratch tour is grounded in bulk loading.**
   The rollout pair is removed. Per-directory log counts introduce fresh
   scratch results beside accumulating ordinary loaders, followed by a
