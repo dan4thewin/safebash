@@ -19,7 +19,7 @@ status: accepted
    disposition.
 5. Cells and scalars owe the same conversion in every reading spelling.
    Taint checks remain independent of successful integer parsing or an
-   explicit trusted read (DD#123).
+   explicit forced read (DD#123).
 
 ---
 

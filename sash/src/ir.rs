@@ -2077,10 +2077,10 @@ pub struct ParameterExpansion {
     /// DD#91 (2026-09-09 addendum): the `!` in `${x:!}` / `${x:!~}` / `@{a:!-W}`.
     ///
     /// A **modifier**, not a disposition: `-`/`?`/`~` say what to do when the
-    /// value is absent, `!` says how to treat the value we have (trusted, so
-    /// the taint guard does not apply). It is a separate flag precisely so the
+    /// value is absent, `!` forces the subject read past its taint guard.
+    /// This does not validate the data. A separate flag ensures that the
     /// two cannot be conflated again — the retired `arrvals_trust` operator
-    /// meant "elide AND trust", which forced the trust to inherit the elide's
+    /// combined elision and a forced read, making the override inherit elision's
     /// position restriction.
     pub taint_off: bool,
 }

@@ -15,7 +15,7 @@ status: accepted
 4. Maps are constructed pairwise from arrays with an explicit disposition:
    `:-KEY` gives an odd trailing value the supplied literal key, `:?MSG`
    aborts on odd count, and `:~` drops the trailing element; `:!~` also
-   explicitly trusts the read. Empty arrays form empty maps. Ordinary
+   explicitly forces the read. Empty arrays form empty maps. Ordinary
    taint checks and adjacent validation still apply.
 5. Collection operands and fill targets are bare names; sigils yield
    values. DD#75 governs value splats and the rejected map-to-array
@@ -91,7 +91,7 @@ map m = @{a:-EXTRA}                 # pairwise: k1 v1 k2 v2 …
 </del>
 
 The input acquisition also needs its adjacent attest before ordinary
-value use, or an explicit trusted read (DD#121/DD#127/DD#128); the
+value use, or an explicit forced read (DD#121/DD#127/DD#128); the
 unvalidated conversion above is not a current checked example.
 
 The array is consumed **pairwise**: element 0 is a key, element 1 its value,

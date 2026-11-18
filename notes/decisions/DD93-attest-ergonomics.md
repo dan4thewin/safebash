@@ -59,15 +59,16 @@ author's speech act — *certifying a checkable property*, with the predicate as
 the evidence — and sits in current security vocabulary (SLSA / sigstore /
 in-toto attestations), directly answering the reviewer's objection.
 
-Vocabulary split this resolves: the **unchecked** bypasses stay "trust"
-(`--no-taint` DD#82; `:!` / `arrvals_trust` DD#91 — ~~declassify with *no*
-predicate~~); the **checked** primitive is "attest" (declassify *with* a
-predicate). Using "trust" for the keyword would have blurred that line.
+The **checked** primitive is "attest": its predicate supplies evidence.
+The **unchecked** `:!` operation is a **forced read**, or **per-read taint
+override** (DD#91); `--no-taint` (DD#82) disables taint checks program-wide.
+Neither override validates the data or establishes that it is safe.
 
 Diagnostics follow the rename ("attest condition must validate $x"). SB codes
 are unchanged (SB5020 etc.).
 
-DD#128 makes the distinction precise: `:!` authorizes a read, not
+DD#128 makes the distinction precise: the old ~~declassify with *no*
+predicate~~ description is withdrawn. `:!` forces a read, not
 declassification of its live source binding.
 
 ### Part B — unary shorthand: `attest VAR OP` ≡ `attest VAR [[ OP $VAR ]]`
@@ -142,7 +143,7 @@ DD135 also requires every filename predicate to return false before lookup
 on a NUL-bearing operand, including either operand of `-nt`/`-ot`/`-ef`.
 True filename tests and true `i?`/`p?`/`g?`, or false `0?`, can justify
 NUL-freedom at a specific ERR use. An ordinary predicate never implicitly
-attests its input; inherited taint still requires trusted reads. The predicate
+attests its input; inherited taint still requires forced reads. The predicate
 and runtime guards are implemented
 ([journal 639](../journal/639-counted-nul-and-filename-guards.md)); the
 dependent ERR proof is also implemented
@@ -165,7 +166,7 @@ present elements, not missing-index defaults.
 
 DD131's immutable scratch may be attested without a write. In caught
 forms its normal reads and `r?` proof are confined to the success arm;
-failure/post-merge reads require explicit trust as data, and pattern
+failure/post-merge uses require explicit forced data reads, and pattern
 operands forbid `:!` altogether. Ordinary consts retain their separate
 caught-resolution rules. This remains provisional work in
 `q-glob-semantics`, not a relaxation of predicate shape or locality.

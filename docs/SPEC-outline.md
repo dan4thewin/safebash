@@ -226,7 +226,7 @@
     1. Taint tracks unresolved external input on values and live bindings.
     2. Environment, program arguments, descriptor reads and kernel-backed captures introduce taint, including builtin-only pipes.
     3. Literals, clean arithmetic, managed process values, generated `mkdtemp` paths and clean function arguments are clean; memory copies introduce no new taint and erase none.
-    4. Every value read is checked, not just external-command arguments; ordinary use requires legal validation or explicit per-read trust.
+    4. Every value read is checked, not just external-command arguments; ordinary use requires legal validation or an explicit forced read.
         1. Literal elements, appends and cell writes require clean values.
         2. Passing scalar arguments is a value read; `args` is clean and permits no attest-all.
         3. Lookup handling, discard and literal defaults do not clear taint; value validation does not handle bare-lookup presence.
@@ -244,16 +244,16 @@
     7. Taint-clearing attest must immediately follow acquisition in the same body/block.
         1. Condition branches, reader-loop entry and source-iteration entry provide their defined adjacency.
         2. Each binding advances adjacency separately; no batch of captures followed by batch attests.
-    8. `:!` bypasses one read's taint guard; it does not validate or clear the source binding.
-        1. `:!~`, `:!-WORD`, `:!?MESSAGE` combine trust with a disposition; array-to-map `:!~` also trusts the read.
-        2. Braceless trust works unquoted; use braces for interpolation, bounded concatenation or operand whitespace.
+    8. `:!` forces one read past its taint guard; this per-read taint override does not validate or clear the source binding.
+        1. `:!~`, `:!-WORD`, `:!?MESSAGE` combine the override with a disposition; array-to-map `:!~` also forces the read.
+        2. Braceless forced reads work unquoted; use braces for interpolation, bounded concatenation or operand whitespace.
         3. Substrings and substitution remain braced; other braceless colon text is literal.
-        4. Every index is an independent read, including a write's index; trusting the cell does not trust its index.
-        5. Trust does not establish NUL-freedom or bypass non-taint checks.
+        4. Every index is an independent read, including a write's index; forcing the cell read does not override its index's taint guard.
+        5. Forcing a read does not establish NUL-freedom or bypass non-taint checks.
     9. Ordinary caught attest must resolve every continuing path.
         1. Success validates; failure must directly replace the whole mutable subject with clean data, or leave the continuation.
         2. Replacement permission is subject-specific and does not enter helpers, captures or children.
-        3. Ordinary writes, unset, clean loop rebinding and trusted self-copy do not clear live unresolved taint.
+        3. Ordinary writes, unset, clean loop rebinding and self-copy through a forced read do not clear live unresolved taint.
         4. Noncontinuing paths retain their real outgoing state and terminal-handler obligations.
     10. Body ownership
         1. Resolve own acquisitions in the producing body, or immediately after its sole syntactic call site.
@@ -305,8 +305,8 @@
         6. Checked immutable elements may retain proof during iteration; a missing-cell default was not checked.
         7. Reconstructing scratch discards the previous instance's regex proof.
         8. Calls, globals, captures, children and handlers gain no proof merely by naming a previously checked binding.
-        9. No trusted (`:!`-bearing) pattern reads, even after attest success or with taint checks disabled.
-        10. Trusted copies are ordinary data and need independent regex validation; subject/replacement trust follows ordinary rules.
+        9. No forced (`:!`-bearing) pattern reads, even after attest success or with taint checks disabled.
+        10. Copies through forced reads are ordinary data and need independent regex validation; forced subject/replacement reads follow ordinary rules.
         11. Scratch's failed-attest and post-merge reads cannot supply regex patterns.
         12. Disabling taint checks does not waive regex-proof rules.
     7. `${x:s/RE/REPLACEMENT/[g]}` projects text; `x =~ s/RE/REPLACEMENT/[g]` mutates without a result.
@@ -412,7 +412,7 @@
     6. Handlers observe actual completed global writes.
         1. EXIT reads must be valid at every reaching orderly entry.
         2. Inherited ERR bindings are readonly, including through same-process helpers, captures and collection aliases; ERR-only working state keeps ordinary mutability.
-        3. ERR requires explicit trust for potentially tainted incoming globals; fresh acquisitions into writable ERR-owned state may be attested locally.
+        3. ERR requires explicit forced reads of potentially tainted incoming globals; fresh acquisitions into writable ERR-owned state may be attested locally.
         4. Partial refresh does not justify attesting inherited input; readonly itself neither validates nor establishes NUL-freedom.
         5. Every recoverable failure reachable during ERR must be explicitly handled where it occurs, including helpers/operands.
         6. Known NUL-free argv values need no new check; otherwise false `0?` or true `i?`/`p?`/`g?`/filename predicates must justify the exact value on every reaching path.

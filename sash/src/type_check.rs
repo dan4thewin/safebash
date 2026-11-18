@@ -302,7 +302,7 @@ fn check_bare_cell(name: &str, span: Span, env: &TypeEnv, errors: &mut Vec<TypeE
 /// the sole spelling, and before this it was unchecked.
 ///
 /// A disposition-carrying cell (`${s[0]:-7}`, `${s[0]:?msg}`) is exempt, but
-/// `${s[0]:!}` only changes trust and still owes the conversion. A cell passed
+/// `${s[0]:!}` only overrides taint and still owes the conversion. A cell passed
 /// to a sexpr (`(strlen ${a[1]})`) is not an int operand and is not visited.
 fn check_arith_expansion_string_cell(
     a: &ArithExpr,

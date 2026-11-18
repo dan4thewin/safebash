@@ -745,8 +745,8 @@ pub(crate) fn collect_expr_var_name(e: &crate::ir::Expr, out: &mut Vec<String>) 
     match &e.kind {
         ExprKind::SimpleExpansion(name) => out.push(name.clone()),
         ExprKind::ParameterExpansion(pe) => {
-            // DD#91: `${x:!}` is a sanctioned per-use bypass. The author has
-            // vouched for this read; do not second-guess it here.
+            // DD#91: `${x:!}` is a per-read taint override. The author has
+            // explicitly forced this read; preserve that override here.
             if !pe.taint_off {
                 out.push(pe.name.clone());
             }
@@ -814,7 +814,7 @@ fn value_is_tainted(
         | SsaValue::TableKey { array, .. } => taint_of_var(taint, array),
 
         // DD#91: `${x:~}` carries the source's taint; the `:!` spelling
-        // (taint_off) is a sanctioned per-use bypass → always Clean.
+        // (taint_off) forces the read → classified Clean without validation.
         SsaValue::ElideEmpty { source, taint_off } => {
             elide_taint(source, *taint_off, taint, user_functions)
         }
@@ -822,8 +822,8 @@ fn value_is_tainted(
         // the source. The CST pass has already allowed it; this keeps the
         // backstop in agreement instead of overriding the author.
         SsaValue::Trusted { .. } => Taint::Clean,
-        // DD#91: `@{a:!DISP}` (disposition.taint_off) is a sanctioned
-        // per-use attest-all bypass → Clean; any other splat inherits the array's
+        // DD#91: `@{a:!DISP}` (disposition.taint_off) is a forced
+        // splat read → classified Clean; any other splat inherits the array's
         // taint.
         SsaValue::ArraySplat { array, disposition } => {
             splat_taint(array, disposition, taint, user_functions)
@@ -891,7 +891,7 @@ fn value_is_tainted(
 }
 
 /// DD#84/#91: taint of `${x:~}` / `${x:!}`. The `:!` spelling (`taint_off`) is a
-/// sanctioned per-use bypass → Clean; `:~` carries the source's taint.
+/// per-read taint override → Clean; `:~` carries the source's taint.
 fn elide_taint(
     source: &SsaValue,
     taint_off: bool,
@@ -907,11 +907,11 @@ fn elide_taint(
 
 /// DD#99/#91: taint of `map m = @{a:DISP}`. The map is as tainted as its
 /// source array's reaching version,
-/// unless the `!` spelling vouched for the read, which answers Clean exactly
+/// unless the `!` spelling forces the read, which answers Clean exactly
 /// as `splat_taint` does for `@a:!`.
 ///
 /// Unlike `splat_taint` this needs no word carve-out. A splat's `:-WORD` is a
-/// value the splat can yield, so `!` must not vouch for it; a map fill's
+/// value the splat can yield, so `!` must not override its taint; a map fill's
 /// `:-KEY` and `:?MSG` are literals (SB4070), so neither can carry taint in
 /// the first place.
 fn map_fill_taint(source: &VarRef, taint_off: bool, taint: &HashMap<String, Taint>) -> Taint {
@@ -923,11 +923,11 @@ fn map_fill_taint(source: &VarRef, taint_off: bool, taint: &HashMap<String, Tain
 }
 
 /// DD#61/#91: taint of an `@array` splat. `@a:!` (`disposition.taint_off`) is a
-/// sanctioned per-use attest-all bypass for the ARRAY's own read; any other
+/// per-read taint override for the ARRAY's own read; any other
 /// splat inherits the array's taint.
 ///
 /// The `:-WORD` default is a value the splat can yield, so its taint counts
-/// too. `!` does not vouch for it: DD#91 scopes `!` to its own subject's read,
+/// too. `!` does not cover it: DD#91 scopes the override to its own subject's read,
 /// and the word is an unrelated expression. Ignoring it meant
 /// `array b=( @{a:-$tainted} )` classified `b` CLEAN — measured, and masked
 /// only by the front-end pass (SB5021).
@@ -1085,7 +1085,7 @@ const ASSIGN_ONLY_VALUE: &str = "ICE: an Assign-only SsaValue reached check_valu
 /// `SsaValue::child_values()`. That getter is now total too, so the original
 /// reason (it ended in a wildcard) is gone — but the arms here are not a
 /// uniform "visit every child": `Trusted` and `StrLen` stop, `ElideEmpty`
-/// descends only when the author has not vouched, and five shapes are an ICE.
+/// descends only without a forced read, and five shapes are an ICE.
 /// Delegating would flatten those decisions into one.
 fn check_value_use(
     value: &SsaValue,
@@ -1117,7 +1117,7 @@ fn check_value_use(
             check_splat_use(array, disposition, taint, errors, context, names)
         }
 
-        // ── DD#91 sanctioned bypasses: the author has vouched ───────────
+        // ── DD#91 forced reads: explicit per-read taint overrides ──────
         SsaValue::Trusted { .. } => {}
         SsaValue::ElideEmpty { source, taint_off } => {
             if !taint_off {
@@ -1241,10 +1241,10 @@ fn check_param_expansion_use(
     }
 }
 
-/// DD#91: `@{a:!DISP}` is a sanctioned per-use attest-all bypass, matching
+/// DD#91: `@{a:!DISP}` is a forced splat read, matching
 /// `splat_taint`. The disposition WORD is still checked either way — `!`
-/// vouches for the splat's own read, not for an unrelated variable spliced
-/// into the default.
+/// overrides only the splat's own taint guard, not the guards on reads
+/// inside its default.
 fn check_splat_use(
     array: &VarRef,
     disposition: &Option<crate::ssa::ArraySplatDisposition>,
@@ -1389,7 +1389,7 @@ mod tests {
             ["a"]
         );
         assert_eq!(names_read_by(pexp("f", false)), ["f"]);
-        // DD#91: `${f:!?no}` has vouched for this read. Naming it here would
+        // DD#91: `${f:!?no}` forces this read. Naming it here would
         // make the backstop reject a program the front end deliberately allows.
         assert!(names_read_by(pexp("f", true)).is_empty());
     }

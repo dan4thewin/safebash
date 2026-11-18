@@ -1,11 +1,12 @@
-title: DD#91 — the `:!` taint-off modifier (a per-use bless-without-predicate)
+title: DD#91 — forced reads with the `:!` per-read taint override
 status: accepted
 
-1. `:!` trusts one subject read without changing its value or type, clearing
-   its binding's taint, or trusting its index/other operands.
-2. Trust is independent of disposition: `:!` reads the value, `:!~` elides,
-   `:!-W` defaults and `:!?M` requires. Trust comes first; defaults and
-   messages retain DD65's literal-only contract.
+1. `:!` forces one subject read past its taint guard without changing its
+   value or type, clearing its binding's taint, or overriding checks on its
+   index/other operands. It makes no claim that the data is safe.
+2. The override is independent of disposition: `:!` reads the value,
+   `:!~` elides, `:!-W` defaults and `:!?M` requires. `!` comes first;
+   defaults and messages retain DD65's literal-only contract.
 3. Scalar `:!` is legal wherever the corresponding data read is legal.
    Splats still require an explicit emptiness disposition; cells follow
    the same read/type rules as scalar variables.
@@ -27,10 +28,11 @@ DG: "a new operand like `$foo:!` which is equivalent to `:~` but also disables
 the taint guard — I see it as a compromise between full bless use and the
 `--no-taint` full abnegation."
 
-The taint model (DD#24) has two poles: `bless V [[…]]` cleans a variable but
-demands a validating predicate; `--no-taint` (DD#82) disables *all* taint
-checking program-wide. `:!` is the middle ground — a **predicate-less bless at a
-single use site**: the programmer vouches for this one value.
+The taint model (DD#24) has two poles: `attest V [[…]]` validates a variable
+with a predicate; `--no-taint` (DD#82) disables *all* taint checking
+program-wide. `:!` is the middle ground — a **per-read taint override**:
+the programmer forces this read through a guard that would otherwise
+prevent it. No validation occurs, and any taint on the source binding remains.
 
 ## Semantics
 
@@ -78,7 +80,7 @@ wordless. Backends: native/c go through the SSA `ArraySplat`/`ElideEmpty`
 
 </del>
 
-The modifier split below replaces this coupled elision/trust representation.
+The modifier split below separates elision from the per-read taint override.
 
 No new SB code (reuses SB4051 / SB5033 / SB5046).
 
@@ -89,8 +91,8 @@ combinations of modifiers, like `:!~`, where `!` must come first…"* Approved
 after discussion. This **supersedes** the "elidable-position-only" rule above.
 
 `!` is not a disposition at all. `-` / `?` / `~` answer *what to do when the
-value is absent*; `!` answers *how to treat the value we have*. Bundling them
-made `:!` mean two things at once, and forced the one that mattered (trust) to
+value is absent*; `!` answers *whether to override this read's taint guard*.
+Bundling them made `:!` mean two things at once, and made the override
 inherit the other's position restriction.
 
 ```
@@ -99,10 +101,10 @@ grammar:  ':' [ '!' ] [ '-' WORD | '?' MSG | '~' ]
 
 | spelling | meaning |
 |---|---|
-| `${x:!}` | the value, trusted — **identical to bare `${x}` except for taint** |
-| `${x:!~}` | trusted, and elides when empty (the old `:!`) |
-| `${x:!-W}` | trusted, `W` when empty |
-| `${x:!?M}` | trusted, abort with `M` when empty |
+| `${x:!}` | forced read — **identical to bare `${x}` except for the taint guard** |
+| `${x:!~}` | forced read, elides when empty (the old `:!`) |
+| `${x:!-W}` | forced read, `W` when empty |
+| `${x:!?M}` | forced read, abort with `M` when empty |
 
 ### `!` must come first, and that is forced
 
@@ -112,75 +114,76 @@ Not a style rule. `-` and `?` take a word that runs greedily to `}`:
 or it cannot exist. (The whole `:!X` space parsed as an error before this
 change, so no existing program silently changes meaning.)
 
-### `${x:!}` alone means "bare, but trusted"
+### `${x:!}` alone means "bare, but forced"
 
 An empty bare `$u` in a list position contributes an **empty argument**, not
 nothing (`echo A $u B` passes three arguments). So removing the elide from `:!`
-leaves it behaving exactly like the bare expansion. The modifier changes
-trust and nothing else, so it is valid in ordinary data-read positions
-where a bare expansion is valid, including a scalar assignment.
+leaves it behaving exactly like the bare expansion. The modifier overrides
+the taint guard and nothing else, so it is valid in ordinary data-read
+positions where a bare expansion is valid, including a scalar assignment.
 DD132's provisional regex-pattern restriction below is separate.
 
 That reverses this DD's original *"`:!` is not a way to assign a trusted value
 to a scalar; use `bless` for that."* The justification given there was *"This
 mirrors `:~`"* — i.e. the restriction was inherited from the elide mechanics,
-not chosen on trust-policy grounds. With the elide gone the rationale goes with
-it. `bless` remains the predicate-bearing form; `:!` remains the
-predicate-less one.
+not chosen on taint-policy grounds. With the elide gone the rationale goes with
+it. `attest` is the predicate-bearing form; `:!` is the
+per-read taint override.
 
 ### Provisional regex and scratch boundary (DG, 2026-11-09)
 
 DD132 requires successful `r?` proof for runtime regex operands and
 forbids `:!`-bearing reads in those operands, even in a successful attest
-arm or with taint checking disabled. Trust is not regex validation.
-Subjects and replacement text keep their ordinary trust rules; the ban
+arm or with taint checking disabled. Forcing a read is not regex validation.
+Subjects and replacement text keep their ordinary forced-read rules; the ban
 is on the pattern role, not the whole invocation.
 
 A caught attest on DD131's immutable scratch grants ordinary reads only
 in its success arm. Failure/post-construct code may retain the unchanged
-candidate and use `:!` for data reads, not pattern use. A trusted copy is
-ordinary data and needs its own successful check before becoming a regex.
+candidate and use `:!` for data reads, not pattern use. A copy through a
+forced read is ordinary data and needs its own successful check before
+becoming a regex.
 This is a provisional, unimplemented extension, not general const
 reassignment or a revocation of the ordinary data-read escape hatch.
 
 ### `@a:!` becomes an error, and should
 
 A splat site must state its emptiness behaviour (bare `@a` is **SB5032**,
-DD#69). Taint-off is not such a statement, so `@a:!` must become `@a:!~`,
-`@a:!-WORD` or `@a:!?MSG`.
+DD#69). A taint override is not such a statement, so `@a:!` must become
+`@a:!~`, `@a:!-WORD` or `@a:!?MSG`.
 
 This is a break, and it is a fix: today's `@a:!` **is** a DD#69 violation
-hiding in plain sight. The author asks for taint-off and silently receives an
-emptiness policy they never wrote. The split surfaces it. DD#99's
+hiding in plain sight. The author asks for a forced read and silently
+receives an emptiness policy they never wrote. The split surfaces it. DD#99's
 `map m = @{a:!}` row becomes `@{a:!~}` for the same reason.
 
 ### Consequences
 
 - `${x:!}` no longer elides. Existing list-position uses that relied on it
   become `${x:!~}`.
-- `arrvals_trust` is retired: taint-off is a `taint_off` flag on the expansion,
+- `arrvals_trust` is retired: the override is a `taint_off` flag on the expansion,
   orthogonal to the operator, so the two cannot be conflated again.
 - SB5046 (elide in a value position) now keys on the *elide*, so it fires for
   `:~` and `:!~` and not for `:!`.
 - **The diagnostic has to render the `!` back.** Splitting `!` out of the
   operator means `pe.operator` alone spells `${x:~}` for an author who wrote
   `${x:!~}`, and the advice derived from it (`${x:-DEFAULT}`) *drops the
-  taint-off* — so following it trades SB5046 for SB5020, removing the very
-  trust the author asked for. The sigil is built from operator **plus**
+  taint override* — so following it trades SB5046 for SB5020, removing the
+  forced read the author asked for. The sigil is built from operator **plus**
   `taint_off` (`elide_sigil`), and the advice keeps the `!`
   (`${x:!-DEFAULT}`). Fixed 2026-09-26; specs `optional_args.sh` 84.33-84.36.
 
 
-## Addendum (2026-09-27) — `!` vouches for the subject's read, and nothing else
+## Addendum (2026-09-27) — `!` forces the subject's read, and nothing else
 
-The 2026-09-09 split defined `${x:!-W}` as "trusted, `W` when empty" but never
+The 2026-09-09 split combined a forced read with the default `W` but never
 said what taint `W` itself carries. DG settled it:
 
 > "x=$(getenv A); y=$(getenv B); z=$x:!-$y:! ; the `!` should only apply to the
 > read of the variable's stored value"
 
-So `!` is scoped to **the read of its own subject**. It is not a trust claim
-about the expansion's result. ~~In `${x:!-$y}` the `!` covers `x`; `$y` is a
+So `!` is scoped to **the read of its own subject**. It is not a blanket
+override for the expansion's other reads. ~~In `${x:!-$y}` the `!` covers `x`; `$y` is a
 separate read that owes its own `!` (or an `attest`). The rule runs in both
 directions — a `!` in the default does not vouch for the subject either, so
 `${x:-${y:!}}` is still SB5020 on `x`.~~ DD65 later rejects interpolating defaults.
@@ -206,9 +209,9 @@ backstop.
 when `pe.operator` was `None`. The moment there was an operator, control passed
 to `source_carrying_value` and the `taint_off` flag was **dropped on the floor**
 — so the `!` of every `${x:!-…}` reached neither backend nor backstop. The
-fully-vouched spelling DG asked for did not compile; it died on the unspanned
-backstop. The wrap now happens once, before the operator dispatch, because the
-subject *is* "the read of the variable's stored value".
+explicitly forced reads DG asked for did not compile; the program died on
+the unspanned backstop. The wrap now happens once, before the operator
+dispatch, because the subject *is* "the read of the variable's stored value".
 
 Three validate sites had the mirror-image fault, treating `taint_off` as
 covering the whole expansion including its default: `is_taint_source` (a
@@ -224,21 +227,22 @@ Specs: `taint.sh` 91.24-91.33. journal 431.
 
 ## Cell enforcement (2026-10-16)
 
-DD#123's cell-is-variable principle applies the existing four trust forms to a
-cell too: `${a[i]:!}`, `${a[i]:!-W}`, `${a[i]:!?M}`, `${a[i]:!~}`. The parser
+DD#123's cell-is-variable principle applies the four forced-read forms to
+cells too: `${a[i]:!}`, `${a[i]:!-W}`, `${a[i]:!?M}`, `${a[i]:!~}`. The parser
 had routed all four to the unsupported-cell-colon diagnostic instead of the
-shared trust parser. Corrected for arrays and maps, in words and arithmetic,
-with the same brace-less/interpolation boundaries as a scalar.
+shared taint-override parser. Corrected for arrays and maps, in words and
+arithmetic, with the same brace-less/interpolation boundaries as a scalar.
 
-Trust covers the stored value, **not the index expression**. Read enumeration,
-taint-use/source checks and the shared expression walker now visit
-`ParameterExpansion.index` as well as its operand. A vouched cell therefore
-does not launder an unvouched index, and a variable read only as the index is
-not dead. The index also remains subject to argv-splat and default-type rules.
+The override covers the stored value, **not the index expression**. Read
+enumeration, taint-use/source checks and the shared expression walker now
+visit `ParameterExpansion.index` as well as its operand. A forced cell read
+therefore does not bypass the index's taint guard, and a variable read only
+as the index is not dead. The index also retains its argv-splat and
+default-type rules.
 
-Nor does trust perform a string-to-int conversion: bare `${s:!}` and
+Nor does a forced read perform a string-to-int conversion: bare `${s:!}` and
 `${a[i]:!}` on strings still owe DD#77's disposition in arithmetic. The old
-gate missed scalar imports as well as trusted cell imports; both now report
+gate missed scalar imports as well as forced cell reads; both now report
 SB4030, while int subjects and actual dispositions preserve their behavior.
 Specs `taint.sh` `ctrs.1`-`ctrs.21`; journal 512.
 

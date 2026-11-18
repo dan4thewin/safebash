@@ -16,7 +16,7 @@ status: accepted
 4. Globals use actual process-global storage. Handlers observe completed
    writes, not main's hypothetical final state.
 5. EXIT's incoming uses must be valid at every reaching orderly entry.
-   ERR requires trusted reads of potentially tainted incoming values;
+   ERR requires forced reads of potentially tainted incoming values;
    inherited bindings are readonly under DD135. Fresh input acquired into
    writable handler-owned state may be attested there.
 6. Every recoverable failure reachable during ERR needs explicit handling
@@ -26,8 +26,9 @@ status: accepted
 8. Within a live binding, resolve taint only by legal adjacent attest or a
    clean whole-subject replacement written directly on its failed branch.
    Replacement requires mutability; helpers inherit no clearing permission.
-9. Ordinary writes, unset, rebinding and self-trust copies preserve unresolved
-   taint. Fresh private lifetimes initialize their own values instead.
+9. Ordinary writes, unset, rebinding and self-copies through forced reads
+   preserve unresolved taint. Fresh private lifetimes initialize their own
+   values instead.
 10. Ordinary caught attests must resolve every continuing path; outgoing
     transfers retain their real state and handler obligations.
 11. Defer signal dispatch into EXIT across legal acquisition/resolution pairs,
@@ -350,10 +351,10 @@ failed-attest replacement and `:!` contracts are unchanged.
 In particular, `v=${v:!}` is still an unrelated assignment when written
 outside the permitted failed-attest resolution, and leaves v tainted.
 Reading through `:!` into a different clean binding remains the existing
-explicit data-trust override. DD132 provisionally forbids trusted reads
+explicit per-read taint override. DD132 provisionally forbids forced reads
 in regex-pattern operands: neither `:!` nor disabled taint checking
-supplies successful regex-validation proof. A trusted copy needs its own
-check before pattern use.
+supplies successful regex-validation proof. A copy through a forced read
+needs its own check before pattern use.
 
 For ordinary bindings, both R2 and R3 continue to apply. A caught attest
 must resolve its subject on every path that falls through to its merge,
@@ -369,7 +370,7 @@ forms, principally `:!` and its eligible attest predicate.
 DG's 2026-11-09 rule (DD132) lets the failed instance remain intact,
 immutable and unresolved, including on a fall-through path or in a
 no-else caught form. Normal reads are allowed only in the attest-success
-arm. Elsewhere only explicit trusted reads as ordinary data are allowed;
+arm. Elsewhere only explicit forced reads as ordinary data are allowed;
 regex-pattern operands cannot use `:!` and additionally require successful
 `r?` validation. Negation swaps which arm is successful.
 

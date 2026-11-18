@@ -296,7 +296,7 @@ run_sash 'array a=( )
 /bin/echo $(array b=( @{a:-ok} ); echo $b[0])'
 [[ $rc = 0 && $out = "ok" && -z $rerr ]]; chk bkstp.6
 # bkstp.7 NEGATIVE -- DD#91 scopes `!` to its own subject's read. `@{a:!-z}`
-#         vouches for the ARRAY, not for the unrelated `$t` beside it, so the
+#         forces the ARRAY read, not the unrelated `$t` beside it, so the
 #         element's taint still counts.
 run_sash 'array a=( )
 /bin/echo $(str t=$(getenv T); array b=( $t @{a:!-z} ); echo $b[0])'
@@ -318,7 +318,7 @@ run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:!~} ); echo $a[0])'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.9
 
 # bkstp.10 NEGATIVE — the same elide WITHOUT the `!`. `:~` says what to do
-#          when the value is absent; it vouches for nothing, so the array is
+#          when the value is absent; it overrides no taint guard, so the array is
 #          tainted and reading it is caught.
 run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:~} ); echo $a[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.10
@@ -336,17 +336,17 @@ run_sash 'array a=( )
 /bin/echo $(str t=$(getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:!-z} ); echo $c[0])'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.12
 
-# bkstp.13-bkstp.18 cover the vouch through a MAP construction (DD#99
+# bkstp.13-bkstp.18 cover the forced read through a MAP construction (DD#99
 #         `map m = @{a:DISP}`). `SsaInst::MapFromArray` originally had no field
 #         for the `!`, because its `mode` collapses `:~` and `:!` into one
 #         value -- they share the ODD-COUNT behaviour, which is orthogonal to
-#         the taint bypass. So the vouch was dropped at lowering and the
+#         the taint override. So the override was dropped at lowering and the
 #         backstop disagreed with the front end, which DD#91 forbids: the
 #         program compiled past `validate` and then died at the *use* with an
 #         internal message naming an SSA version and carrying no SB code.
 #         These need no `$( )` vehicle -- `--no-taint-cst` already leaves the
 #         backstop as the only judge.
-# bkstp.13 POSITIVE -- `@{a:!~}` vouches, so the map derives clean and its
+# bkstp.13 POSITIVE -- `@{a:!~}` forces the read, so the map derives clean and its
 #          VALUE is readable.
 run_sash 'str t=$(getenv HOME)
 array a=( k $t )
@@ -354,7 +354,7 @@ map m = @{a:!~}
 /bin/echo ${m[k]}'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.13
 # bkstp.14 NEGATIVE -- the same construction one character apart. `:~` says
-#          what to do with an odd trailing element; it vouches for nothing.
+#          what to do with an odd trailing element; it overrides no taint guard.
 run_sash 'str t=$(getenv HOME)
 array a=( k $t )
 map m = @{a:~}
@@ -368,13 +368,13 @@ array a=( $t v )
 map m = @{a:!~}
 for k in $(keys m) { /bin/echo $k }'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.15
-# bkstp.16 NEGATIVE -- the key route without the vouch.
+# bkstp.16 NEGATIVE -- the key route without the override.
 run_sash 'str t=$(getenv HOME)
 array a=( $t v )
 map m = @{a:~}
 for k in $(keys m) { /bin/echo $k }'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.16
-# bkstp.17 POSITIVE -- mode 0 (`:-KEY`). The vouch is carried in its own field
+# bkstp.17 POSITIVE -- mode 0 (`:-KEY`). The override is carried in its own field
 #          rather than a third `mode`, so it must hold for every disposition,
 #          not just the `:~` that shares mode 2 with it.
 run_sash 'str t=$(getenv HOME)

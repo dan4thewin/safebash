@@ -70,7 +70,7 @@ pub(super) fn arg_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
 
 /// DD#69: `@{a:-WORD}` / `@{a:?WORD}` → the empty-disposition (operator
 /// `arrvals_default` / `arrvals_abort`; the WORD is the interpolating
-/// operand, absent for `@{a:~}`). A bare trusted list splice retains its trust
+/// operand, absent for `@{a:~}`). A bare forced list-splice read retains its override
 /// modifier with the same zero-element empty result as an undispositioned splice.
 /// `None` for an unmodified `arrvals`.
 fn splat_disposition(
@@ -79,7 +79,7 @@ fn splat_disposition(
 ) -> Option<crate::ssa::ArraySplatDisposition> {
     // DD#91 addendum: the disposition and the `!` modifier are independent —
     // the operator says what happens when the array is empty, `taint_off` says
-    // whether the elements are trusted.
+    // whether the element reads are forced past their taint guard.
     let abort = match pe.operator.as_deref() {
         Some("arrvals_default") => false,
         Some("arrvals_abort") => true,
@@ -245,10 +245,10 @@ fn positional_arg_index(var: &str) -> Option<usize> {
 fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
     // The disposition subject is a plain var for a scalar `${s:OP}`, or the cell
     // read for `${a[i]:OP}` (DG: a cell behaves like a string variable).
-    // DD#91 (DG, 2026-09-27): `!` vouches for the read of *this* variable's
+    // DD#91 (DG, 2026-09-27): `!` overrides the taint guard on *this* variable's
     // stored value and nothing else. In `${x:!-$y}` it covers `x`; `$y` is a
-    // separate read that needs its own `!` (`${x:!-${y:!}}` is the vouched-both
-    // spelling — the inner braces are required, DD#90 rule 5). So the modifier
+    // separate read that needs its own `!` (`${x:!-${y:!}}` forces both reads;
+    // the inner braces are required, DD#90 rule 5). So the modifier
     // wraps the SUBJECT, whatever disposition
     // follows, and the default keeps whatever taint its own expression has.
     // This used to apply only when there was no operator, which dropped the

@@ -45,7 +45,7 @@ exactly like a command head:
   `echo`/`:` inline shortcut — `exec echo` runs `/bin/echo`, the external.
 - The exec'd program's `args` follow normal **taint** rules (DD#24): a tainted
   arg ~~without `bless`~~ is SB5020, like any command. DD93/DD127/DD128 govern
-  attest; DD91 permits explicit trusted reads.
+  attest; DD91 permits explicit forced reads.
 - The resolved target is recorded in the `--manifest` external-dependency set.
 
 ### Implementation

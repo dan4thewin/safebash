@@ -2,7 +2,7 @@ title: DD#82 — Taint bypass switches (--no-taint, --no-taint-cst)
 status: implemented
 
 1. `--no-taint` disables both frontend and SSA taint checking as an explicit
-   trust bypass, not validation of external data.
+   taint-check bypass, not validation of external data.
 2. `--no-taint-cst` disables only frontend/AST taint checking, retaining
    the independent SSA backstop for native and C emission.
 3. Both switches leave parsing, structural validation, types, arity,

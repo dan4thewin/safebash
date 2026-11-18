@@ -130,7 +130,7 @@ The C emitter does not provide this tracing.
 .B \-\-no-taint
 Disable both frontend and SSA taint checking.
 Parsing, structural validation and type checking remain enabled.
-This is an explicit trust bypass, not validation of external data.
+This explicitly disables taint checks; it does not validate external data.
 .TP
 .B \-\-no-taint-cst
 Testing switch: disable frontend/AST taint checking while retaining the
@@ -253,7 +253,7 @@ The compiler, language and runtime remain under active development.
 Validation is not a sandbox or proof that an authored validation predicate
 is correct.
 Programs retain their operating-system permissions.
-Explicit trust operations and taint-bypass switches weaken taint protection.
+Forced reads and taint-bypass switches override taint protection.
 Compilation alone does not sign a binary or make it tamper-evident.
 .PP
 Regex operations stop at the first interior NUL even though scalar strings

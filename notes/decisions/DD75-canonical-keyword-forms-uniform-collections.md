@@ -441,7 +441,7 @@ a tainted map at construction, and a tainted value reaches a subscript only
 through `attest`, which cleans it — so there is no tainted key to carry over.
 
 (DD#93's claim was briefly false: `map m = @{a:!~}` dropped the DD#91 `:!`
-vouch, and that was fixed as its own P1 before this form was built. See journal
+override, and that was fixed as its own P1 before this form was built. See journal
 459.)
 
 ### Consequences in the compiler

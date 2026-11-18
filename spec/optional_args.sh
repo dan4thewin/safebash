@@ -168,10 +168,10 @@ run_sash 'fn f { echo hi | read norm; attest v in norm [[ -n $v ]]; /bin/echo @{
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 84.30
 
 # ── DD#91 addendum: SB5046 keys on the ELIDE, and must say so accurately ──
-# `!` is a modifier, not a disposition, so `${x:!~}` is elide-plus-trust.
+# `!` is a modifier, not a disposition, so `${x:!~}` combines elision and a forced read.
 # The diagnostic used to render only `pe.operator`, quoting `${x:~}` back at
 # an author who wrote `${x:!~}` and advising `${x:-DEFAULT}` — which drops the
-# taint-off, so following it traded SB5046 for SB5020.
+# taint override, so following it traded SB5046 for SB5020.
 
 # 84.33 `:!~` in a value position is SB5046, quoted as written
 run_sash 'str x=a

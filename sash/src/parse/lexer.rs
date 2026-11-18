@@ -1128,9 +1128,9 @@ impl Scanner {
     /// form) when the operand would contain a `$( )` / `$(( ))` / `` `…` ``
     /// substitution, which must use braces.
     ///
-    /// DD#91 addendum: a leading `!` is the taint-off MODIFIER, so it may lead
-    /// a disposition (`$x:!~`, `$x:!-W`) or stand alone (`$x:!`, which is the
-    /// value trusted). The op text is re-serialized into the braced spelling by
+    /// DD#91 addendum: a leading `!` is the taint-override MODIFIER, so it may lead
+    /// a disposition (`$x:!~`, `$x:!-W`) or stand alone (`$x:!`, which is a
+    /// forced read). The op text is re-serialized into the braced spelling by
     /// both callers, so `!` simply rides along and the braced parser does the
     /// real work — one grammar, not two.
     fn try_braceless_disposition(&self, pos: usize) -> Option<(String, String, usize)> {

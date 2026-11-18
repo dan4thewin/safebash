@@ -94,7 +94,7 @@ search.
 ## See also
 
 - DD#53 — Env var isolation ~~(PATH not readable unless via getenv+bless)~~
-  Explicit getenv input follows current attest/trust rules.
+  Explicit getenv input follows current attest/forced-read rules.
 - DD#45 — Export rejected (can't modify inherited PATH)
 
 ## Clarification (DG, 2026-06-21)

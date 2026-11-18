@@ -1,7 +1,7 @@
 title: DD#90 — brace-less disposition expansions (`$x:-foo`, `@a:~`)
 status: accepted
 
-1. Dispositions and trust modifiers have equivalent braced and brace-less
+1. Dispositions and taint-override modifiers have equivalent braced and brace-less
    spellings on scalars, positionals, cells and splats where their grammar
    permits (DD91/DD123). Their ordinary type, taint and placement rules remain.
 2. Use braces to bound trailing concatenation, unquoted whitespace in operands
@@ -35,7 +35,7 @@ Brace-less applies to ~~exactly the three~~ disposition operators, for both a sc
 - **`:?`** error/abort — `$x:?msg`, `@a:?msg`
 - **`:~`** elide — `$x:~`, `@a:~`
 
-DD91 adds the orthogonal trust modifier; DD123 applies scalar rules to cells.
+DD91 adds the orthogonal taint override; DD123 applies scalar rules to cells.
 
 Substring `${x:off:len}` and regex `${x:s/re/sub/}` stay **braced** (DG
 2026-09-04). Their `:digit` / `:s` forms collide badly with the common literal

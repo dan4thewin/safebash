@@ -26,7 +26,7 @@ archive. Build instructions and development procedures live in the README
 and [AGENTS.md](../AGENTS.md#build-and-test).
 
 Compilation provides static checks, not a sandbox or a proof that an
-author's validation predicate is sufficient. Explicit trust (`:!`) and
+author's validation predicate is sufficient. Forced reads (`:!`) and
 taint-disable switches bypass taint protection rather than validate data.
 External programs retain their own behavior and operating-system
 permissions. Absolute command paths do not freeze the target filesystem or
@@ -155,10 +155,10 @@ The same SSA instructions feed both backends and the taint/handler analyses.
 Revisiting one construction site is allowed; skipped sites and zero-trip
 loop binders do not reset storage. This adds neither block scope nor automatic
 destruction at loop exit. A caught attest permits ordinary scratch reads only
-inside its success arm; failure and post-construct reads require explicit
-trust. The failed instance remains intact and unresolved, without an ordinary
-binding's requirement to replace it or leave the path. This does not relax
-adjacency, ownership or the separate regex-proof requirement described below.
+inside its success arm; failure and post-construct uses require explicit
+forced reads. The failed instance remains intact and unresolved, without an
+ordinary binding's requirement to replace it or leave the path. This does not
+relax adjacency, ownership or the separate regex-proof requirement below.
 
 Ordinary array fillers now build private batches too. `CollectionPublish`
 carries the previous destination explicitly. The shared runtime checks the
@@ -221,9 +221,9 @@ types, rather than a generic expansion's string type, govern string operands.
 
 The shared proof analysis requires valid immutable regex values, including
 possible splat defaults. Present-cell proofs survive byte-preserving quoting,
-but trusted copies and mutable intermediates do not convey validity.
-Compiler-owned literal argument batches can establish static facts; a
-source-created array still needs its own successful check.
+but copies through forced reads and mutable intermediates do not convey
+validity. Compiler-owned literal argument batches can establish static facts;
+a source-created array still needs its own successful check.
 
 Earlier mixed-list elements are also retained before later effects.
 The shared word-concatenation path retains earlier component values,
@@ -372,10 +372,10 @@ compilation entry. The runtime rejects counted interior NUL, copies
 exactly the candidate's bytes into a terminated buffer, and releases both
 that copy and the compiled program. Invalid syntax is false; allocation
 failure follows fatal ERR routing. No compiled handle or cache persists.
-The shared structural pattern check rejects trusted (`:!`) reads with SB5105
+The shared structural pattern check rejects forced (`:!`) reads with SB5105
 before its dynamic-pattern early return. It composes the canonical expression
 and statement walkers to cover indices, arithmetic and nested captures;
-trusted subjects, replacements and predicate candidates remain legal.
+forced reads of subjects, replacements and predicate candidates remain legal.
 
 [`regex_proof.rs`](../sash/src/regex_proof.rs) checks existing consumers on the
 shared, pre-fold SSA, before terminal analysis or inspection-output exits.

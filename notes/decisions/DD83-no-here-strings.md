@@ -3,8 +3,8 @@ status: accepted
 
 1. Feed produced data to stdin with `producer | consumer`; a supported
    terminal reader updates its bindings in the current process.
-2. Pipe reads introduce taint even for builtin-only producers. Validate or
-   explicitly trust the acquired data under DD127/DD128.
+2. Pipe reads introduce taint even for builtin-only producers. Validate the
+   acquired data or explicitly force its read under DD127/DD128.
 
 ---
 

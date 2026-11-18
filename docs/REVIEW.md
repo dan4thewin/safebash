@@ -55,8 +55,8 @@ free of defects.
   erase none. Buffer eligibility and lowering must agree, and the SSA
   backstop must inspect the transport actually emitted.
 - [ ] Check legal adjacency, subject identity and ownership at resolution.
-  Ordinary overwrite, unset or trusted self-copy must not clear unresolved
-  taint. Received taint cannot be attested in a callee; single-use outward
+  Ordinary overwrite, unset or self-copy through a forced read must not clear
+  unresolved taint. Received taint cannot be attested in a callee; single-use outward
   resolution and shared-function ownership have different obligations.
 - [ ] Check summary application and reaching definitions across calls,
   lazy branches, loop back-edges, counted transfers and returns. Preserve

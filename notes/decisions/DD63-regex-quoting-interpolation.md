@@ -182,8 +182,8 @@ engine. In the **function form** this is just argument evaluation. In the
   its own construction and `r?` check. A literal pattern retains
   compile-time validation via `regcomp9` (DD#39). Within that trial:
   Neither `:!` nor disabled
-  taint checking supplies regex proof, and pattern operands forbid trusted
-  reads even when subject/replacement trust is legal.
+  taint checking supplies regex proof, and pattern operands forbid forced
+  reads even when those reads are legal for subjects and replacements.
 
 ## `\xnn` byte escape
 

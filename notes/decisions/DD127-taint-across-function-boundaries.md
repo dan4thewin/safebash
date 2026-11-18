@@ -10,7 +10,7 @@ status: accepted
    Anonymous bodies are single-use; zero or multiple sites make a body shared.
 4. Shared bodies cannot leave their own unresolved taint in globals or slots.
    A shared producer's tainted output cannot be attested by its caller;
-   clean buffered output and explicit trusted reads remain available.
+   clean buffered output and explicit forced reads remain available.
 5. Apply DD128's strict resolution: ordinary writes do not clear unresolved
    taint or its owners. A fresh acquisition has fresh provenance and adjacency.
 6. Check each function through one independent summary, mapping actual global
@@ -671,7 +671,7 @@ provenance; an ordinary clean overwrite, split, unset or `+=` preserves
 unresolved taint and its owners. A permitted failed-attest replacement clears
 both together (DD#128). An attest of a clean name remains
 a no-op. An attest of an owned tainted value is **SB5100**, naming the shared
-producer and its call sites. Trust at a use (`:!`) remains legal: ownership
+producer and its call sites. A forced read (`:!`) remains legal: ownership
 does not reject merely capturing or retaining the value.
 
 Each existing function summary additionally holds:
@@ -852,7 +852,7 @@ The following remain:
   pipe from the ordinary stdin of its calls and captures.
 - Existing buffered-capture controls (`outflow.10`-`.13`) remain valid.
   The new ownership rule does not widen buffering or alter the SSA backstop.
-- `pipeown.4` uses explicit trust for its shared builtin writer's real pipes.
+- `pipeown.4` uses forced reads for its shared builtin writer's real pipes.
   Its triple-nested reader scope and exact eight-line output assertion are
   unchanged.
 

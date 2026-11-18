@@ -8,7 +8,7 @@ echo "1..$plan" >&3
 
 set +e
 
-# DD#91 + DD#123: trust modifies a cell's stored value, not its type or index.
+# DD#91 + DD#123: the override forces a cell's read, not its type or index checks.
 run_sash 'array a=()
 argv 1 a
 echo "${a[0]:!}|${a[7]:!}|${a[7]:!-fallback}|${a[0]:!?missing}"
@@ -38,7 +38,7 @@ run_sash 'array a=(); argv 1 a; echo ${a[9]:!?cell-missing}' one
 run_sash 'map m=([k]=hi); echo $(( ${m[k]:!?cell-not-int} ))'
 [[ $rc != 0 && -z $out && $rerr == *cell-not-int* ]]; chk ctrs.7
 
-# A vouched use does not declassify the collection for a later bare read.
+# A forced read does not declassify the collection for a later bare read.
 run_sash 'array a=(); argv 1 a; echo ${a[0]:!}; echo ${a[0]}' one
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.8
 
@@ -59,8 +59,8 @@ run_sash 'array a=(hello); echo "${a[0]:!~}"'
 run_sash 'array a=(hello); int i=0; echo ${a[$i]:!-fallback}'
 [[ $rc = 0 && $out = "hello" && -z $rerr ]]; chk ctrs.12
 
-# The separate vouched use keeps the old dead-variable fault from masking
-# the index-taint regression. Trusting a cell never vouches for its index.
+# The separate forced read keeps the old dead-variable fault from masking
+# the index-taint regression. Forcing a cell read never overrides its index's checks.
 run_sash 'array a=(hello); str i=$(arg 1); : ${i:!}
 echo ${a[$(( ${i:-0} ))]:!}' 0
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.13
@@ -592,7 +592,7 @@ run_sash 'if - /bin/cat b25.txt | ! readline x { echo "neg" } else { echo "pos[$
 [[ $rc != 0 && -z $out \
    && $err == *':1:65: error [SB5020] tainted variable $x used without attest'* ]]; chk 24.27
 # 24.28 `! readline x` in a return producer: the read succeeds, so p fails.
-#       Trust the read explicitly to observe the status rather than taint.
+#       Force the read explicitly to observe the status rather than taint.
 run_sash 'str x=init
 fn p { return echo abc | ! readline x }
 if p { echo "t[${x:!}]" } else { echo "f[${x:!}]" }'
@@ -656,7 +656,7 @@ run_sash 'str y=""
 str z=${y:?$(getenv HOME)}
 echo "[$z]"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.9
-# dd78.10 the `:!?` vouching form does not buy an exemption — `!` covers the
+# dd78.10 the `:!?` forced-read form does not buy an exemption — `!` covers the
 #        subject read, and the message is still parsed as a message
 run_sash 'str h=$(getenv HOME)
 attest h [[ -n $h ]]
@@ -1102,8 +1102,8 @@ fn f {
 f'
 [[ $rc = 0 && $out = $'clean\nx' && -z $err && -z $rerr ]]; chk bfb.28
 
-# ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
-# A sanctioned per-use bypass — use a tainted value without a attest predicate
+# ── DD#91: the `:!` taint-override MODIFIER (orthogonal to the dispositions) ──
+# A forced read — use a tainted value without an attest predicate
 # (the middle ground between `attest` and `--no-taint`).
 # 91.1 tainted `${x:!}` compiles & runs (the bypass).
 run_sash 'x=$(getenv HOME); /bin/echo ${x:!}'
@@ -1124,22 +1124,22 @@ run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!~' HELLO
 # 91.6 braced `@{a:!~}` likewise
 run_sash 'argv 1 a; /usr/bin/printf "%s" @{a:!~}' HI
 [[ $rc = 0 && $out = "HI" && -z $err ]]; chk 91.6
-# 91.7 control: tainted `@a:?e` (no trust) is rejected (SB5020)
+# 91.7 control: tainted `@a:?e` (no override) is rejected (SB5020)
 run_sash 'argv 1 a; /bin/echo @a:?e' X
 [[ $rc != 0 && $err == *SB5020* ]]; chk 91.7
 # 91.8 `!` must be followed by a disposition or nothing — `${x:!foo}` is
-# malformed and must NOT quietly degrade to a trusted bare `${x}`
+# malformed and must NOT quietly degrade to a forced bare `${x}` read
 run_sash 'x=hi; /bin/echo ${x:!foo}'
 [[ $rc != 0 && -z $out && $err == *SB4051* ]]; chk 91.8
 # 91.9 `@{a:!WORD}` takes no word — SB5033 (array)
 run_sash 'array a=(); /bin/echo @{a:!x}'
 [[ $rc != 0 && -z $out && $err == *SB5033* ]]; chk 91.9
 # 91.10 a scalar assignment is now LEGAL — with the elide split out, `:!` is
-# just "the value, trusted", so it belongs anywhere a bare expansion does.
+# just a forced read, so it belongs anywhere a bare expansion does.
 # (This reverses the original DD#91 rule; see its 2026-09-09 addendum.)
 run_sash 'x=hi; z=${x:!}; /bin/echo $z'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 91.10
-# 91.11 `:!` on a CLEAN var is a harmless no-op taint-off (just the value)
+# 91.11 `:!` on a CLEAN var is a harmless no-op override (just the value)
 run_sash 'x=hi; /bin/echo ${x:!}'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 91.11
 
@@ -1149,18 +1149,18 @@ run_sash 'x=hi; /bin/echo ${x:!}'
 # which the grammar forces: `-`/`?` words run greedily to `}`, so `${u:-foo!}`
 # is the word "foo!" and a trailing modifier could never be seen.
 
-# 91.12 `:!` alone is "bare, but trusted" — an EMPTY value contributes an empty
+# 91.12 `:!` alone is a forced bare read — an EMPTY value contributes an empty
 # argument, exactly as bare `$u` does. It does NOT elide any more.
 run_sash 'u=""
 /usr/bin/printf "[%s]" A ${u:!} B'
 [[ $rc = 0 && $out = "[A][][B]" && -z $err ]]; chk 91.12
 
-# 91.13 …and `:!~` is the old `:!`: trusted AND elided when empty.
+# 91.13 …and `:!~` is the old `:!`: a forced read AND elided when empty.
 run_sash 'u=""
 /usr/bin/printf "[%s]" A ${u:!~} B'
 [[ $rc = 0 && $out = "[A][B]" && -z $err ]]; chk 91.13
 
-# 91.14 `:!-WORD` — trusted, with a default when empty
+# 91.14 `:!-WORD` — forced read, with a default when empty
 run_sash 'u=""
 /bin/echo ${u:!-fallback}'
 [[ $rc = 0 && $out = "fallback" && -z $err ]]; chk 91.14
@@ -1170,42 +1170,42 @@ run_sash 'u=set
 /bin/echo ${u:!-fallback}'
 [[ $rc = 0 && $out = "set" && -z $err ]]; chk 91.15
 
-# 91.16 `:!?MSG` — trusted, aborts when empty
+# 91.16 `:!?MSG` — forced read, aborts when empty
 run_sash 'u=""
 /bin/echo ${u:!?empty please}'
 [[ $rc != 0 && -z $out ]]; chk 91.16
 
-# 91.17 the whole point: a TAINTED value is trusted through a combination too,
+# 91.17 the whole point: a TAINTED read is forced through a combination too,
 # not just through bare `:!`
 run_sash 'x=$(getenv HOME); /bin/echo ${x:!-none}'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.17
 
-# 91.18 a splat still must state its emptiness behaviour — taint-off is not
+# 91.18 a splat still must state its emptiness behaviour — a taint override is not
 # such a statement, so bare `@a:!` is SB5032 exactly as bare `@a` is. Under the
 # old coupling this silently supplied an elide the author never wrote.
 run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!' X
 [[ $rc != 0 && $err == *SB5032* ]]; chk 91.18
 
-# 91.19 `@{a:!-WORD}` — trusted splat with a substitute element when empty
+# 91.19 `@{a:!-WORD}` — forced splat read with a substitute element when empty
 run_sash 'array a=(); /usr/bin/printf "[%s]" @{a:!-sub}'
 [[ $rc = 0 && $out = "[sub]" && -z $err ]]; chk 91.19
 
-# 91.20 `@{a:!?MSG}` — trusted splat, aborts when empty
+# 91.20 `@{a:!?MSG}` — forced splat read, aborts when empty
 run_sash 'array a=(); /usr/bin/printf "%s" @{a:!?nothing}'
 [[ $rc != 0 && -z $out ]]; chk 91.20
 
 # 91.21 the modifier is orthogonal, so the disposition still works normally on
-# a NON-empty trusted splat
+# a NON-empty forced splat read
 run_sash 'argv 1 a; /usr/bin/printf "[%s]" @{a:!-sub}' P Q
 [[ $rc = 0 && $out = "[P][Q]" && -z $err ]]; chk 91.21
 
 # 91.22 order is fixed: `~!` is not a spelling. It must not be read as `:~`
-# with a stray word either — that would silently drop the trust.
+# with a stray word either — that would silently drop the override.
 run_sash 'x=hi; /bin/echo ${x:~!}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 91.22
 
 # 91.23 DG's reported line: split a tainted scalar into a CLEAN array with a
-# per-use trust, no attest predicate
+# forced read, no attest predicate
 run_sash 'ckd=$(getenv HOME)
 read $ckd:! opts
 /bin/echo "$(len opts)"'
@@ -1811,7 +1811,7 @@ a[0]=${x:-fallback}
 echo "${a[0]}"'
 [[ $rc = 0 && $out = "fallback" && -z $err ]]; chk 61.8
 
-# 61.9 CONTROL: DD#91's `!` still vouches — `is_taint_source` honours
+# 61.9 CONTROL: DD#91's `!` still forces the read — `is_taint_source` honours
 #      `taint_off` exactly as `pexp_uses_tainted` does.
 run_sash 'str t=$(getenv HOME)
 array a=( ${t:!} )
@@ -1865,8 +1865,8 @@ run_sash 'str s="one"
 attest s [[ -n $s ]]
 echo "$s"'
 [[ $rc = 0 && $out = "one" && -z $err ]]; chk 61.25
-# 91.24-91.33 DD#91's `:!` vouches for a READ. With a literal operand there is
-# no read in the default to vouch for, so `:!-EXPANSION` is SB4070 in every
+# 91.24-91.33 DD#91's `:!` forces a READ. With a literal operand there is
+# no read in the default to force, so `:!-EXPANSION` is SB4070 in every
 # spelling -- including the four that used to be ACCEPTED here because `!`
 # covered both subject and operand.
 # 91.24 `${h:!-${u:!}}`, formerly accepted
@@ -1887,7 +1887,7 @@ str h=$(getenv HOME)
 str z=$u:!-${h:!}
 echo "ok:$z"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.26
-# 91.27 an unvouched tainted operand (was SB5020)
+# 91.27 a tainted operand without its own override (was SB5020)
 run_sash 'str h=$(getenv HOME)
 str p=$(getenv PATH)
 str z=${h:!-$p}
@@ -1923,7 +1923,7 @@ int a=${n:-7}
 int b=${n:!-7}
 echo "$a:$b"'
 [[ $rc = 0 && $out = "7:7" && -z $rerr ]]; chk 91.31
-# 91.32 an unvouched operand into an array literal (was SB502x)
+# 91.32 an operand without its own override into an array literal (was SB502x)
 run_sash 'str h=$(getenv HOME)
 str p=$(getenv PATH)
 array a=( ${h:!-$p} )
@@ -1934,18 +1934,18 @@ run_sash 'str h=$(getenv HOME)
 array a=( ${h:!-$(getenv PATH)} )
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.33
-# ── DD#91 addendum: `!` is a MODIFIER, so a vouched splat is legal in every
+# ── DD#91 addendum: `!` is a MODIFIER, so a forced splat read is legal in every
 #    position a bare one is — including a `for`-in source. Before 2026-09-30
 #    `reject_tainted_array_iter` resolved the splat without ever consulting
 #    `pe.taint_off`, so 91.34 was SB5020: the modifier was silently ignored,
 #    re-imposing exactly the position restriction the addendum removed.
-# 91.34 a vouched splat iterates a tainted array
+# 91.34 a forced splat read iterates a tainted array
 run_sash 'array g=()
 argv 1 g
 for v in @{g:!} { echo "[$v]" }' one two
 [[ $rc = 0 && $out == "[one]
 [two]" && -z $rerr ]]; chk 91.34
-# 91.35 control: the same loop, unvouched, is still rejected
+# 91.35 control: the same loop, without the override, is still rejected
 run_sash 'array g=()
 argv 1 g
 for v in @g { echo "[$v]" }' one
@@ -1956,7 +1956,7 @@ argv 1 g
 for v in @{g:!} { echo "$v" }
 echo @{g:-x}' one
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.36
-# 91.37 nested vouched loops over the same tainted array
+# 91.37 nested forced-read loops over the same tainted array
 run_sash 'array g=()
 argv 1 g
 for a in @{g:!} { for b in @{g:!} { echo "$a$b" } }' x y

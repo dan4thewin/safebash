@@ -699,7 +699,7 @@ fn try_dispatch_glob(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value });
-    // A glob materialises into a fresh temp array; nothing to vouch for.
+    // A glob materialises into a fresh clean temp array; no taint override.
     Some(lower_for_array(
         f, &tmp_name, false, false, ssa, state, block,
     ))
@@ -713,7 +713,7 @@ pub(super) struct ArrayIter {
     pub name: String,
     /// `for k in $(keys m)` binds the key; `for v in @a` the value.
     pub use_keys: bool,
-    /// DD#91: the `!` taint-off modifier, `for v in @{a:!}`.
+    /// DD#91: the `!` per-read taint override, `for v in @{a:!}`.
     pub vouched: bool,
 }
 
@@ -742,7 +742,7 @@ fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
         }
         // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
         ExprKind::CommandSubstitution(stmts) => {
-            // `$(keys m)` has no splat to carry a modifier, so never vouched.
+            // `$(keys m)` has no splat to carry a modifier, so no taint override.
             let map = crate::ir::for_head_keys(stmts)?;
             Some(ArrayIter {
                 name: literal_name_of(map).to_string(),

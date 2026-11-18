@@ -40,7 +40,7 @@ signed 64-bit integer and binds the converted value to `amount`. Invalid
 input aborts before a total is printed.
 
 These checks are not a sandbox or a proof that a validation predicate is
-correct. Programs retain their operating-system permissions. Explicit trust
+correct. Programs retain their operating-system permissions. Forced reads
 (`:!`) and `--no-taint` bypass taint protection; they do not validate data.
 Compilation alone does not sign a binary or make it tamper-evident.
 

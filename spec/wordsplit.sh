@@ -453,7 +453,7 @@ run_sash 'fn f { x=hi; echo a $x:~ b }; f'
 [[ $rc = 0 && $out = "a hi b" && -z $err ]]; chk 22.30
 
 # 22.31 the reported line (DD#99: `echo -n` is now `write`)
-# of a `:!`-trusted value piped into a fresh array read) now works end-to-end.
+# of a value read through `:!` then piped into a fresh array read) now works end-to-end.
 run_sash 'fn f { x=hi; write $x:! | read norm; attest v in norm [[ -n $v ]]; /bin/echo "$(len norm):${norm[0]}" }; f'
 [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.31
 
@@ -726,8 +726,8 @@ read ${u:~} f
 echo "${f[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.18
 
-# nr.19 …but `:!` alone is NOT an elide (DD#91 addendum) — it is the value,
-# trusted — so it is legal in the source slot. This is the spelling DG
+# nr.19 …but `:!` alone is NOT an elide (DD#91 addendum) — it is a forced
+# read — so it is legal in the source slot. This is the spelling DG
 # reported; it used to be a spurious SB5020, then a misdirected SB5046.
 run_sash 'u=""
 read ${u:!} f

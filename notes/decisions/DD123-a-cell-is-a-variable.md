@@ -15,8 +15,8 @@ status: accepted
    meaningful zero: empty string or integer zero. Scalar/cell `:~`
    elides empty strings and keeps integer zero rendered as `0` (DD#84).
    Arithmetic string conversion retains its distinct validity trigger.
-5. Trust on a cell read does not trust its index. The index is a separate
-   read and retains its own binding, taint and type checks.
+5. Forcing a cell read does not override its index's taint guard. The index
+   is a separate read and retains its own binding, taint and type checks.
 
 ---
 
@@ -194,14 +194,15 @@ lvalue; bare `m[k]` is still inexpressible; `${…}` is still never an lvalue.
 ## Enforcement follow-on (2026-10-16)
 
 The same principle exposed two remaining
-parser differences: cell trust forms were rejected instead of taking the
-scalar trust path, while unknown cell tails silently vanished. Both are fixed
-(DD#91 / SB4047). Tracing the new trust path also exposed omitted cell-index
-walks in read, taint, argv-splat and default-type checks. The index is a separate
-read, not covered by the cell's trust flag. Bare trusted string values still
-owe their string-to-int disposition, for cells and scalars alike. The existing
-SB4039 rejection for unsupported cell colon operators is preserved; its text
-no longer incorrectly says substring/sed on cells are unimplemented.
+parser differences: forced cell reads were rejected instead of taking the
+scalar taint-override path, while unknown cell tails silently vanished.
+Both are fixed (DD#91 / SB4047). Tracing the new override path also exposed
+omitted cell-index walks in read, taint, argv-splat and default-type checks.
+The index is a separate read, not covered by the cell's override flag.
+Bare forced string reads still owe their string-to-int disposition, for
+cells and scalars alike. The existing SB4039 rejection for unsupported cell
+colon operators is preserved; its text no longer incorrectly says
+substring/sed on cells are unimplemented.
 Journal 512 records the probes and the coverage measurement.
 
 ## Prior art

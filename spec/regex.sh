@@ -1034,7 +1034,7 @@ run_sash 'str s=a; if [[ $s =~ "^a{4294967297}$" ]] { echo wrong }'
 run_sash 'str s=a; if [[ $s =~ "^a{1,4294967297}$" ]] { echo wrong }'
 [[ $rc != 0 && $err == *SB5023* && $err == *'invalid repetition range'* ]]; chk regexvalid.23
 
-# DD132 trial: trust is not a pattern proof, in any consumer or operand depth.
+# DD132 trial: a forced read is not a pattern proof, in any consumer or operand depth.
 run_sash 'const p=a; if match a ${p:!} { echo matched }'
 [[ $rc != 0 && $err == *SB5105* && $err == *'regex-pattern operand'* ]]; chk regextrust.1
 

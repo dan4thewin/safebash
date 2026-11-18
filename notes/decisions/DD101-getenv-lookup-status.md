@@ -177,7 +177,7 @@ may branch on absence, discard presence or supply a literal default.
 An attest checks acceptable contents, not whether the name existed. A valid
 predicate may accept `""` while the application still requires presence;
 no value-only predicate can distinguish that from an absent lookup.
-Taint resolution, an explicit trusted read and taint-disable switches therefore
+Taint resolution, an explicit forced read and taint-disable switches therefore
 cannot discharge the lookup-status obligation. Handling presence likewise
 does not attest the value or permit an otherwise-illegal tainted read.
 

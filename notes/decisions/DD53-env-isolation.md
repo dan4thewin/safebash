@@ -19,7 +19,7 @@ namespaces. There is no implicit mirroring in either direction.
 
 The explicit environment read is `$(getenv NAME [DEFAULT])`.
 The result is tainted (DD#24) and ~~must be blessed before use.~~ requires
-legal attest or an explicit trusted read under DD91/DD93.
+legal attest or an explicit forced read under DD91/DD93.
 
 Without DEFAULT, DD101 requires explicit handling of lookup status through
 a legal capture-condition, or discard inside `$(- getenv NAME)`. Using the

@@ -211,7 +211,7 @@ A fresh-binding request cannot target an already-bound slot.
 
 DD132 additionally requires real regex proof when a received element
 serves as a pattern; cleanliness or identity alone is not validation.
-No call may launder a trusted read into proof or export a caught
+No call may launder a forced read into proof or export a caught
 scratch attest's limited permission. Non-aliasing, element/kind typing
 and the one-signature rule remain; the integrated trial owns enforcement.
 

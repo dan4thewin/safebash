@@ -6,7 +6,7 @@ status: implemented
 2. `sash-expand` emits validated-format key/value text; read, split and construct
    collections using DD99's reader and array-to-map contracts.
 3. Kernel-read configuration remains tainted and requires the ordinary
-   adjacent attest/trust discipline.
+   adjacent attest/forced-read discipline.
 
 ---
 

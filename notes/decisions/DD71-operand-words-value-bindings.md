@@ -239,7 +239,7 @@ immutable runtime pattern before any regex consumer. Invalid candidates
 are quiet false at the predicate; literal regex use stays statically
 validated. Ordinary operand-word lexing is unchanged, but assembled or
 transformed patterns need validation of their final value. Neither
-quoting nor a trust modifier manufactures proof; `:!`-bearing pattern
+quoting nor a taint override manufactures proof; `:!`-bearing pattern
 reads are forbidden. The trial is tracked in `q-glob-semantics`.
 
 ## Removed / added

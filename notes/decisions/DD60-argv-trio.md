@@ -158,7 +158,7 @@ Negative indices (`$(arg -1)`, `$(argv -1)`) are rejected at compile time
 The governing rule (DD#24): **assigning from a source is allowed (the
 target becomes tainted); ~~reading a tainted variable is rejected except
 inside `bless`.~~** DD#93 names validation `attest`; DD#91 also permits an
-explicit trusted read. `getenv`/`argv`/`arg`/`read`/`$(extern)` are sources;
+explicit forced read. `getenv`/`argv`/`arg`/`read`/`$(extern)` are sources;
 `$a`, `${a[i]}`, `@a` are reads of a stored variable. For-in iteration is
 therefore a **bind** (from a source) or a **read** (of a variable),
 depending on the iterand:

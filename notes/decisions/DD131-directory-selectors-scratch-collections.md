@@ -265,8 +265,8 @@ not a failed construction. A failed attest leaves its candidate intact.
 Acquisition, adjacency and ownership still apply. The selected exception
 for a **caught attest on immutable scratch** is DD132/DD128: normal reads
 are confined to the attest-success arm, with regex use additionally
-requiring `r?`; elsewhere only explicit trusted data reads are allowed,
-never a trusted regex-pattern operand. The failed instance may remain
+requiring `r?`; elsewhere only explicit forced data reads are allowed,
+never a forced regex-pattern read. The failed instance may remain
 unresolved. It is not automatically abandoned, replaced or declassified.
 
 ## Assignment and iteration sugar

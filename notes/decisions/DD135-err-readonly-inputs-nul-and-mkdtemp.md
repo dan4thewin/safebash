@@ -134,7 +134,7 @@ if [[ -d ${work:!} ]] {
 }
 ```
 
-The first trusted read permits inspection; the second permits passing the
+The first forced read permits inspection; the second permits passing the
 data. The successful `-d` supplies only NUL-freedom for the stable value.
 The command's own failure is still explicitly handled. No inherited attest,
 blanket SB5101 exemption or NUL-guard suppression is involved.

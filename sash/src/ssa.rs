@@ -593,7 +593,7 @@ pub enum SsaInst {
     /// element becomes the value of `key`), 1 `:?` (abort), 2 `:~`/`:!`
     /// (discard). An empty array is a valid empty map.
     ///
-    /// DD#91: `taint_off` is the `!` vouch, and it needs its own field because
+    /// DD#91: `taint_off` is the `!` override; it needs its own field because
     /// `mode` cannot carry it — `:~` and `:!` share mode 2 precisely because
     /// they share the *odd-count* behaviour, which is orthogonal to the taint
     /// bypass. Dropping it here made the SSA taint pass disagree with
@@ -1444,15 +1444,15 @@ pub enum SsaValue {
     /// this never reaches a scalar `lower_value`.
     ///
     /// DD#91: `taint_off` is set for the `:!~` spelling — the elide behaviour
-    /// is identical, but the value is treated as **clean** (a predicate-less
-    /// attest, a sanctioned per-use taint bypass). Only the taint passes read
+    /// is identical, but the forced read overrides its source's taint without
+    /// validating the data or clearing the source binding. Only taint passes read
     /// the flag; codegen/backends ignore it. Bare `:!` is not an elide at all
     /// and uses `Trusted` instead.
     ElideEmpty {
         source: Box<SsaValue>,
         taint_off: bool,
     },
-    /// DD#91 (2026-09-09 addendum): `${x:!}` — the value, trusted. The `!`
+    /// DD#91 (2026-09-09 addendum): `${x:!}` — a forced read. The `!`
     /// modifier with no disposition.
     ///
     /// Purely a taint annotation: codegen lowers it as its `source` and the
@@ -1542,7 +1542,7 @@ pub struct ArraySplatDisposition {
     /// substituting.
     pub abort: bool,
     /// DD#91: `@{a:!DISP}` (`taint_off`) — the splatted
-    /// elements are trusted clean (a per-use attest-all bypass). Only the taint
+    /// element reads override the array's taint without validation. Only taint
     /// passes read this; codegen ignores it (the runtime splat is identical to
     /// a wordless `arrvals_default`).
     pub taint_off: bool,
@@ -1561,7 +1561,7 @@ impl SsaValue {
         }
     }
 
-    /// Ordinary storage reads, including indices of explicitly trusted cells.
+    /// Ordinary storage reads, including indices of explicitly forced cell reads.
     /// Total over `SsaValue`; do not add a wildcard.
     pub(crate) fn read_variables(&self, f: &mut impl FnMut(&VarRef)) {
         match self {

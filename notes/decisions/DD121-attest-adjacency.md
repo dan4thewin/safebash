@@ -15,7 +15,7 @@ status: accepted
    outgoing state; `exit` must satisfy EXIT's entry contract.
    Negated `if attest` obeys the same success/failure rule.
 4. An unresolved value is readable only through an eligible attest
-   predicate or explicit `:!`. Trusting a read or overwriting ordinary
+   predicate or explicit `:!`. Forcing a read or overwriting ordinary
    bytes does not clear the source binding. Fresh acquisition supplies
    new adjacency, not automatic resolution.
 5. DD#127 governs ownership: received taint is not attested in a callee;
@@ -87,13 +87,13 @@ tainted.
 
 **R3 — Explicit unresolved reads.** Absent an attest, a tainted variable is
 readable only through `:!` (DD#91) or its eligible attest predicate.
-DD132's separate regex-validity check is not supplied by that trust escape.
+DD132's separate regex-validity check is not supplied by that taint override.
 
 **Provisional scratch exception (DG, 2026-11-09; DD131/DD132).** A caught
 attest on immutable scratch may leave its failed instance unresolved on
 a fall-through path, including a no-else form. Ordinary reads are confined
 to the attest-success arm; failure and post-construct reads require `:!`
-as data. Pattern operands prohibit trusted reads and require actual
+as data. Pattern operands prohibit forced reads and require actual
 successful `r?` proof. Negation swaps the successful arm. Even a failed
 arm that exits or continues does not export permission beyond the caught
 construct. Standalone attest still permits subsequent use on success.

@@ -3,7 +3,7 @@ status: accepted
 
 1. Every subscript index is an ordinary read, including indices on writes,
    assignment values and test operands. Check its taint independently of the
-   collection; trusting a cell does not trust its index.
+   collection; forcing a cell read does not override its index's taint guard.
 2. A rejected index read identifies the index variable, not an innocent
    container, and carries the source position of the read.
 3. Nested parsing preserves the origin of verbatim source. Reconstructed

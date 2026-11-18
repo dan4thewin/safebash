@@ -704,7 +704,7 @@ map m = @{a:?uneven}
 echo "${m[NAME]}"'
 [[ $rc = 0 && $out = "sash" && -z $err ]]; chk mp.8
 
-# mp.9 `:!~` discards like `:~` and additionally trusts the elements (DD#91).
+# mp.9 `:!~` discards like `:~` and also forces the element reads (DD#91).
 # `!` is the modifier, `~` the disposition — a splat must still state one.
 run_sash 'array a=(k1 v1 k2)
 map m = @{a:!~}
@@ -874,8 +874,8 @@ echo "[$t]"'
 run_sash 'array a=(x y z)
 echo "$(len a):$(join a)"'
 [[ $rc = 0 && $out = "3:x y z" && -z $rerr ]]; chk 96.22
-# vm.bl24 a `:!`-modified operand is still an operand -- `!` vouches for a read,
-# and a literal operand has no read to vouch for
+# vm.bl24 a `:!`-modified operand is still an operand -- `!` forces a read,
+# and a literal operand has no read to force
 run_sash 'str y=abc
 str x=""
 str z=$x:-$y:!

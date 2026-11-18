@@ -1231,7 +1231,7 @@ leave (`exit`, `return`, `break`, `continue`).
 
 
 
-Trusting one read
+Forcing one read
 ---
 
 ```bash
@@ -1246,15 +1246,15 @@ argument length: 5
 ```
 
 
-`:!` says this use is justified without a separate `attest`. Here we only
-measure the input's length, which is safe for any contents.
+`:!` forces this read past its taint guard: a **per-read taint override**.
+Here we only measure the input's length, which is safe for any contents.
 
 Another example is dispatching on `sash-getopt` output and rejecting every
 unexpected case: the code itself performs the validation, so an `attest`
 would duplicate it.
 
-Trust applies to this read only. It neither validates the data nor clears
-the variable's taint for later reads.
+The override applies to this read only. It neither validates the data nor
+clears the variable's taint for later reads. Other checks still apply.
 
 
 
@@ -1460,7 +1460,7 @@ snippet.sh:3:15: error [SB5020] tainted variable $_word used without attest
 
 
 Even an `else` arm that exits would not export caught-scratch permission.
-Outside the successful arm, only an explicit trusted **data** read is legal.
+Outside the successful arm, only an explicit forced **data** read is legal.
 
 Use a standalone `attest _word g?` when failure should stop the program
 and subsequent code should use the validated value.

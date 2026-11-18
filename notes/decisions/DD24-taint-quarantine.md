@@ -21,7 +21,7 @@ status: implemented
 ---
 
 All external input is tainted. ~~Tainted variables cannot be used at any
-site until blessed.~~ DD91 permits explicit trusted reads; DD93 renames the
+site until blessed.~~ DD91 permits explicit forced reads; DD93 renames the
 validation operation to attest. This is the canonical taint/bless decision,
 incorporating DD#43, DD#44, DD#47, DD#49.
 
@@ -70,7 +70,7 @@ taint-clearing write to a live binding. After a caught scratch attest,
 ordinary reads are confined to its success arm; failure and post-merge
 code may retain the unresolved candidate and read it explicitly through
 `:!` as data. Regex-pattern use instead requires successful `r?` proof
-and forbids trusted reads. Ordinary bindings retain DD128's resolution
+and forbids forced reads. Ordinary bindings retain DD128's resolution
 rule. This experiment is unimplemented and tracked in `q-glob-semantics`.
 
 ## Clean sources
@@ -354,6 +354,6 @@ peel; W2a removes `clean_pipe`. The marked reader remains tainted (24.21,
 recognised only a bare reader. Under the old rule, builtin-fed marked readers
 drew false SB5020/SB5067 errors (24.22-24.25, 24.28, 24.29). W2a intentionally
 taints all these reads; those acceptance fixtures must attest or explicitly
-trust the data. DD#122 still rejects a redirected reader stage (SB4022).
+force the read. DD#122 still rejects a redirected reader stage (SB4022).
 
 Specs: taint.sh 24.21-24.29. Journal 537.

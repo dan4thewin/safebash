@@ -107,8 +107,8 @@ This is not general permission for ordinary const declarations in loops
 or for ordinary writes to remove unresolved taint.
 
 DD132 adds regex proof and the caught-scratch rule: ordinary reads only
-in the attest-success arm; outside it, only explicit trusted data reads,
-never trusted pattern operands. Failed scratch may remain unresolved
+in the attest-success arm; outside it, only explicit forced data reads,
+never forced pattern reads. Failed scratch may remain unresolved
 without being replaced or abandoned. This exception is not granted to
 ordinary consts. `q-glob-semantics` owns the integrated trial and DD revision
 inventory; neither model is implemented by this recording.

@@ -13,7 +13,7 @@ status: provisional
 4. Regex-pattern reads cannot use `:!`; disabling taint checks supplies no
    validity proof. Subject and replacement reads retain ordinary rules.
 5. A caught attest of immutable scratch permits ordinary reads only in its
-   success arm. Elsewhere only trusted data reads are allowed, not pattern
+   success arm. Elsewhere only forced data reads are allowed, not pattern
    use; the unchanged failed instance may remain unresolved.
 6. That permission never escapes the caught construct, even after a
    noncontinuing failure arm. Standalone attest permits subsequent uses.
@@ -122,16 +122,16 @@ proof merely by naming a binding checked in another execution context.
 Preserve the existing independent-body and handler-entry contracts.
 
 **No `:!`-bearing read in a regex-pattern operand**, including combined
-trust/disposition forms and indirect spellings through sugar. This
+override/disposition forms and indirect spellings through sugar. This
 restriction applies even inside a successful attest arm and with taint
 checking disabled. It is about the operand's role, not the literal bytes
-`:!` in a pattern. Trusted subject or replacement reads remain subject
+`:!` in a pattern. Forced subject or replacement reads remain subject
 to their ordinary rules; this is not a blanket ban on `:!` anywhere in a
 regex invocation.
 
-A trusted copy such as `_copy=${_re:!}` is ordinary data, not a validated
-regex. It may become a regex after its own successful check. Copying or
-calling a helper does not itself export the original instance's
+A copy through a forced read, such as `_copy=${_re:!}`, is ordinary data,
+not a validated regex. It may become a regex after its own successful check.
+Copying or calling a helper does not itself export the original instance's
 branch-limited permission past the caught-attest boundary below.
 
 ## Caught attests on immutable scratch
@@ -144,18 +144,18 @@ DG proposed the rule that replaces the earlier abandonment idea:
 
 For a caught attest on immutable scratch, ordinary reads are permitted
 only in its **attest-success arm**. Regex uses additionally require the
-successful `r?` proof, and cannot use a trust modifier. In the failure
-arm and after the caught construct, only explicit trusted reads as
+successful `r?` proof, and cannot use a taint override. In the failure
+arm and after the caught construct, only explicit forced reads as
 ordinary data are permitted. Eligible attest-predicate reads retain
 their normal rules; this grants no late or inherited-input attest.
 
-| Context | Ordinary data read | Explicit trusted data read | Regex-pattern use |
+| Context | Ordinary data read | Explicit forced data read | Regex-pattern use |
 |---|---|---|---|
 | Attest-success arm | Allowed | Allowed | With `r?` proof, without `:!` |
 | Failure arm or after the caught construct | Rejected | Allowed | Rejected |
 
 These are the normal checked-program permissions. Regex proof and the
-pattern-trust prohibition are independent of taint-disable switches.
+ban on forced pattern reads are independent of taint-disable switches.
 The successful arm is the arm where the **attest** succeeded: under
 `if ! attest ...`, it is the `else` arm. Logical caught forms must respect
 their corresponding success/failure regions; they cannot export a
@@ -278,9 +278,10 @@ failures remain fatal. These are trial deliveries, not adoption on main.
 
 The shared consumer-pattern validator now rejects actual `:!`-bearing reads
 with SB5105, including nested indices, arithmetic and capture bodies, even
-with taint checking disabled (journal 649). Trusted subjects, replacements
-and `r?` candidates remain ordinary data uses; literal `:!` text is not a
-trust modifier. This structural guard does not establish pattern validity.
+with taint checking disabled (journal 649). Forced reads of subjects,
+replacements and `r?` candidates remain ordinary data uses; literal `:!`
+text is not a taint-override modifier. This structural guard does not
+establish pattern validity.
 
 Mandatory immutable-pattern proofs are implemented for the existing
 consumers with SB5106 (journal 650). The shared SSA analysis follows
@@ -317,10 +318,10 @@ was added.
 sorting and complete-batch publication with `glob`. Pattern-list splats retain
 boundaries and require proof for every actual regex, including selected
 defaults; a known-empty list needs no pattern proof or directory work.
-Trusted copies and mutable intermediates cannot transfer validity. Each
-compiled selector regex is released after its pattern batch, including
-directory failures; execution-workspace exhaustion remains fatal rather than
-no-match. Journal 654 records the integrated utility/migration/cost evaluation,
+Copies through forced reads and mutable intermediates cannot transfer
+validity. Each compiled selector regex is released after its pattern batch,
+including directory failures; execution-workspace exhaustion remains fatal
+rather than no-match. Journal 654 records the integrated utility/migration/cost evaluation,
 including working fresh-result idioms, required converter/helper adaptations,
 new append costs and pre-existing repeated-regex storage costs. DG's adoption
 decision remains pending. The construction spelling is settled in DD131.

@@ -38,7 +38,7 @@ fn emit_for_bound(
 /// `for k in @m` binds the KEY, `for v in @a` the VALUE. Hoisted out of
 /// `lower_for_array`, which emits it once per SSA pass.
 ///
-/// DD#91: `vouched` is the `!` taint-off modifier from `for v in @{a:!}`. The
+/// DD#91: `vouched` carries the `!` taint override from `for v in @{a:!}`. The
 /// binding is wrapped in `Trusted`, which codegen lowers as its source — the
 /// emitted code is identical and only the taint passes read it. Without the
 /// node the SSA backstop sees the element read inherit the array's taint and

@@ -2807,7 +2807,7 @@ fn test_references_var(test: &TestExpr, var: &str) -> bool {
     }
 }
 
-/// Check every test's regex-pattern operand, including DD132's trust
+/// Check every test's regex-pattern operand, including DD132's forced-read
 /// prohibition and SB5023's static syntax validation.
 ///
 /// Every `=~` in the test is checked, not just a lone top-level one: under
@@ -5489,8 +5489,8 @@ fn elide_sigil(pe: &ParameterExpansion) -> String {
 /// What to suggest to an author whose `:~`/`:!~` landed in a value position.
 ///
 /// The `!` has to survive the rewrite. Advising plain `${x:-DEFAULT}` for a
-/// `:!~` drops the taint-off, so an author who follows it trades SB5046 for
-/// SB5020 — the trust they asked for is exactly what the advice removed.
+/// `:!~` drops the taint override, so following it trades SB5046 for
+/// SB5020 — the forced read is exactly what the advice removed.
 fn elide_advice(taint_off: bool, name: &str) -> String {
     if taint_off {
         return format!(
@@ -6372,7 +6372,7 @@ fn double_quoted_literal(w: &Expr) -> Option<&str> {
 }
 
 /// Split the text after a leading `@` into its collection name and whether a
-/// `:!` taint-off modifier follows. `None` if the name is not an identifier,
+/// `:!` taint-override modifier follows. `None` if the name is not an identifier,
 /// which keeps `"@"`, `"@{}"`, `"a@b"` and `"@g h"` out of the diagnostic.
 fn split_at_splat(rest: &str) -> Option<(&str, bool)> {
     let (name, ops) = match rest.strip_prefix('{').and_then(|b| b.strip_suffix('}')) {
@@ -7107,15 +7107,15 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
     }
 }
 
-/// DD#91: the independent `!` trust modifier on a scalar, cell or splat.
+/// DD#91: the independent `!` taint override on a scalar, cell or splat.
 ///
 /// Deliberately separate from `splat_array_name`, which answers a purely
 /// structural question ("is this word a value splat, and of what?"). Folding
 /// the check in there would make a *policy* answer look structural, and the
 /// addendum exists precisely because `!` was once conflated with a
-/// disposition: the retired `arrvals_trust` operator meant "elide AND trust",
-/// which forced the trust to inherit the elide's position restriction. `!` is
-/// a modifier, so a vouched splat is legal wherever a bare one is — including
+/// disposition: the retired `arrvals_trust` operator coupled elision and forced
+/// reads, making the override inherit elision's position restriction. `!` is
+/// a modifier, so a forced splat read is legal wherever a bare one is — including
 /// here, as a `for`-in source.
 fn expansion_is_trusted(w: &Expr) -> bool {
     matches!(&w.kind, ExprKind::ParameterExpansion(pe) if pe.taint_off)
@@ -8098,10 +8098,10 @@ fn is_taint_source(expr: &Expr, output: &OutputTaint) -> bool {
         ExprKind::SlurpFile(_) => true,
         // A source in the index or default remains a source here. Like
         // `pexp_uses_tainted`, this is used by `reject_tainted_into_array`;
-        // both must visit the same children without extending the trust flag.
+        // both must visit the same children without extending the override flag.
         ExprKind::ParameterExpansion(pe) => {
-            // `!` (DD#91) vouches for the read of `pe.name`'s stored value, not
-            // for a *source* materialised in the index or default: in
+            // `!` (DD#91) forces the read of `pe.name`'s stored value, not
+            // a *source* materialised in the index or default: in
             // `${x:!-$(getenv HOME)}` nobody asked to bypass the getenv. So
             // `taint_off` is deliberately not consulted here.
             pe.index
@@ -8162,8 +8162,8 @@ fn cmdsub_is_scalar_taint_source(stmts: &[Statement], output: &OutputTaint) -> b
 /// The `${…}` arm of [`expr_uses_tainted`], split out to keep that dispatcher
 /// under the complexity gate.
 fn pexp_uses_tainted(pe: &ParameterExpansion, tainted: &HashSet<String>) -> bool {
-    // DD#91: the `!` modifier is a per-use taint bypass — the value is trusted
-    // clean, so it does NOT propagate taint. It is a flag, not an operator, so
+    // DD#91: the `!` modifier is a per-read taint override — the forced read
+    // does NOT propagate source taint. It is a flag, not an operator, so
     // it applies to every combination (`:!`, `:!~`, `:!-W`, `:!?M`) without
     // enumerating them.
     // DD#78: a `:-` default is part of the expansion's value, so a tainted read
@@ -8172,7 +8172,7 @@ fn pexp_uses_tainted(pe: &ParameterExpansion, tainted: &HashSet<String>) -> bool
     //
     // `taint_off` scopes to the stored value only, not the index or operand
     // walks: each nested expansion carries its own flag, which is what
-    // makes `${x:!-${y:!}}` the spelling that vouches for both reads.
+    // makes `${x:!-${y:!}}` the spelling that forces both reads.
     (!pe.taint_off && tainted.contains(pe.name.as_str()))
         || pe
             .index
@@ -8432,9 +8432,9 @@ fn check_param_expansion_taint(
     output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // DD#91: the `!` modifier is a sanctioned per-use taint bypass — the
-    // subject is trusted clean (a predicate-less attest), so its read is not a
-    // violation. Keyed on the flag, so every combination is covered.
+    // DD#91: the `!` modifier forces the subject read past its taint guard,
+    // without validating the data or clearing the binding's taint.
+    // Keyed on the flag, so every combination is covered.
     if !pe.taint_off {
         push_taint_use(
             tainted,
@@ -8474,7 +8474,7 @@ fn check_value_index_reads(
         // `reject_scalar_rhs_read` makes the same call for the scalar form.
         ExprKind::Subscript { index, .. } => check_expr_taint(index, tainted, output, diags),
         // `${x:-…}` — the default is a value position (DD#78), the index is a
-        // read position, and `!` vouches for neither of the *inner* reads.
+        // read position, and `!` overrides neither of the *inner* reads.
         ExprKind::ParameterExpansion(pe) => pexp_value_index_reads(pe, tainted, output, diags),
         // `$(( … ))` reaches its operands through expansion leaves.
         ExprKind::Arithmetic(a) => arith_value_index_reads(a, tainted, output, diags),
@@ -11889,7 +11889,7 @@ pub fn check_malformed_sed(program: &Program) -> Vec<Diagnostic> {
 /// DD#91: `${x:!JUNK}` — `!` followed by something that is not a disposition.
 /// The parser cannot raise here (the `${…}` value path is not `Result`-
 /// returning), so it carries a `trust_malformed` sentinel. Rejecting matters:
-/// silently degrading to a trusted bare `${x}` would grant the taint bypass
+/// silently degrading to a forced bare `${x}` read would grant the taint bypass
 /// while dropping whatever the author actually asked for.
 fn flag_malformed_trust(e: &Expr, diags: &mut Vec<Diagnostic>) {
     let ExprKind::ParameterExpansion(pe) = &e.kind else {

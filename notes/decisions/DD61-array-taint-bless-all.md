@@ -180,7 +180,7 @@ Successful `r?` checks can prove validity of the present elements; empty
 collection success cannot certify a missing cell's default. In a caught
 scratch attest, normal reads and any regex proof are confined to the
 attest-success arm. The failed collection may remain unresolved and be
-read explicitly as trusted data, not used as trusted regex patterns.
+read explicitly through `:!` as data, but not as a regex-pattern operand.
 This changes neither the all-or-nothing quantifier nor the construction
 restrictions, and is not implemented by this recording.
 

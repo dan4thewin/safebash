@@ -630,7 +630,7 @@ echo "$text"'
 [[ $rc = 1 && -z $out && -z $err &&
    $rerr == *"attest: text = 'bad' failed the gate"* ]]; chk constval.9
 
-# Failed validation preserves the candidate and still requires a trusted read.
+# Failed validation preserves the candidate and still requires a forced read.
 run_sash 'const text=$(getenv CONST_BAD)
 if attest text i? { echo "good:$text" } else {
   echo "rejected:${text:!}"

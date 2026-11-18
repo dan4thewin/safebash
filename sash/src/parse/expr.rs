@@ -437,7 +437,7 @@ fn parse_elide_splat_op(
     Ok(("arrvals_default", None))
 }
 
-/// `@{a:!DISP}` (DD#91 addendum) — a trusted splat. `!` is the modifier and
+/// `@{a:!DISP}` (DD#91 addendum) — a forced splat read. `!` is the modifier and
 /// `DISP` the disposition; the caller sets `taint_off`. A bare `@{a:!}` states
 /// no disposition, so it yields the bare `arrvals` operator and is rejected by
 /// the ordinary DD#69 check (SB5032) rather than by a special case here.
@@ -1206,7 +1206,7 @@ fn subscript_operator_expr(
 /// to keep that dispatcher under the complexity gate; `:s/` is deliberately
 /// absent (it consumes the index instead of attaching it).
 fn cell_attaching_operator(name: &str, after: &str, span: Span) -> Result<Expr, Diagnostic> {
-    // DD#91's trust modifier applies to a cell's value just as to a scalar.
+    // DD#91's taint override applies to a cell's value just as to a scalar.
     let is_disposition_or_trust = after.starts_with(":-")
         || after.starts_with(":?")
         || after.starts_with(":~")
@@ -1223,7 +1223,7 @@ fn cell_attaching_operator(name: &str, after: &str, span: Span) -> Result<Expr, 
         // substring (`:o:l`) on a cell — carry the cell index; the transform
         // builds a `Substring` node that reads the cell as the source (edge 4).
         // A cell behaves like a string variable (DG). Any other `:`-led op that
-        // isn't substring/sed/a disposition/trust has no cell lowering — reject
+        // isn't substring/sed/a disposition/taint override has no lowering — reject
         // explicitly (SB4039) rather than silently drop.
         return Ok(try_substring_op(after, name, span)
             .unwrap_or_else(|| Expr::param(name, Some("cell_string_op"), None, span)));
@@ -1527,7 +1527,7 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Result<Option<
     parse_disposition_operator(rest, name, span)
 }
 
-/// DD#91 (2026-09-09 addendum): `${x:!…}` — the `!` taint-off MODIFIER, then an
+/// DD#91 (2026-09-09 addendum): `${x:!…}` — `!` forces the read, followed by an
 /// ordinary disposition or nothing.
 ///
 /// `!` leads, and the grammar forces that: `-` and `?` take a word that runs
@@ -1536,7 +1536,7 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Result<Option<
 /// `:-W` (empty or unset) and `-W` (unset only) are different operators, and
 /// dropping it would silently change which one `${x:!-W}` means.
 fn parse_trusted_operator(peeled: &str, name: &str, span: Span) -> Result<Expr, Diagnostic> {
-    // `${x:!}` — no disposition at all: the value, trusted. Identical to a bare
+    // `${x:!}` — no disposition at all: a forced read. Identical to a bare
     // `${x}` but for the flag, which is exactly the intent.
     if peeled.is_empty() {
         return Ok(trusted(Expr::param(name, None, None, span)));
@@ -1545,8 +1545,8 @@ fn parse_trusted_operator(peeled: &str, name: &str, span: Span) -> Result<Expr, 
         match parse_disposition_operator(&format!(":{peeled}"), name, span)? {
             Some(e) => trusted(e),
             // `${x:!foo}` — `!` followed by something that is not a disposition.
-            // It must not quietly degrade to a trusted bare `${x}`; carry the raw
-            // text on a sentinel the validator rejects (mirrors `s_malformed`).
+            // It must not quietly degrade to a forced bare `${x}` read; carry
+            // the text on a sentinel the validator rejects (mirrors `s_malformed`).
             None => Expr::param(name, Some("trust_malformed"), None, span),
         },
     )

@@ -97,7 +97,7 @@ runtime regex operands must be immutable and successfully checked with
 `r?` before use. Invalid candidates give quiet false at the predicate;
 actual literal regex use retains static validation, and allocation
 faults remain fatal. The predicate is implemented on `glob-scratch-trial`
-(journal 648), as is the unconditional SB5105 refusal of trusted reads
+(journal 648), as is the unconditional SB5105 refusal of forced reads
 within pattern operands (journal 649). SB5106 now requires immutable-value
 proofs at every existing consumer (journal 650), independently of taint
 switches. Caught ordinary-read permissions are implemented in journal 651;

@@ -859,7 +859,7 @@ leave (`exit`, `return`, `break`, `continue`).
 
 <!-- end_slide -->
 
-Trusting one read
+Forcing one read
 ===
 
 ```bash +exec:sash
@@ -867,15 +867,15 @@ input=$(arg 1 none)
 echo argument length: $(strlen $input:!)
 ```
 
-`:!` says this use is justified without a separate `attest`. Here we only
-measure the input's length, which is safe for any contents.
+`:!` forces this read past its taint guard: a **per-read taint override**.
+Here we only measure the input's length, which is safe for any contents.
 
 Another example is dispatching on `sash-getopt` output and rejecting every
 unexpected case: the code itself performs the validation, so an `attest`
 would duplicate it.
 
-Trust applies to this read only. It neither validates the data nor clears
-the variable's taint for later reads.
+The override applies to this read only. It neither validates the data nor
+clears the variable's taint for later reads. Other checks still apply.
 
 <!-- end_slide -->
 
@@ -1022,7 +1022,7 @@ echo outside: $_word # caught permission ended
 ```
 
 Even an `else` arm that exits would not export caught-scratch permission.
-Outside the successful arm, only an explicit trusted **data** read is legal.
+Outside the successful arm, only an explicit forced **data** read is legal.
 
 Use a standalone `attest _word g?` when failure should stop the program
 and subsequent code should use the validated value.
