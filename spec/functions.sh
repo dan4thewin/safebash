@@ -111,32 +111,32 @@ run_sash 'g=hi; fn f { echo $g }; f'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 18.12
 
 # 42.1 $(getenv VAR) reads env var
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]]
 echo $x'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 42.1
 
 # 42.2 $(getenv VAR) result is tainted
-run_sash 'x=$(getenv HOME); echo $x'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 42.2
+run_sash 'x=$(- getenv HOME); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 42.2
 
 # 42.3 $(arg N) reads program arg
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x =~ ^[a-z]+$ ]]
 echo $x' hello
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 42.3
 
 # 42.4 $(arg N) result is tainted (rejected without attest)
-run_sash 'x=$(arg 1); echo $x'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 42.4
+run_sash 'x=$(- arg 1); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 42.4
 
 # 42.5 $(argc) returns C argc (1 + user-arg count)
 run_sash 'echo $(argc)' a b c
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk 42.5
 
-# 42.6 out-of-range $(arg N) aborts at runtime
-run_sash 'x=$(arg 99); attest x [[ -n $x ]]; echo $x' hello
-[[ $rc != 0 && -z $out ]]; chk 42.6
+# A failed argument lookup can select a fallback before the value is attested.
+run_sash 'x=$(arg 99) || x=default; attest x [[ -n $x ]]; echo $x' hello
+[[ $rc = 0 && $out = default && -z $err && -z $rerr ]]; chk lookup.58
 
 # 42.7 $(getpid) — in-process intrinsic, positive int, CLEAN capture (usable
 #      without a attest).
@@ -1786,7 +1786,7 @@ echo after'
 DD128_LOCAL_INPUT=dirty run_sash 'fn f {
   str x=clean
   echo "$x"
-  x=$(getenv DD128_LOCAL_INPUT)
+  x=$(- getenv DD128_LOCAL_INPUT)
 }
 f
 f'

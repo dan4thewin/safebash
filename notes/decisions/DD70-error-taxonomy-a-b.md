@@ -84,8 +84,8 @@ Members:
 - **`-> int` function return values** (DD#55).
 - **Bare `arg`/`getenv` lookup status** (DD101, revised 2026-11-12/13),
   separate from the string value and taint. A literal default resolves absence
-  and makes either lookup value-only. Implementation is pending in
-  `require-getenv-status-handling`.
+  and makes either lookup value-only. Both forms are implemented in native
+  and C (`require-getenv-status-handling`, journal 663).
 - **`r?` and scalar `match`/`sub`/`gsub`'s match boolean** (DD132), the
   latter separate from their text. These are implemented and accepted.
 

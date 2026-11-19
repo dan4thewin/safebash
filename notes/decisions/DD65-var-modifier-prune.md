@@ -396,9 +396,9 @@ there instead, by walking the parsed expression for any expansion
 because the rule is the same rule.
 
 DD101's symmetric lookup decision (DG, 2026-11-13) applies that same literal
-operand contract to `getenv NAME DEFAULT`; implementation is pending in
-`require-getenv-status-handling`. Both defaulted lookups return only the
-selected tainted string. Their trigger is **absence**, not an empty present
+operand contract to `getenv NAME DEFAULT`; native/C implementation is recorded
+in `require-getenv-status-handling` and journal 663. Both defaulted lookups
+return only the selected tainted string. Their trigger is **absence**, not an empty present
 value or `:-`'s meaningful-zero rule.
 
 **What this retires.** The interpolating-word operand was the *only* reason

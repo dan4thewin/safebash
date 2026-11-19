@@ -706,7 +706,7 @@ echo "$(len f):${f[0]}"'
 
 # nr.16 …and a TAINTED source is rejected at the source READ, not laundered
 # into the target. DD#24: there is no taint flow inside the program.
-run_sash 'k=$(getenv HOME)
+run_sash 'k=$(- getenv HOME)
 read $k f
 echo "${f[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk nr.16

@@ -26,10 +26,10 @@ Lookup status settled with DG 2026-09-12. DG revised the handling obligation
 on 2026-11-12: **"require explicit handling or discard"** (journal 629).
 DG adopted the symmetric four-form contract on 2026-11-13:
 **"yes to all 4, update decisions, outline, and backlog"** (journal 631).
-The original `getenv` presence result is implemented. Mandatory bare-lookup
-handling, `arg`'s presence result and the new `getenv` default form are
-**pending** in the expanded
-[`require-getenv-status-handling`](../tasks/require-getenv-status-handling.md).
+The complete four-form contract is implemented in native and C, including
+mandatory bare-lookup handling and converter-generated explicit discards.
+[`require-getenv-status-handling`](../tasks/require-getenv-status-handling.md)
+and [journal 663](../journal/663-symmetric-input-lookups.md) record delivery.
 
 ## Shared lookup contract
 
@@ -105,8 +105,8 @@ external command.
 
 </del>
 
-That original `getenv` permission and DD60's old bare-`arg` abort remain
-implementation baselines, not the revised contract. An unhandled bare lookup
+That original `getenv` permission and DD60's old bare-`arg` abort are former
+implementation baselines, not the current behavior. An unhandled bare lookup
 is a compile error even if a later attest would reject empty text. Ordinary
 operational failures retain DD55/DD130's separate abort-if-unchecked contract.
 

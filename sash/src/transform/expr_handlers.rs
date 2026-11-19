@@ -6,26 +6,39 @@ use crate::ssa::*;
 
 pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> SsaValue {
     check_function_capture(expr, state);
-    if let Some(c) = regex_capture(expr) {
-        let name = literal_name_of(&c.name);
-        let call = call_spelling(name, c);
-        let at = expr.span;
-        state.expr_diagnostics.borrow_mut().push((
-            at,
-            format!(
-                "{}:{}: error [SB4018] `{name}` returns text and a boolean — consume the boolean \
-                 with `if x=$({call}) {{ … }}`, or discard it with `$(- {call})`",
-                at.line, at.col
-            ),
-        ));
-    }
+    check_intrinsic_capture(expr, state);
     capture_value(expr, state)
 }
 
-fn regex_capture(expr: &Expr) -> Option<&Command> {
-    let (stmt, name, command) = single_command_subst(expr)?;
-    (!matches!(stmt.kind, StmtKind::Suppressed(_)) && BuiltinCmd::from_name(&name).is_regex_value())
-        .then_some(command)
+fn check_intrinsic_capture(expr: &Expr, state: &VersionState) {
+    let Some((stmt, name, c)) = single_command_subst(expr) else {
+        return;
+    };
+    let discarded = matches!(stmt.kind, StmtKind::Suppressed(_));
+    let call = call_spelling(&name, c);
+    let result = if lookup_has_status(&name, c.args.len()) {
+        Some("lookup status")
+    } else if BuiltinCmd::from_name(&name).is_regex_value() {
+        Some("boolean")
+    } else {
+        None
+    };
+    let what = match (discarded, name.as_str(), result, c.args.len()) {
+        (true, "arg" | "getenv", _, 2) => format!(
+            "[SB4076] a defaulted `{name}` lookup returns only text, so `-` has nothing \
+             to discard — use `$({call})` without `-`"
+        ),
+        (false, _, Some(result), _) => format!(
+            "[SB4018] `{name}` returns text and a {result} — consume the {result} \
+             with `if x=$({call}) {{ … }}`, or discard it with `$(- {call})`"
+        ),
+        _ => return,
+    };
+    let at = expr.span;
+    state
+        .expr_diagnostics
+        .borrow_mut()
+        .push((at, format!("{}:{}: error {what}", at.line, at.col)));
 }
 
 /// DD#55: a capture of a user function. The capture binds what the function

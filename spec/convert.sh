@@ -157,18 +157,18 @@ diff -q .converted.sash .extracted.sash > /dev/null 2>&1
 
 # --- DD#57 / DD#60: Positional conversion ---
 
-# 57.13 top-level $1 → a hoisted `arg1=$(arg 1)` + placeholder attest.
-# `$(arg 1)` is tainted (DD#60), so the inline substitution this spec used to
+# 57.13 top-level $1 → a hoisted `arg1=$(- arg 1)` + placeholder attest.
+# `$(- arg 1)` is tainted (DD#60), so the inline substitution this spec used to
 # assert could never compile — every use raised SB5020.
 run_convert '#!/bin/bash
 echo $1'
-[[ $rc = 0 && $out == *'arg1=$(arg 1); attest arg1 [[ -n $arg1 ]]'* \
+[[ $rc = 0 && $out == *'arg1=$(- arg 1); attest arg1 [[ -n $arg1 ]]'* \
    && $out == *'MANUAL'* && $out == *'echo $arg1'* && -z $err ]]; chk 57.13a
 
 # 57.13b ${1} → the same hoist, ${@} → $(argv 1), ${#} → $(( (argc) - 1 ))
 run_convert '#!/bin/bash
 echo ${1} ; for x in ${@}; do echo $x; done ; echo ${#}'
-[[ $rc = 0 && $out == *'arg1=$(arg 1)'* && $out == *'$(argv 1)'* \
+[[ $rc = 0 && $out == *'arg1=$(- arg 1)'* && $out == *'$(argv 1)'* \
    && $out == *'$(( (argc) - 1 ))'* && -z $err ]]; chk 57.13b
 
 # 57.13c ${#x} length sugar (DD#75 §4). This spec used to assert the bug: it
@@ -405,20 +405,20 @@ unset x'
 
 # --- DD#53 tilde expansion (~, ~/path) — converter side (compiler side: taint.sh 53.x) ---
 
-# 57.47 bare ~ → hoisted $(getenv HOME) + attest, use $home
+# 57.47 bare ~ → hoisted $(- getenv HOME) + attest, use $home
 run_convert '#!/bin/bash
 echo ~'
-[[ $rc = 0 && $out == *'home=$(getenv HOME)'* && $out == *'attest home'* && $out == *'echo $home'* && -z $err ]]; chk 57.47
+[[ $rc = 0 && $out == *'home=$(- getenv HOME)'* && $out == *'attest home'* && $out == *'echo $home'* && -z $err ]]; chk 57.47
 
 # 57.48 ~/path → $home/path
 run_convert '#!/bin/bash
 echo ~/foo'
-[[ $rc = 0 && $out == *'echo $home/foo'* && $out == *'home=$(getenv HOME)'* && -z $err ]]; chk 57.48
+[[ $rc = 0 && $out == *'echo $home/foo'* && $out == *'home=$(- getenv HOME)'* && -z $err ]]; chk 57.48
 
 # 57.49 tilde in assignment value → $home/p
 run_convert '#!/bin/bash
 x=~/p'
-[[ $rc = 0 && $out == *'x=$home/p'* && $out == *'home=$(getenv HOME)'* && -z $err ]]; chk 57.49
+[[ $rc = 0 && $out == *'x=$home/p'* && $out == *'home=$(- getenv HOME)'* && -z $err ]]; chk 57.49
 
 # 57.50 ~/$x concatenation composes as $home/$x
 run_convert '#!/bin/bash
@@ -683,7 +683,7 @@ run_sash "$converted" a b c
 run_convert '#!/bin/bash
 echo "$1 $1"'
 converted=$out
-[[ $(grep -c 'arg1=\$(arg 1)' <<<"$converted") = 1 ]]; chk conv.x3a
+[[ $(grep -c 'arg1=\$(- arg 1)' <<<"$converted") = 1 ]]; chk conv.x3a
 run_sash "$converted" a b c
 [[ $rc = 0 && $out = "a a" && -z $err ]]; chk conv.x3b
 
@@ -963,7 +963,7 @@ if [ "$HOME" = x ]; then echo y; fi'
 # 57.117 …and the hoisted getenv+attest survives the splice
 run_convert '#!/bin/bash
 if [ "$HOME" = x ]; then echo y; fi'
-[[ $rc = 0 && $out == *'home=$(getenv HOME)'* && $out == *'attest home'* ]]; chk 57.117
+[[ $rc = 0 && $out == *'home=$(- getenv HOME)'* && $out == *'attest home'* ]]; chk 57.117
 
 # 57.118 `[ "$1" = x ]` — the commonest shape of the bug
 run_convert '#!/bin/bash
@@ -995,7 +995,7 @@ echo $n'
 run_convert '#!/bin/bash
 declare -a a=("$HOME")
 echo "${a[0]}"'
-[[ $rc = 0 && $out == *'array a=("$home")'* && $out == *'home=$(getenv HOME)'* ]]; chk 57.122
+[[ $rc = 0 && $out == *'array a=("$home")'* && $out == *'home=$(- getenv HOME)'* ]]; chk 57.122
 
 # 57.123 `let` — was `(( x = $? ))$(status)"`
 run_convert '#!/bin/bash

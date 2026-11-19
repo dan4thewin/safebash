@@ -1119,7 +1119,10 @@ the output of commands — are *tainted*. A tainted value cannot be used
 until it has been checked.
 
 Environment variables are not shell variables: `$HOME` is an error, and
-you write `$(getenv HOME)`.
+you write `$(getenv HOME)`. Handle presence with a capture-condition, as
+`||` does above, or explicitly ignore it with `$(- getenv HOME)`.
+Presence and acceptable contents are separate questions; neither handling
+nor discard validates the text. Bare `$(arg N)` follows the same rule.
 
 
 
@@ -1171,6 +1174,10 @@ world
 
 `$(arg 1 "")` reads the first program argument, defaulting to empty if
 absent. An attest predicate can combine ordinary tests with `&&` and `||`.
+
+Both lookups accept literal defaults, such as `$(getenv USER nobody)`.
+A default resolves absence and returns only text, not a status. It never
+replaces a supplied empty value.
 
 Here empty is explicitly allowed; otherwise the value must pass `p?`.
 After validation, ordinary code handles the empty case with `:-empty`.
@@ -2009,7 +2016,7 @@ sash-convert old.sh
 **Output:**
 
 ```text
-arg1=$(arg 1); attest arg1 [[ -n $arg1 ]]  # MANUAL: tighten this predicate — sash-convert cannot know what $1 must look like
+arg1=$(- arg 1); attest arg1 [[ -n $arg1 ]]  # MANUAL: tighten this predicate — sash-convert cannot know what $1 must look like
 name=$arg1
 echo "hi $name"
 ```

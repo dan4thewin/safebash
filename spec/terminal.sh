@@ -39,7 +39,7 @@ run_sash "fail 1; ERR {
 [[ $rc = 1 && $out = caught && $err != *SB5101* ]]; chk migratea.7
 
 DD128_VALUE=allowed run_sash '
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 attest v [[ $v == allowed ]]
 fail 1
 ERR { - /bin/echo "${v:!}" }'
@@ -48,7 +48,7 @@ ERR { - /bin/echo "${v:!}" }'
 DD128_VALUE=allowed run_sash '
 fail 1
 ERR {
-    v=$(getenv DD128_VALUE)
+    v=$(- getenv DD128_VALUE)
     attest v [[ $v == allowed ]] || v=replaced
     - /bin/echo "$v"
 }'
@@ -57,7 +57,7 @@ ERR {
 DD128_VALUE=allowed run_sash '
 fail 1
 ERR {
-    v=$(getenv DD128_VALUE)
+    v=$(- getenv DD128_VALUE)
     attest v [[ $v == allowed ]]
     - echo "$v"
 }'
@@ -107,7 +107,7 @@ ERR {
 DD128_VALUE=bad run_sash '
 str v=initial
 fn acquire {
-    v=$(getenv DD128_VALUE)
+    v=$(- getenv DD128_VALUE)
     /bin/kill -USR1 $$
 }
 signal 10 EXIT
@@ -130,7 +130,7 @@ EXIT { int code=$?; echo "$code:$v" }'
 
 DD128_VALUE=bad run_sash '
 signal 10 EXIT
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 if attest v [[ $v == allowed ]] {
     :
 } else {
@@ -172,7 +172,7 @@ str v=initial
 signal 10 EXIT
 signal 10 IGN
 /bin/true
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 fail 1
 EXIT { echo "$v" }'
 [[ $rc = 1 && -z $out && -z $err ]]; chk migratea.19
@@ -182,7 +182,7 @@ run_sash '
 str v=initial
 signal 10 EXIT
 signal 10 IGN
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 /bin/true
 fail 1
 EXIT { echo "$v" }'
@@ -226,7 +226,7 @@ ERR { - echo explicit }
 
 # The independent SSA gate must not allow a late attest of inherited input.
 SASH_CFLAGS=--no-taint-cst run_sash '
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 fail 1
 ERR {
     attest v [[ $v == allowed ]] || exit 1
@@ -235,10 +235,10 @@ ERR {
 [[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errstate.1
 
 DD128_VALUE=allowed SASH_CFLAGS=--no-taint-cst run_sash '
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 fail 1
 ERR {
-    work=$(getenv DD128_VALUE)
+    work=$(- getenv DD128_VALUE)
     attest work [[ $work == allowed ]] || work=clean
     - echo "$work:${v:!}"
 }'
@@ -262,7 +262,7 @@ ERR { check =a }'
 SASH_CFLAGS=--no-taint-cst run_sash '
 str v=initial
 signal 10 EXIT
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 /bin/true
 fail 1
 EXIT {
@@ -391,7 +391,7 @@ str v=initial
 int n=0
 signal 10 EXIT
 while (( n < 1 )) {
-    v=$(getenv DD128_VALUE)
+    v=$(- getenv DD128_VALUE)
     (( n++ ))
     /bin/kill -USR1 $$
 }
@@ -535,14 +535,14 @@ ERR { int code=$?; - echo "err:$code" }'
 [[ $rc = 9 && $out = $'exit\nerr:9' && -z $err && -z $rerr ]]; chk migratea.43
 
 DD128_VALUE=bad run_sash '
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 if attest v [[ $v == allowed ]] { : } else { exit 0 }
 EXIT { echo "$v" }'
 [[ $rc != 0 && $err == *'enters EXIT with unresolved `v`'* &&
    $err == *'EXIT requires it'* ]]; chk handler128.12
 
 DD128_VALUE=allowed run_sash '
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 attest v [[ $v == allowed ]]
 fail 1
 ERR { - echo "$v" }'
@@ -551,23 +551,23 @@ ERR { - echo "$v" }'
 
 DD128_VALUE=allowed run_sash '
 str v=initial
-EXIT { v=$(getenv DD128_VALUE); attest v [[ $v == allowed ]] }
+EXIT { v=$(- getenv DD128_VALUE); attest v [[ $v == allowed ]] }
 ERR { - echo "$v" }'
 [[ $rc != 0 && $err == *'ERR incoming `v` may be tainted'* ]]; chk handler128.14
 
 run_sash '
 str v=clean
-fn unused { v=$(getenv DD128_VALUE); attest v [[ $v == allowed ]] }
+fn unused { v=$(- getenv DD128_VALUE); attest v [[ $v == allowed ]] }
 fail 1
 ERR { - echo "$v" }'
 [[ $rc = 1 && $out = clean && -z $err && -z $rerr ]]; chk migratea.45
 
 # A false refresh path must not permit a late attest of inherited input.
 run_sash '
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 fail 1
 ERR {
-    if [[ "$$" == impossible ]] { v=$(getenv DD128_VALUE) }
+    if [[ "$$" == impossible ]] { v=$(- getenv DD128_VALUE) }
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
@@ -605,22 +605,23 @@ ERR { str report=$(- echo cleanup; :); - echo "${pending:!}:$report" }
 [[ $rc = 2 && $out = :cleanup && -z $err &&
    $rerr == *"division by zero"* ]]; chk errresource.11
 
-run_sash 'pattern=$(getenv DD128_PATTERN)
+run_sash 'pattern=$(- getenv DD128_PATTERN)
 fail 1
 ERR { - match x "${pattern:!}" }'
 [[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.22
 
-run_sash 'pattern=$(getenv DD128_PATTERN)
+run_sash 'pattern=$(- getenv DD128_PATTERN)
 fail 1
 ERR { str candidate=${pattern:!}; - match x "$candidate" }'
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.50
 
 run_sash 'fail 1; ERR {
-    v=$(arg 999)
+    int index=-1
+    v=$(- arg $index)
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"argv-bounds"* ]]; chk migratea.49
+[[ $err == *SB5101* && $err == *"invalid argument index"* ]]; chk lookup.60
 
 run_sash 'fail 1; ERR {
     array a
@@ -662,7 +663,7 @@ DD128_VALUE=bad run_sash_under '
 str v=initial
 signal 10 EXIT
 signal 12 FLAG
-v=$(getenv DD128_VALUE)
+v=$(- getenv DD128_VALUE)
 attest v [[ $v == allowed ]] || v=clean
 /bin/true
 EXIT { echo "$v" }

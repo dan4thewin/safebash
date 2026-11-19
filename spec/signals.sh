@@ -903,7 +903,7 @@ fail'
 [[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.30
 
 run_sash 'ERR {
-  str env=$(getenv PATH)
+  str env=$(- getenv PATH)
   int n=7
   if /bin/true literal ${env:!} "$n" { - echo safe }
 }

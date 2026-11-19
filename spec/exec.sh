@@ -59,10 +59,10 @@ run_sash 'x=/bin/echo; exec $x hi'
 run_sash 'exec totallyboguscmd_zzz'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk ex.8
 # ex.9 a tainted arg to exec is rejected without attest (DD#24), like any command
-run_sash 'x=$(getenv HOME); exec /bin/echo $x'
+run_sash 'x=$(- getenv HOME); exec /bin/echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ex.9
 # ex.10 a attested tainted arg is accepted
-run_sash 'x=$(getenv HOME); attest x [[ -n $x ]]; exec /bin/echo $x'
+run_sash 'x=$(- getenv HOME); attest x [[ -n $x ]]; exec /bin/echo $x'
 [[ $rc = 0 && -n $out && -z $err ]]; chk ex.10
 # ex.11 the exec target is recorded in the external manifest
 out=$(sash --manifest -c 'exec grep x /etc/hostname' 2>/dev/null); rc=$?

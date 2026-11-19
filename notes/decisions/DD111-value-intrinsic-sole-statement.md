@@ -53,9 +53,9 @@ instead supply a separate lookup status. Consume or discard that status,
 even when the string is used; `$(- arg N)` / `$(- getenv NAME)` discard
 only presence and leave the value tainted. With a literal default, either
 lookup returns only a value, so an inner `-` discards nothing and rejects.
-The 2026-11-12/13 lookup changes are pending in
-`require-getenv-status-handling`; general statusless-prefix rejection
-remains with `reject-statusless-intrinsic-suppression`. Neither grants new
+The 2026-11-12/13 lookup changes are implemented in native and C
+(`require-getenv-status-handling`, journal 663); general statusless-prefix
+rejection remains with `reject-statusless-intrinsic-suppression`. Neither grants new
 statement-position meaning to an intrinsic or changes the sole-statement rule.
 
 DD135 adds zero-argument `$(mkdtemp)`: a direct generated pathname plus

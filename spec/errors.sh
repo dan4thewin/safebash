@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=725
+plan=723
 echo "1..$plan" >&3
 
 set +e
@@ -1145,8 +1145,8 @@ run_sash 's=hello; echo $(strlen $s)'
 # via.1-5 wrong arity in `$( )` is SB4045, not a silent ignore
 run_sash 'x=$(getenv); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.1
-run_sash 'x=$(getenv HOME EXTRA); echo $x'
-[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.2
+run_sash 'x=$(getenv HOME fallback EXTRA); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk lookup.57
 run_sash 'x=$(getpid 7); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.3
 run_sash 'x=$(argc 7); echo $x'
@@ -1166,7 +1166,7 @@ run_sash 'epochseconds'
 [[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.9
 
 # via.10-12 the legitimate forms are untouched
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ -n $x ]]
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk via.10
@@ -3159,12 +3159,12 @@ exit $(( ${s:?bad} ))'
 # operand checks now walk expressions; on the old statement-only
 # traversal an assignment RHS was never looked at.
 run_sash 'str s=x
-str t=$(arg $s)
+str t=$(- arg $s)
 attest t [[ -n $t ]]
 echo $t'
 [[ $rc != 0 && $err == *SB4030* ]]; chk isink.8
 run_sash 'int i=1
-str t=$(arg $i)
+str t=$(- arg $i)
 attest t [[ -n $t ]]
 echo $t' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk isink.9
@@ -3513,7 +3513,7 @@ echo "[$s]"'
 #        SB5017 twice. Journal 308 is the precedent — that failure mode
 #        multiplies with nesting depth, so an `if` inside a `while` is the
 #        cheapest shape that catches it.
-run_sash 'while [[ -n $(getenv HOME) ]]; do
+run_sash 'while [[ -n $(- getenv HOME) ]]; do
     if [[ -n a ]]; then
         str s=$(/bin/echo $RANDOM)
         echo "[$s]"
@@ -3976,18 +3976,7 @@ run_sash 'if /bin/false { : } else { echo $(- status) }'
 run_sash '- /bin/false; echo $(- status)'
 [[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk supval.33
 
-SASH_SPEC_SUPVAL_PRESENT=token run_sash 'if x=$(- getenv SASH_SPEC_SUPVAL_PRESENT) {
-attest x [[ -n $x ]]
-echo "$x"
-} else { echo missing }'
-[[ $rc = 0 && $out = token && -z $err && -z $rerr ]]; chk supval.34
-
-unset SASH_SPEC_SUPVAL_ABSENT
-run_sash 'if x=$(- getenv SASH_SPEC_SUPVAL_ABSENT) {
-attest x [[ -n $x ]]
-echo "$x"
-} else { echo missing }'
-[[ $rc = 0 && $out = missing && -z $err && -z $rerr ]]; chk supval.35
+# DD101: lookup.27 now pins rejection of a consumed, source-discarded lookup.
 
 # nonvoid.1-nonvoid.24: a non-void function's answer is handled or discarded
 # (batch-531 B15; DD#55 2026-10-29 and 2026-10-30). A status function's call

@@ -1257,8 +1257,8 @@ fn not_an_int(part: &str) -> Option<String> {
 /// literal (SB5074), so neither slot can hold an int.
 fn string_operand_slots(name: &str) -> Option<usize> {
     match name {
-        "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "getenv" => Some(1),
-        "match" | "matchall" => Some(2),
+        "toupper" | "tolower" | "strlen" | "basename" | "dirname" => Some(1),
+        "getenv" | "match" | "matchall" => Some(2),
         "sub" | "gsub" => Some(3),
         "glob" | "rglob" => Some(usize::MAX),
         _ => None,

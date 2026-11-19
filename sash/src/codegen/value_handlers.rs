@@ -255,11 +255,11 @@ fn emit_mkdtemp(
     (ptr, len)
 }
 
-/// DD#60: `$(arg N)` (abort on OOB) and the addendum `$(arg N DEFAULT)` (default
-/// on OOB). The default, when present, is DD#78-constrained (clean,
-/// side-effect-free), so evaluating it eagerly here is safe.
+/// DD#101: NULL means absent, independently of length. Only bare lookups
+/// publish presence; defaults select text without touching the status.
 #[allow(clippy::too_many_arguments)]
-fn lower_arg_intrinsic(
+fn lower_input_lookup(
+    name: &str,
     argv_values: &[SsaValue],
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -267,8 +267,8 @@ fn lower_arg_intrinsic(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
     exit_status_var: Variable,
-) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
-    let (idx_ptr, idx_len) = lower_value(
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (key_ptr, key_len) = lower_value(
         &argv_values[1],
         builder,
         module,
@@ -277,12 +277,22 @@ fn lower_arg_intrinsic(
         externs,
         exit_status_var,
     );
-    let idx = atoi_call(builder, module, externs, idx_ptr, idx_len);
     let out_len_slot =
         builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
     let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-    let call = if let Some(default) = argv_values.get(2) {
-        let (def_ptr, def_len) = lower_value(
+    let call = if name == "arg" {
+        let idx = atoi_call(builder, module, externs, key_ptr, key_len);
+        let func = module.declare_func_in_func(externs.argv_get, builder.func);
+        builder.ins().call(func, &[idx, out_len_addr])
+    } else {
+        let func = module.declare_func_in_func(externs.getenv, builder.func);
+        builder.ins().call(func, &[key_ptr, key_len, out_len_addr])
+    };
+    let ptr = builder.inst_results(call)[0];
+    let len = builder.ins().stack_load(I64, out_len_slot, 0);
+    let absent = builder.ins().icmp_imm(IntCC::Equal, ptr, 0);
+    let (default_ptr, default_len) = if let Some(default) = argv_values.get(2) {
+        lower_value(
             default,
             builder,
             module,
@@ -290,18 +300,21 @@ fn lower_arg_intrinsic(
             literals,
             externs,
             exit_status_var,
-        );
-        let argv_get_or_ref = module.declare_func_in_func(externs.argv_get_or, builder.func);
-        builder
-            .ins()
-            .call(argv_get_or_ref, &[idx, def_ptr, def_len, out_len_addr])
+        )
     } else {
-        let argv_get_ref = module.declare_func_in_func(externs.argv_get, builder.func);
-        builder.ins().call(argv_get_ref, &[idx, out_len_addr])
+        let status = builder.ins().uextend(I64, absent);
+        builder.def_var(exit_status_var, status);
+        // A NULL value pointer denotes an integer in collection storage.
+        let empty = module.declare_data_in_func(intern_or_declare(literals, ""), builder.func);
+        (
+            builder.ins().global_value(I64, empty),
+            builder.ins().iconst(I64, 0),
+        )
     };
-    let str_ptr = builder.inst_results(call)[0];
-    let str_len = builder.ins().stack_load(I64, out_len_slot, 0);
-    Some((str_ptr, str_len))
+    (
+        builder.ins().select(absent, default_ptr, ptr),
+        builder.ins().select(absent, default_len, len),
+    )
 }
 
 /// The **string rendering** of a nullary intrinsic: `$(getcwd)`,
@@ -354,23 +367,6 @@ fn try_nullary_intrinsic(
     Some(emit_int_to_str(builder, module, externs, v))
 }
 
-/// DD#101: `$(getenv NAME)` reports a *lookup* status — 0 when NAME is
-/// present (including when it is set to the empty string), 1 when it is
-/// unset. `sash_getenv` already distinguishes the two at the ABI: a present
-/// name yields a pointer into `environ` (possibly to a zero-length value),
-/// an absent one yields NULL. Set-to-empty and unset are therefore told
-/// apart by the *pointer*, never by the length, which is 0 for both.
-fn emit_getenv_lookup_status(
-    val_ptr: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    exit_status_var: Variable,
-) {
-    let zero = builder.ins().iconst(I64, 0);
-    let absent = builder.ins().icmp(IntCC::Equal, val_ptr, zero);
-    let status = builder.ins().uextend(I64, absent);
-    builder.def_var(exit_status_var, status);
-}
-
 /// Compile-time intrinsic dispatch for `$(epochseconds)`, `$(getppid)`,
 /// `$(getcwd)`, `$(getenv NAME)`, `$(argc)`, `$(signum)`, `$(argv N)`.
 /// Returns `Some((ptr, len))` when
@@ -391,32 +387,8 @@ fn try_native_intrinsic(
         return Some(v);
     }
     match name {
-        "getenv" if argv_values.len() >= 2 => {
-            let (name_ptr, name_len) = lower_value(
-                &argv_values[1],
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-            let getenv_ref = module.declare_func_in_func(externs.getenv, builder.func);
-            let call = builder
-                .ins()
-                .call(getenv_ref, &[name_ptr, name_len, out_len_addr]);
-            let val_ptr = builder.inst_results(call)[0];
-            let val_len = builder.ins().stack_load(I64, out_len_slot, 0);
-            emit_getenv_lookup_status(val_ptr, builder, exit_status_var);
-            Some((val_ptr, val_len))
-        }
-        "arg" if argv_values.len() >= 2 => lower_arg_intrinsic(
+        "arg" | "getenv" if argv_values.len() >= 2 => Some(lower_input_lookup(
+            name,
             argv_values,
             builder,
             module,
@@ -424,7 +396,7 @@ fn try_native_intrinsic(
             literals,
             externs,
             exit_status_var,
-        ),
+        )),
         // DD#126: `$(wait)` / `$(wait $p)` — the pid, rendered as a string.
         "wait" => {
             let reaped = emit_wait_value(

@@ -22,20 +22,22 @@ run_sash 'echo $(argc)'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk av.t2
 
 # av.t3 $(arg 0) is the program name (non-empty; exact value invocation-dependent)
-run_sash 'x=$(arg 0); attest x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(- arg 0); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk av.t3
 
 # av.t4 $(arg 1) is the first user arg
-run_sash 'x=$(arg 1); attest x [[ -n $x ]]; echo "$x"' alpha
+run_sash 'x=$(- arg 1); attest x [[ -n $x ]]; echo "$x"' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.t4
 
 # av.t5 $(arg 2) is the second user arg
-run_sash 'x=$(arg 2); attest x [[ -n $x ]]; echo "$x"' alpha beta
+run_sash 'x=$(- arg 2); attest x [[ -n $x ]]; echo "$x"' alpha beta
 [[ $rc = 0 && $out = "beta" && -z $err ]]; chk av.t5
 
-# av.t6 $(arg N) for N >= argc aborts at runtime (no silent empty)
-run_sash 'x=$(arg 5); attest x [[ -n $x ]]; echo "$x"' one two
-[[ $rc != 0 && -z $out ]]; chk av.t6
+# Required input is an explicit absence decision, not an unconditional lookup abort.
+run_sash 'ERR { - echo required }
+x=$(arg 5) || fail 4
+echo "${x:!}"' one two
+[[ $rc = 4 && $out = required && -z $err && -z $rerr ]]; chk lookup.2
 
 # av.t7 negative index is a compile-time error (DD#60, SB5038) — attested so the
 # ONLY error is the negative index, not a downstream unattested-read taint check
@@ -47,9 +49,8 @@ run_sash 'x=$(arg -1 fallback); attest x [[ -n $x ]]; echo "$x"'
 
 # ── DD#60: a literal `arg` index must be a non-negative integer (SB5078) ──
 # The runtime parses the index by taking leading digits, so a malformed
-# literal silently reads a DIFFERENT argument and exits 0. av.t6 already
-# establishes the intent — an out-of-range index aborts rather than yielding
-# empty — and these are the same rule for the same reason.
+# literal silently reads a DIFFERENT argument and exits 0. Malformed input
+# is not the absence of a valid argument index.
 
 # av.t8 a non-numeric index read argument 0, the PROGRAM NAME, with exit 0.
 run_sash 'x=$(arg abc); attest x [[ -n $x ]]; echo "$x"'
@@ -84,11 +85,11 @@ run_sash 'x=$(arg -42); attest x [[ -n $x ]]; echo "$x"'
 
 # av.t8h a leading-zero index is a perfectly good integer and still works —
 # the guard tests digits, not spelling.
-run_sash 'x=$(arg 01); attest x [[ -n $x ]]; echo "$x"' alpha
+run_sash 'x=$(- arg 01); attest x [[ -n $x ]]; echo "$x"' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.t8h
 
 # av.t8i a COMPUTED index is a runtime concern, not a typo, and is untouched.
-run_sash 'int i=1; x=$(arg $i); attest x [[ -n $x ]]; echo "$x"' alpha
+run_sash 'int i=1; x=$(- arg $i); attest x [[ -n $x ]]; echo "$x"' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.t8i
 
 # ── DD#60 addendum: $(arg N DEFAULT) opt-in default ──────────────
@@ -101,7 +102,7 @@ run_sash 'x=$(arg 1 fallback); attest x [[ -n $x ]]; echo "$x"' hello
 run_sash 'x=$(arg 1 fallback); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc = 0 && $out = "fallback" && -z $err ]]; chk av.d2
 
-# av.d3 the default fires for a high OOB index too (no abort, unlike bare arg)
+# av.d3 the default fires for a high absent index too.
 run_sash 'x=$(arg 5 mydef); attest x [[ -n $x ]]; echo "$x"' one two
 [[ $rc = 0 && $out = "mydef" && -z $err ]]; chk av.d3
 # av.d4 an `$(arg N DEFAULT)` default is a literal too -- the third disposition
@@ -110,7 +111,7 @@ run_sash 'x=$(arg 9 "$(getcwd)"); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk av.d4
 
 # av.d5 DD#78: a tainted default is rejected (a read must not sneak through)
-run_sash 'y=$(getenv HOME); x=$(arg 1 $y); attest x [[ -n $x ]]; echo "$x"'
+run_sash 'y=$(- getenv HOME); x=$(arg 1 $y); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.d5
 
 # av.d6 arity: more than an index + default is a compile error
@@ -184,11 +185,11 @@ run_sash 'argv a; echo $a[0]' a b c
 # ── Taint rules ──────────────────────────────────────────────────
 
 # av.x1 bare $(arg 0) used without attest is rejected (SB5020)
-run_sash 'echo $(arg 0)'
+run_sash 'echo $(- arg 0)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.x1
 
 # av.x2 bare $(arg 1) used without attest is rejected (SB5020)
-run_sash 'echo $(arg 1)'
+run_sash 'echo $(- arg 1)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.x2
 
 # av.x3 $(argv) splat in command-arg position is rejected
@@ -196,7 +197,7 @@ run_sash 'echo $(argv)'
 [[ $rc != 0 && -z $out && -n $err ]]; chk av.x3
 
 # av.x4 scalar arg, attested, then used — accepted
-run_sash 'x=$(arg 1); attest x [[ -n $x ]]; echo "$x"' alpha
+run_sash 'x=$(- arg 1); attest x [[ -n $x ]]; echo "$x"' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.x4
 
 # av.x5 snapshot array, attest-all, then read an element — accepted

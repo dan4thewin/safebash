@@ -391,14 +391,20 @@ impl<'a> Facts<'a> {
     }
 
     fn definition(&self, target: &VarRef, def: &Definition<'_>) -> Proof {
-        if target.var_type == VarType::Int && !self.collections.contains(&target.name) {
-            return Proof::default();
-        }
         let mut proof = match def {
             Definition::Input => self.input_proof(target),
             Definition::Phi(phi) => self.phi_proof(phi),
             Definition::Inst(inst) => self.instruction(inst),
         };
+        if target.var_type == VarType::Int && !self.collections.contains(&target.name) {
+            return Proof {
+                text: proof
+                    .text
+                    .and_then(|text| text.parse::<i64>().ok())
+                    .map(|value| value.to_string()),
+                ..Proof::default()
+            };
+        }
         if let Some(stores) = self.mutations.get(&target.name) {
             self.apply_mutations(&mut proof, stores);
         }
@@ -493,6 +499,10 @@ impl<'a> Facts<'a> {
     fn value(&self, value: &SsaValue) -> Proof {
         match value {
             SsaValue::Literal(text) => Proof::text(text),
+            SsaValue::Expr(text) => match text.parse::<i64>() {
+                Ok(value) => Proof::text(&value.to_string()),
+                Err(_) => Proof::unknown(),
+            },
             SsaValue::Var(var) => self.variable(var),
             SsaValue::Trusted { source }
             | SsaValue::ElideEmpty { source, .. }
@@ -593,8 +603,7 @@ impl<'a> Facts<'a> {
                 operand,
             } => self.parameter(var, operator, operand),
             SsaValue::ArgvIndex(_) => Proof::c_string(),
-            SsaValue::Expr(_)
-            | SsaValue::FuncCall { .. }
+            SsaValue::FuncCall { .. }
             | SsaValue::IntFuncCall { .. }
             | SsaValue::CmdSubstBody { .. }
             | SsaValue::SlurpFile(_) => Proof::unknown(),
@@ -623,14 +632,14 @@ fn intrinsic_proof(argv: &[SsaValue], facts: &Facts<'_>) -> Proof {
         return Proof::unknown();
     };
     match name.as_str() {
-        "arg" => {
+        "arg" | "getenv" => {
             let mut proof = Proof::c_string();
             if let Some(default) = argv.get(2) {
                 proof.join(facts.value(default));
             }
             proof
         }
-        "getenv" | "getcwd" | "argv" | "mkdtemp" => Proof::c_string(),
+        "getcwd" | "argv" | "mkdtemp" => Proof::c_string(),
         "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
         | "waitstatus" | "getcpid" | "status" | "signum" | "wait" => Proof::default(),
         _ => Proof::unknown(),
@@ -893,7 +902,7 @@ fn value_failures(value: &SsaValue, facts: &Facts<'_>, errors: &mut Vec<String>)
             );
         }
         SsaValue::CmdSubst { argv, suppressed } => {
-            errors.extend(intrinsic_failure(argv, *suppressed));
+            errors.extend(intrinsic_failure(argv, *suppressed, facts));
         }
         SsaValue::ParamExpansion { operator, .. } if operator == "glob" => {
             errors.push("a glob's uncatchable getcwd failure".to_string());
@@ -917,12 +926,22 @@ fn empty_branch_failures(
     }
 }
 
-fn intrinsic_failure(argv: &[SsaValue], suppressed: bool) -> Option<String> {
+fn intrinsic_failure(argv: &[SsaValue], suppressed: bool, facts: &Facts<'_>) -> Option<String> {
     let Some(SsaValue::Literal(name)) = argv.first() else {
         return None;
     };
     match name.as_str() {
-        "argv" | "arg" if argv.len() == 2 => Some("an uncatchable argv-bounds failure".to_string()),
+        "argv" if argv.len() == 2 => Some("an uncatchable argv-bounds failure".to_string()),
+        "arg"
+            if !argv.get(1).is_some_and(|index| {
+                facts
+                    .value(index)
+                    .text
+                    .is_some_and(|text| text.parse::<i64>().is_ok_and(|index| index >= 0))
+            }) =>
+        {
+            Some("an uncatchable invalid argument index".to_string())
+        }
         "mkdtemp" if !suppressed => Some("an unhandled mkdtemp creation failure".to_string()),
         _ => None,
     }

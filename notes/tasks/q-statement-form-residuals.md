@@ -78,7 +78,7 @@ A list cannot acquire several subjects and then grant adjacency to
 several later attests. A clean binding also intervenes; the final
 binding alone can have the immediately following attest.
 
-Keep `a=$(getenv A); attest a p?` together before acquiring and attesting
+Keep `a=$(- getenv A); attest a p?` together before acquiring and attesting
 `b`. This is an ordinary acquisition/resolution pair, not new syntax.
 It preserves DD128's signal-deferral unit and failed-path obligations.
 Grouping must not silently change locality because one AST node happens

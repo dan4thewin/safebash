@@ -20,9 +20,13 @@ handling is separately owned by `recoverable-file-failures`.
 
 DD101's November 13 contract also admits bare `arg` beside bare `getenv`;
 their literal-default forms are value-only, not eligible status producers.
-`require-getenv-status-handling` owns that extension and its coupled advice.
-Do not classify every use of a getter name alike or suggest presence handling
-where a default has already resolved absence.
+`require-getenv-status-handling` delivered that extension and its coupled
+advice (journal 663). The message now names direct untyped captures with an
+available result and distinguishes defaulted/discarded lookups and typed
+bindings. It no longer calls every rejected RHS a pure intrinsic.
+The per-RHS explanation and Q1/Q2 work below remain open. Do not classify
+every use of a getter name alike or suggest presence handling where a default
+has already resolved absence.
 
 The tables below are October 27 observations, not current acceptance gates.
 Q1/Q2 about inner negation and a lone quoted RHS remain separate; this

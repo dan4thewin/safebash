@@ -241,10 +241,11 @@ The existing ban on compound prefixes remains
 legal handling forms; they do not license an outer assignment `-`.
 No body, operand, taint or fatal-fault boundary changes.
 
-**Enforcement pending:** `reject-nonadjacent-suppression` owns assignment
-refusals, command-local list binding/classification and the remaining
-arithmetic-operand reach repair. Journal 588 records this policy-only
-change.
+**Partial enforcement:** bindings containing `arg`/`getenv` lookups reject
+an outer prefix, including quoted and concatenated values (DD101; journal 663).
+`reject-nonadjacent-suppression` still owns the other assignment refusals,
+command-local list binding/classification and remaining arithmetic-operand
+reach repair. Journal 588 records the original policy.
 
 ### A discarded status cannot be consumed (DG, 2026-11-08)
 
@@ -289,8 +290,9 @@ forms, existing `!`/`-` refusals and `$?` availability rules. This does
 not reset process exit bookkeeping or child outcomes. In particular,
 `- wait` discards its pid, not DD126's separate `waitstatus` output.
 
-**Enforcement pending:** `reject-discarded-status-consumers` owns the
-source-level refusals and preservation controls. Q3 in
+**Partial enforcement:** DD101's lookup capture-conditions reject
+source-discarded results (journal 663). `reject-discarded-status-consumers`
+still owns the general source-level refusals and preservation controls. Q3 in
 `q-suppression-and-stage-residuals` is settled as a policy question;
 journal 589 records the decision. No new diagnostic code is selected here.
 
@@ -319,15 +321,15 @@ capturing the string alone is not handling. Unhandled bare lookups are compile
 errors, independently of taint or an enclosing condition. Supplying a literal
 default handles absence and makes either lookup value-only, so
 `$(- arg N DEFAULT)` / `$(- getenv NAME DEFAULT)` have no status to discard.
-All four forms remain tainted. The November 12/13 revisions are pending in
-`require-getenv-status-handling`.
+All four forms remain tainted. The November 12/13 lookup revisions are
+implemented in native and C (`require-getenv-status-handling`, journal 663).
 An external command's status is likewise distinct from captured stdout.
 
 DD135's `mkdtemp` also has a separate status, for creation rather than lookup
 presence: it is implicitly checked unless legally handled or discarded.
 `$(- mkdtemp)` consumes the value and discards that real status, retaining
-empty text on handled creation failure. The constructor is unimplemented;
-it does not make a prefix meaningful on a statusless intrinsic.
+empty text on handled creation failure. The constructor is implemented
+(DD135); it does not make a prefix meaningful on a statusless intrinsic.
 
 Under DD132, scalar `match`/`sub`/`gsub` also have a real second
 result: a boolean beside the text. A text capture may explicitly discard
@@ -886,8 +888,9 @@ effects and taint. The body remains independently checked.
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
 owns implementation. ~~This is not `getenv`'s exception to mandatory
 handling.~~ DD101 now requires explicit handling or discard for bare lookup
-status too; literal-default lookups instead return only a value. Its separate
-implementation owner is `require-getenv-status-handling`.
+status too; literal-default lookups instead return only a value. That lookup
+contract is implemented separately (`require-getenv-status-handling`,
+journal 663); the named-predicate extension remains pending.
 
 ### Anonymous capture returns (DG, 2026-11-06)
 

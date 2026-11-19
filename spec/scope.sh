@@ -136,7 +136,7 @@ show'
 
 # 86.20 dead-var yields to a more-specific error: a tainted unread copy still
 # reports the taint (SB5020), not SB5050 (DG: more-specific error wins)
-run_sash 'y = $(getenv HOME)
+run_sash 'y = $(- getenv HOME)
 z = $y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 86.20
 

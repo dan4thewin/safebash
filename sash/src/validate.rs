@@ -1398,32 +1398,75 @@ fn validate_declaration_stmt(
 /// are boolean contexts; other wrappers forward `in_condition`; resetters
 /// (Function, Case) drop it (via `forwards_condition`).
 fn validate_nested(stmt: &Statement, in_condition: bool, diags: &mut Vec<Diagnostic>) {
+    check_lookup_binding_suppression(stmt, diags);
     match &stmt.kind {
         StmtKind::List(l) => {
             let left_cond = matches!(l.op, ListOp::And | ListOp::Or) || in_condition;
             validate_stmt_ctx(&l.left, diags, left_cond);
             validate_stmt_ctx(&l.right, diags, in_condition);
+            return;
         }
-        StmtKind::Pipeline(p) if p.negated => validate_children(&p.commands, true, diags),
+        StmtKind::Pipeline(p) if p.negated => {
+            validate_children(&p.commands, true, diags);
+            return;
+        }
         // DD#74: `return <producer>` — validate the producer as a condition
         // (a `[[ ]]`/`(( ))`/command status producer, consumed by the return).
-        StmtKind::ReturnProducer(inner) => validate_stmt_ctx(inner, diags, true),
-        _ => {
-            let inner = forwards_condition(stmt) && in_condition;
-            // `structural_bodies`, not `child_bodies`: `validate_stmt_ctx`
-            // walks the `$( … )` bodies of EVERY statement, wrapper or not.
-            // Taking them here too would validate a wrapper's substitution
-            // twice and print each of its diagnostics twice.
-            for body in stmt.structural_bodies() {
-                validate_children(body, inner, diags);
-            }
+        StmtKind::ReturnProducer(inner) => {
+            validate_stmt_ctx(inner, diags, true);
+            return;
         }
+        _ => {}
+    }
+    let inner = forwards_condition(stmt) && in_condition;
+    // `structural_bodies`, not `child_bodies`: `validate_stmt_ctx`
+    // walks the `$( … )` bodies of EVERY statement, wrapper or not.
+    // Taking them here too would validate a wrapper's substitution
+    // twice and print each of its diagnostics twice.
+    for body in stmt.structural_bodies() {
+        validate_children(body, inner, diags);
     }
 }
 
 fn validate_children(stmts: &[Statement], in_condition: bool, diags: &mut Vec<Diagnostic>) {
     for s in stmts {
         validate_stmt_ctx(s, diags, in_condition);
+    }
+}
+
+fn check_lookup_binding_suppression(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let StmtKind::Suppressed(inner) = &stmt.kind else {
+        return;
+    };
+    if prefixes_lookup_binding(inner) {
+        diags.push(Diagnostic::error_span(
+            stmt.span,
+            "SB4076",
+            "`-` cannot discard a binding's result — put it inside a bare lookup \
+             capture (`x=$(- arg N)` or `x=$(- getenv NAME)`); a defaulted lookup \
+             has no status to discard"
+                .to_string(),
+        ));
+    }
+}
+
+fn prefixes_lookup_binding(stmt: &Statement) -> bool {
+    let (kind, _) = peel_capture_wrappers(&stmt.kind);
+    match kind {
+        StmtKind::List(list) => prefixes_lookup_binding(&list.left),
+        StmtKind::Assignment(_) => {
+            let mut found = false;
+            crate::ir::walk_all_exprs(stmt, &mut |expr| {
+                found |= matches!(
+                    &expr.kind,
+                    ExprKind::CommandSubstitution(body)
+                        if single_value_command(body)
+                            .is_some_and(|c| matches!(expr_literal_str(&c.name), "arg" | "getenv"))
+                );
+            });
+            found
+        }
+        _ => false,
     }
 }
 
@@ -1488,10 +1531,10 @@ fn validate_assignment_stmt(
 /// condition and its stdout is captured into the target.
 ///
 /// Qualifying shapes: a single external `$(cmd)`, an all-external pipeline
-/// `$(a | b)`, `$(getenv NAME)` (DD101 lookup status), or `$(mkdtemp)`
-/// (DD135 creation status). This does not make every value intrinsic a
-/// condition. Excluded: a concatenation, a multi-statement `$(a; b)`, and
-/// any literal RHS.
+/// `$(a | b)`, bare `$(arg N)` / `$(getenv NAME)` (DD101 lookup status),
+/// `$(mkdtemp)` (DD135 creation status), or a regex text/boolean capture
+/// (DD132). Defaulted lookups and source-discarded results do not qualify.
+/// Nor do concatenations, multi-statement `$(a; b)`, or literal RHSs.
 ///
 /// Redirects are peeled and not judged here. Whether a redirect leaves the
 /// capture with a writer is a property of **every** capture, not of this one
@@ -1548,14 +1591,13 @@ fn is_intrinsic_capture_condition(stmt: &Statement, c: &crate::ir::Command) -> b
     let ExprKind::Literal(name) = &c.name.kind else {
         return false;
     };
-    let has_status = match name.as_str() {
-        "getenv" => true,
-        _ => {
-            !matches!(stmt.kind, StmtKind::Suppressed(_))
-                && (name == "mkdtemp" || crate::ssa::BuiltinCmd::from_name(name).is_regex_value())
-        }
-    };
-    has_status
+    if matches!(stmt.kind, StmtKind::Suppressed(_)) {
+        return false;
+    }
+    if crate::ssa::lookup_has_status(name, c.args.len()) {
+        return true;
+    }
+    (name == "mkdtemp" || crate::ssa::BuiltinCmd::from_name(name).is_regex_value())
         && crate::ssa::value_intrinsic_arity(name)
             .is_some_and(|arity| arity.contains(&c.args.len()))
 }
@@ -1591,7 +1633,8 @@ fn nonstatus_in_condition_diag(span: Span, what: &str, is_capture: bool) -> Diag
     let advice = if is_capture {
         format!(
             "{what} captures a value, but a capture-condition needs a status or boolean — a \
-             single external command (`if x=$(cmd) {{ … }}`), `$(getenv NAME)`, `$(mkdtemp)`, \
+             single external command (`if x=$(cmd) {{ … }}`), a bare `$(arg N)` or \
+             `$(getenv NAME)` lookup, `$(mkdtemp)`, \
              or a `match`/`sub`/`gsub` capture. Use a direct untyped binding with an available result, not a typed declaration, \
              discarded status, value-only intrinsic or concatenation. Bind it, then test: \
              `x=…; if [[ … ]]`."
@@ -4380,10 +4423,11 @@ fn value_intrinsic_diag(name: &str, c: &Command, pos: CmdPos) -> Option<Diagnost
 
 fn value_intrinsic_capture_spelling(name: &str, c: &Command) -> String {
     let ellipsis = if c.args.is_empty() { "" } else { " …" };
-    let discard = if crate::ssa::BuiltinCmd::from_name(name).is_regex_value() {
-        "- "
-    } else {
-        ""
+    let discard = match crate::ssa::BuiltinCmd::from_name(name).is_regex_value()
+        || crate::ssa::lookup_has_status(name, c.args.len())
+    {
+        true => "- ",
+        false => "",
     };
     format!("x=$({discard}{name}{ellipsis})")
 }
@@ -12059,8 +12103,7 @@ fn ambiguous_index_error(span: Span, idx: &str) -> Diagnostic {
     )
 }
 
-/// Enforce `arg`'s arity (index + optional default) and the literal-operand
-/// rule on its default.
+/// Enforce `arg`'s index/arity and both input lookups' literal-only defaults.
 ///
 /// This used to also host SB5035, which rejected `$(random)` in a `:-` default
 /// because the default was evaluated eagerly and `random` advances the PRNG
@@ -12071,43 +12114,43 @@ pub fn check_disposition_defaults(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| {
-            flag_arg_builtin(e, &mut diags);
+            flag_input_lookup(e, &mut diags);
         });
     }
     diags
 }
 
-/// DD#60 addendum: `$(arg …)` takes an index and an optional default
-/// (`$(arg N)` or `$(arg N DEFAULT)`) — reject other arities.
+/// DD#60/#101: input lookups take an index/name and an optional literal default.
 ///
 /// The default, if present, must be a **literal** — the third disposition
 /// default, held to the same rule as `${x:-D}` and `${x:?MSG}` (SB4070, DG
 /// 2026-09-30). Those two are literals by *parse*; this one cannot be, because
-/// it is an ordinary command argument and nothing knows it belongs to `arg`
+/// it is an ordinary command argument and nothing knows it belongs to a lookup
 /// until validate. So the rule is enforced structurally here instead, on the
 /// parsed expression.
 ///
 /// A single-quoted default needs no special case: `$(arg 5 'costs $5')` is a
 /// `SingleQuoted`, which carries no expansion and so passes. The escape comes
 /// out of the existing quoting rules for free.
-fn flag_arg_builtin(e: &Expr, diags: &mut Vec<Diagnostic>) {
+fn flag_input_lookup(e: &Expr, diags: &mut Vec<Diagnostic>) {
     let ExprKind::CommandSubstitution(stmts) = &e.kind else {
         return;
     };
-    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+    let Some(c) = single_value_command(stmts) else {
         return;
     };
-    if expr_literal_str(&c.name) != "arg" {
-        return;
-    }
-    if let Some(d) = arg_index_diag(e, c) {
+    let name = expr_literal_str(&c.name);
+    let index_error = match name {
+        "arg" => arg_index_diag(e, c),
+        "getenv" => None,
+        _ => return,
+    };
+    if let Some(d) = index_error {
         diags.push(d);
         return;
     }
-    if let Some(default) = c.args.get(1) {
-        if let Some(bad) = first_expansion(default) {
-            diags.push(disposition_default_expansion(bad));
-        }
+    if let Some(bad) = c.args.get(1).and_then(first_expansion) {
+        diags.push(disposition_default_expansion(bad));
     }
 }
 
@@ -12140,9 +12183,9 @@ fn arg_index_diag(e: &Expr, c: &Command) -> Option<Diagnostic> {
     // A literal index that is not a plain non-negative integer is a typo, and
     // a silent one: the runtime parses the index by taking leading digits, so
     // `$(arg 1x)` reads argument 1 and `$(arg abc)` reads argument 0 — the
-    // program name — with a successful exit. `$(arg 5)` past the end aborts
-    // rather than yielding empty (av.t6); this is the same rule for the same
-    // reason. A dynamic index (`$(arg $i)`) stays a runtime concern.
+    // program name — with a successful exit. Invalid indices are not absent
+    // arguments. A computed index (`$(arg $i)`) must be integer-valued and
+    // retains its runtime negative-index check.
     if c.args.first().is_some_and(is_nonnumeric_index_literal) {
         let s = expr_literal_str(&c.args[0]);
         return Some(Diagnostic::error_span(
@@ -12210,11 +12253,12 @@ fn disposition_default_expansion(span: Span) -> Diagnostic {
     Diagnostic::error_span(
         span,
         "SB4070",
-        "an `$(arg N DEFAULT)` default is a literal, so a `$` expansion in it \
+        "an input-lookup default (`$(arg N DEFAULT)` or `$(getenv NAME DEFAULT)`) \
+         is a literal, so a `$` expansion in it \
          would be silently used as text rather than expanded — the same rule as \
          `${x:-D}` and `${x:?MSG}`. Single-quote it to mean a literal `$` \
          (`$(arg 5 'costs $5')`), or, if you want a computed value, capture the \
-         argument and test it explicitly"
+         input with an explicit lookup-status consumer"
             .to_string(),
     )
 }

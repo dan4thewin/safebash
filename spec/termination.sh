@@ -98,22 +98,22 @@ run_sash 'fn code -> int { /bin/false; return 3 }; fail $(code); EXIT { echo wro
 run_sash 'exit 7; EXIT { /bin/false }; ERR { int c=$?; - echo "err:$c" }'
 [[ $rc = 1 && $out = err:1 && -z $err && $rerr == *"command failed"* ]]; chk exfail.31
 
-run_sash 'str v=clean; v=$(getenv HOME); exit 7; EXIT { echo "$v" }'
+run_sash 'str v=clean; v=$(- getenv HOME); exit 7; EXIT { echo "$v" }'
 [[ $err == *SB5020* && $err == *"explicit exit enters EXIT"* ]]; chk exfail.32
 
-SASH_CFLAGS=--no-taint-cst run_sash 'str v=clean; v=$(getenv HOME); exit 7; EXIT { echo "$v" }'
+SASH_CFLAGS=--no-taint-cst run_sash 'str v=clean; v=$(- getenv HOME); exit 7; EXIT { echo "$v" }'
 [[ $err == *"tainted variable"* && $err == *"SSA taint backstop"* ]]; chk exfail.33
 
-run_sash 'str v=clean; fn die { v=$(getenv HOME); exit 7 }; die; EXIT { echo "$v" }'
+run_sash 'str v=clean; fn die { v=$(- getenv HOME); exit 7 }; die; EXIT { echo "$v" }'
 [[ $err == *SB5020* && $err == *"EXIT requires it"* ]]; chk exfail.34
 
 run_sash 'fn die { read A; exit 7 }; array a; die =a; EXIT { echo "${a[0]}" }'
 [[ $err == *SB5020* && $err == *"EXIT requires it"* ]]; chk exfail.35
 
-run_sash 'v=$(getenv HOME); fail 0; ERR { - echo "$v" }'
+run_sash 'v=$(- getenv HOME); fail 0; ERR { - echo "$v" }'
 [[ $err == *SB5020* && $err == *'ERR incoming `v` may be tainted'* ]]; chk exfail.36
 
-run_sash 'str v=clean; v=$(getenv HOME); attest v [[ $v == allowed ]] || fail 0; echo "$v"; ERR { - echo cleanup }'
+run_sash 'str v=clean; v=$(- getenv HOME); attest v [[ $v == allowed ]] || fail 0; echo "$v"; ERR { - echo cleanup }'
 [[ $rc = 0 && $out = cleanup && -z $err ]]; chk exfail.37
 
 run_sash 'str pending=$(fail 0); echo "$pending"; ERR { - echo cleanup }'

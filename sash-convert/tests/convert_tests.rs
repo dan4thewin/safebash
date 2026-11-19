@@ -201,10 +201,10 @@ fn manual_case_removed() {
 
 #[test]
 fn tilde_bare_home() {
-    // `~` → hoisted $(getenv HOME) + attest, referenced as $home.
+    // `~` → hoisted $(- getenv HOME) + attest, referenced as $home.
     let out = convert("tilde_bare", "#!/bin/bash\necho ~\n");
     assert!(
-        out.contains("home=$(getenv HOME)")
+        out.contains("home=$(- getenv HOME)")
             && out.contains("attest home")
             && out.contains("echo $home"),
         "expected ~ → $home hoist, got:\n{}",
@@ -217,7 +217,7 @@ fn tilde_home_path() {
     // `~/foo` → `$home/foo` (leading ~ rewritten, tail preserved).
     let out = convert("tilde_path", "#!/bin/bash\necho ~/foo\n");
     assert!(
-        out.contains("echo $home/foo") && out.contains("home=$(getenv HOME)"),
+        out.contains("echo $home/foo") && out.contains("home=$(- getenv HOME)"),
         "expected ~/foo → $home/foo, got:\n{}",
         out
     );

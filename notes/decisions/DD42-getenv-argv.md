@@ -56,7 +56,8 @@ resolves taint.
 DD101's 2026-11-13 revision adds `$(getenv NAME DEFAULT)` with the same
 literal-default contract as `arg`: select DEFAULT only on absence, and return
 only the selected tainted string. Bare `arg` also gains the same presence result.
-The expanded `require-getenv-status-handling` owns these pending changes.
+These changes are implemented in native and C; `require-getenv-status-handling`
+and journal 663 record delivery.
 
 Note for readers arriving from the abort discussion: this file's "There is no
 silent empty return" is scoped to `$(argv N)` **out-of-range bounds**, the

@@ -392,14 +392,14 @@ for i in a b {
 
 # DD86: validating unchanged bytes is not a write (retires constw.4).
 export CONST_VALUE=007 CONST_BAD=bad
-run_sash 'const h=$(getenv CONST_VALUE)
+run_sash 'const h=$(- getenv CONST_VALUE)
 attest h [[ $h =~ ^[0-9]+$ ]]
 echo "$h"'
 [[ $rc = 0 && $out = 007 && -z $err && -z $rerr ]]; chk constval.1
 
 # constw.5 an attest conversion's target
 run_sash 'const n=1
-s=$(getenv X)
+s=$(- getenv X)
 attest s (( n = s ))
 echo "$n"'
 [[ $rc != 0 && -z $out && $err == *':3:1: error [SB4044]'* ]]; chk constw.5
@@ -577,14 +577,14 @@ echo "$text"'
 [[ $rc = 0 && $out = abc && -z $err && -z $rerr ]]; chk constval.2
 
 # Conversion validates the source without changing its bytes or string type.
-run_sash 'const text=$(getenv CONST_VALUE)
+run_sash 'const text=$(- getenv CONST_VALUE)
 attest text (( number = text ))
 echo "$text:$number"
 echo "$(strlen "$text")"'
 [[ $rc = 0 && $out = $'007:7\n3' && -z $err && -z $rerr ]]; chk constval.3
 
 # A terminating failure arm permits the ordinary const's successful merge.
-run_sash 'const text=$(getenv CONST_VALUE)
+run_sash 'const text=$(- getenv CONST_VALUE)
 if attest text [[ $text == 007 ]] {
   echo "ok:$text"
 } else { exit 8 }
@@ -592,7 +592,7 @@ echo "after:$text"'
 [[ $rc = 0 && $out = $'ok:007\nafter:007' && -z $err && -z $rerr ]]; chk constval.4
 
 # Negation swaps the successful conversion arm, not the source's constness.
-run_sash 'const text=$(getenv CONST_VALUE)
+run_sash 'const text=$(- getenv CONST_VALUE)
 if ! attest text (( number = text )) { exit 8 } else {
   (( number += 1 ))
   echo "$text:$number"
@@ -600,7 +600,7 @@ if ! attest text (( number = text )) { exit 8 } else {
 echo "$text"'
 [[ $rc = 0 && $out = $'007:8\n007' && -z $err && -z $rerr ]]; chk constval.5
 
-run_sash 'const text=$(getenv CONST_VALUE)
+run_sash 'const text=$(- getenv CONST_VALUE)
 attest text i? || exit 9
 echo "$text"'
 [[ $rc = 0 && $out = 007 && -z $err && -z $rerr ]]; chk constval.6
@@ -617,21 +617,21 @@ again xx'
 [[ $rc = 0 && $out = $'x\nxx\nxx' && -z $err && -z $rerr ]]; chk constval.7
 
 # Sibling captures retain distinct lexical const identities.
-run_sash 'first=$(const text=$(getenv CONST_VALUE); attest text i?; echo "$text")
+run_sash 'first=$(const text=$(- getenv CONST_VALUE); attest text i?; echo "$text")
 attest first i?
-second=$(const text=$(getenv CONST_VALUE); attest text -n; echo "$text")
+second=$(const text=$(- getenv CONST_VALUE); attest text -n; echo "$text")
 attest second i?
 echo "$first:$second"'
 [[ $rc = 0 && $out = 007:007 && -z $err && -z $rerr ]]; chk constval.8
 
-run_sash 'const text=$(getenv CONST_BAD)
+run_sash 'const text=$(- getenv CONST_BAD)
 attest text i?
 echo "$text"'
 [[ $rc = 1 && -z $out && -z $err &&
    $rerr == *"attest: text = 'bad' failed the gate"* ]]; chk constval.9
 
 # Failed validation preserves the candidate and still requires a forced read.
-run_sash 'const text=$(getenv CONST_BAD)
+run_sash 'const text=$(- getenv CONST_BAD)
 if attest text i? { echo "good:$text" } else {
   echo "rejected:${text:!}"
   exit 6
@@ -639,7 +639,7 @@ if attest text i? { echo "good:$text" } else {
 [[ $rc = 6 && $out = rejected:bad && -z $err && -z $rerr ]]; chk constval.10
 
 # Only the actual write is SB4044, not the preceding value-preserving attest.
-run_sash 'const text=$(getenv CONST_VALUE)
+run_sash 'const text=$(- getenv CONST_VALUE)
 attest text i?
 text=changed
 echo "$text"'
@@ -648,13 +648,13 @@ echo "$text"'
 
 # A conversion's const source is legal; its const target is still a real write.
 run_sash 'const number=0
-const text=$(getenv CONST_VALUE)
+const text=$(- getenv CONST_VALUE)
 attest text (( number = text ))
 echo "$text:$number"'
 [[ $rc != 0 && -z $out && $err == *':3:1: error [SB4044]'*
    && $(printf '%s\n' "$err" | grep -cF '[SB4044]') = 1 ]]; chk constval.12
 
-run_sash 'const text=$(getenv CONST_BAD)
+run_sash 'const text=$(- getenv CONST_BAD)
 if attest text i? {
   echo "$text"
 } else {
@@ -665,24 +665,24 @@ echo "$text"'
    && $err != *':2:4: error [SB4044]'* ]]; chk constval.13
 
 # Constness supplies neither adjacency nor permission to attest received taint.
-run_sash 'const text=$(getenv CONST_VALUE)
+run_sash 'const text=$(- getenv CONST_VALUE)
 echo intervening
 attest text i?
 echo "$text"'
 [[ $rc != 0 && -z $out && $err == *SB5088* && $err != *SB4044* ]]; chk constval.14
 
 run_sash 'fn check { attest text i? }
-const text=$(getenv CONST_VALUE)
+const text=$(- getenv CONST_VALUE)
 check
 echo "$text"'
 [[ $rc != 0 && -z $out && $err == *SB5088* && $err != *SB4044* ]]; chk constval.15
 
 # Ordinary consts do not acquire scratch's unresolved-fall-through exception.
-run_sash 'const text=$(getenv CONST_VALUE)
+run_sash 'const text=$(- getenv CONST_VALUE)
 if attest text i? { echo "$text" }'
 [[ $rc != 0 && -z $out && $err == *SB5089* && $err != *SB4044* ]]; chk constval.16
 
-run_sash 'const text=$(getenv CONST_BAD)
+run_sash 'const text=$(- getenv CONST_BAD)
 if attest text i? { echo "$text" } else {
   echo "$text"
   exit 6
@@ -2326,7 +2326,7 @@ echo \"n=\$(len k) first=\${k[0]}\""
 # as a tainted `$(getenv …)` and was attested, so no route to a tainted key
 # survives (DD#93) — and `${k[0]}` needs no second attest.
 run_sash 'map m
-h=$(getenv HOME)
+h=$(- getenv HOME)
 attest h [[ -n "$h" ]]
 m["$h"]="v"
 array k

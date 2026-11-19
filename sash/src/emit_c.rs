@@ -267,11 +267,6 @@ fn emit_prologue(out: &mut String) {
     // DD#60: program-argument access.
     writeln!(out, "extern i64 sash_argc;").unwrap();
     writeln!(out, "extern char* sash_argv_get(i64 idx, i64* out_len);").unwrap();
-    writeln!(
-        out,
-        "extern char* sash_argv_get_or(i64 idx, const char* dp, i64 dl, i64* out_len);"
-    )
-    .unwrap();
     writeln!(out, "extern void* sash_argv_snapshot(i64 start);").unwrap();
     writeln!(out, "extern void* sash_keys_snapshot(const void* m);").unwrap();
     writeln!(
@@ -3660,11 +3655,8 @@ fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], suppressed: bool, types: &VarTyp
         .expect("ICE: non-intrinsic command substitution must be lifted to a pipeline")
 }
 
-/// Mirrors `try_native_intrinsic` (codegen/value_handlers.rs:736).
+/// Mirrors `try_native_intrinsic` (codegen/value_handlers.rs).
 /// Returns Some when the command is a sash-native intrinsic.
-/// Phase 3 implements: getenv, epochseconds, getpid, getppid, getcwd.
-/// Deferred to Phase 4: argc, argv, signum (need argv access plumbing
-/// or are tied to status handling).
 fn try_native_intrinsic_c(
     e: &mut Emit,
     name: &str,
@@ -3675,64 +3667,37 @@ fn try_native_intrinsic_c(
         return Some(r);
     }
     match name {
-        "arg" if argv.len() >= 3 => {
-            // DD#60 addendum: $(arg N DEFAULT) — argv[N], or the default if OOB.
-            let (ip, il) = lower_value_as_str(e, &argv[1], types);
-            let (dp, dl) = lower_value_as_str(e, &argv[2], types);
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_i = sash_atoi({ip}, {il}); i64 {t}_l; \
-                 const char* {t}_p = sash_argv_get_or({t}_i, {dp}, {dl}, &{t}_l);",
-                t = t,
-                ip = ip,
-                il = il,
-                dp = dp,
-                dl = dl
-            )
-            .unwrap();
-            Some((format!("{}_p", t), format!("{}_l", t)))
-        }
-        "arg" if argv.len() >= 2 => {
-            // DD#60: $(arg N) — scalar program argument, 0-based.
-            let (ip, il) = lower_value_as_str(e, &argv[1], types);
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_i = sash_atoi({ip}, {il}); i64 {t}_l; \
-                 const char* {t}_p = sash_argv_get({t}_i, &{t}_l);",
-                t = t,
-                ip = ip,
-                il = il
-            )
-            .unwrap();
-            Some((format!("{}_p", t), format!("{}_l", t)))
-        }
+        "arg" | "getenv" if argv.len() >= 2 => Some(emit_input_lookup_c(e, name, argv, types)),
         // DD#126: `$(wait)` / `$(wait $p)` — the pid, rendered as a string.
         "wait" => {
             let pid = emit_wait_value_c(e, argv, types);
             Some(emit_itoa_temp(e, &pid))
         }
-        "getenv" if argv.len() >= 2 => {
-            let (np, nl) = lower_value_as_str(e, &argv[1], types);
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_l; const char* {t}_p = sash_getenv({np}, {nl}, &{t}_l);",
-                t = t,
-                np = np,
-                nl = nl
-            )
-            .unwrap();
-            // DD#101: the lookup status. NULL means absent; a present name
-            // yields a pointer into environ even when its value is empty, so
-            // the pointer — never the length — is what separates unset from
-            // set-to-empty. Mirrors value_handlers::emit_getenv_lookup_status.
-            writeln!(e.out, "    __exit_status = ({t}_p == 0) ? 1 : 0;", t = t).unwrap();
-            Some((format!("{}_p", t), format!("{}_l", t)))
-        }
         _ => None,
     }
+}
+
+fn emit_input_lookup_c(e: &mut Emit, name: &str, argv: &[SsaValue], types: &VarTypes) -> CStr {
+    let (kp, kl) = lower_value_as_str(e, &argv[1], types);
+    let t = e.fresh();
+    let lookup = if name == "arg" {
+        format!("sash_argv_get(sash_atoi({kp}, {kl}), &{t}_l)")
+    } else {
+        format!("sash_getenv({kp}, {kl}, &{t}_l)")
+    };
+    writeln!(e.out, "    i64 {t}_l; const char* {t}_p = {lookup};").unwrap();
+    let (dp, dl) = if let Some(default) = argv.get(2) {
+        lower_value_as_str(e, default, types)
+    } else {
+        writeln!(e.out, "    __exit_status = ({t}_p == 0) ? 1 : 0;").unwrap();
+        ("\"\"".to_string(), "0".to_string())
+    };
+    writeln!(
+        e.out,
+        "    if ({t}_p == 0) {{ {t}_p = {dp}; {t}_l = {dl}; }}"
+    )
+    .unwrap();
+    (format!("{t}_p"), format!("{t}_l"))
 }
 
 // ═══════════════════════════════════════════════════════════════

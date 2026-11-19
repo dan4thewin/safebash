@@ -1075,37 +1075,18 @@ fn fill_random(bytes: &mut [u8]) -> Result<(), rustix::io::Errno> {
 
 /// Get program argument by 0-based index (DD#60 `$(arg N)`).
 /// `arg 0` is the program name (argv[0]); `arg 1` the first user arg.
-/// Panics (aborts) if index is out of range.
+/// A valid absent index returns NULL and length zero, like `sash_getenv`.
+/// A negative index is invalid, not absence, and aborts.
 #[no_mangle]
 pub extern "C" fn sash_argv_get(idx: i64, out_len: *mut i64) -> *const u8 {
     let argc = unsafe { sash_argc };
     // idx is 0-based C argv: argv[0] is the program name, argv[1..] args.
-    if idx < 0 || idx >= argc {
+    if idx < 0 {
         sash_panic_argv(idx, argc);
     }
-    let argv = unsafe { sash_argv };
-    let ptr = unsafe { *argv.add(idx as usize) };
-    let len = unsafe { strlen(ptr) };
-    unsafe { *out_len = len as i64 };
-    ptr
-}
-
-/// DD#60 addendum: `$(arg N DEFAULT)` — like `sash_argv_get`, but an
-/// out-of-range index returns the (already-evaluated) default `(d_ptr, d_len)`
-/// instead of aborting. Any invalid index (negative or `>= argc`) falls back to
-/// the default. The default is constrained at compile time (DD#78: clean,
-/// side-effect-free), so evaluating it eagerly at the call site is safe.
-#[no_mangle]
-pub extern "C" fn sash_argv_get_or(
-    idx: i64,
-    d_ptr: *const u8,
-    d_len: i64,
-    out_len: *mut i64,
-) -> *const u8 {
-    let argc = unsafe { sash_argc };
-    if idx < 0 || idx >= argc {
-        unsafe { *out_len = d_len };
-        return d_ptr;
+    if idx >= argc {
+        unsafe { *out_len = 0 };
+        return core::ptr::null();
     }
     let argv = unsafe { sash_argv };
     let ptr = unsafe { *argv.add(idx as usize) };

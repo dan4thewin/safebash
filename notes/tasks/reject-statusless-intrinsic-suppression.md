@@ -41,8 +41,10 @@ Preserve legal status discard and ordinary capture-condition handling, while
 discarded status. Preserve legal external stdout captures too.
 
 DD101's 2026-11-12/13 revisions require that handling/discard and add
-literal-default value-only forms for both lookups. The expanded
-`require-getenv-status-handling` owns delivery. Preserve `$(- arg N)` and
+literal-default value-only forms for both lookups. These are implemented by
+`require-getenv-status-handling` (journal 663), including the SB4076
+default-prefix refusals pinned by `lookup.25/.26` and reversion.
+General statusless-intrinsic enforcement remains open. Preserve `$(- arg N)` and
 `$(- getenv NAME)`, but reject `$(- arg N DEFAULT)` and
 `$(- getenv NAME DEFAULT)`: the defaults already resolve absence and leave
 no status to discard. Classify by legal form, not builtin name alone.

@@ -26,7 +26,8 @@ a legal capture-condition, or discard inside `$(- getenv NAME)`. Using the
 string does not consume that status, and taint validation does not replace
 presence handling. A literal DEFAULT instead handles absence and yields only
 the selected tainted string. Present-empty does not select it. Mandatory
-handling and the default form are pending in `require-getenv-status-handling`.
+handling and the default form are implemented in native and C
+(`require-getenv-status-handling`, journal 663).
 
 `$HOME` in sash source refers to a sash variable named `HOME`. It
 does NOT implicitly read the `HOME` environment variable. If no sash

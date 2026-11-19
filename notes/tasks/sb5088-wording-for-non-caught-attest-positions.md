@@ -7,7 +7,11 @@ gates:
 # SB5088 claims non-adjacency for attests that are adjacent
 
 Split out of `negated-attest-not-a-caught-form` (2026-10-02), which fixed the
-`if ! attest` case by translation. Two positions still report SB5088:
+`if ! attest` case by translation. The two recorded positions report SB5088:
+
+The examples and diagnostic quotation below are historical. To rerun them
+after DD101's lookup delivery, use `str x=$(- arg 1)` so that the lookup
+presence requirement does not hide the attest-position issue (journal 663).
 
 ```sash
 str x=$(arg 1)

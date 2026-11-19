@@ -554,7 +554,7 @@ run_sash 'for v in "$(getcwd)" { echo "$v" }'
 # fs.4 an intrinsic taking arguments is still a scalar. This one used to be
 # SB5020 (getenv is tainted); the source-shape rule is the more specific
 # complaint and now fires first.
-run_sash 'for v in $(getenv HOME) { echo "$v" }'
+run_sash 'for v in $(- getenv HOME) { echo "$v" }'
 [[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.4
 
 # fs.5 `$(join a)` returns ONE joined string, so it is a scalar even though
@@ -814,11 +814,11 @@ x=$(if [[ $y == b || $(zed) == z ]] { echo cap })
 echo "[$x]"'
 [[ $rc = 0 && $out = $'t1\nf1\n[cap]' && -z $err && -z $rerr ]]; chk lazy.10
 
-# lazy.11 a skipped intrinsic that would abort (argv bounds) is not run
-SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'x=a
-if [[ $x == a || $(arg 5) == b ]] { echo yes }
+# A skipped intrinsic that would abort (an invalid index, not absence) is not run.
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'x=a; int bad=-1
+if [[ $x == a || $(- arg $bad) == b ]] { echo yes }
 echo done'
-[[ $rc = 0 && $out = $'yes\ndone' && -z $err && -z $rerr ]]; chk lazy.11
+[[ $rc = 0 && $out = $'yes\ndone' && -z $err && -z $rerr ]]; chk lookup.59
 
 
 # ── DD#66: a dispatch evaluates lazily, in source order ──────────────────

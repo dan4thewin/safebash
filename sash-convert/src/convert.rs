@@ -1457,20 +1457,20 @@ fn convert_tilde_word(
         prefix_lines.push((
             line,
             "# MANUAL: tilde form (~user / multi-tilde) not mechanically \
-             resolvable — rewrite to an explicit $(getenv …) + attest"
+             resolvable — rewrite to an explicit $(- getenv …) + attest"
                 .into(),
         ));
         return;
     }
 
-    // Mirror the $HOME env-var hoist: home=$(getenv HOME); attest home [[ … ]].
+    // Mirror the $HOME value read: discard presence, then attest the text.
     let env = known_externals::lookup_env_var("HOME").expect("HOME is a known env var");
     patches.push(Patch {
         start: node.start_byte(),
         end: node.end_byte(),
         replacement: format!("$home{}", &w[1..]),
         prefix_line: Some(format!(
-            "home=$(getenv HOME); attest home [[ $home =~ {} ]]",
+            "home=$(- getenv HOME); attest home [[ $home =~ {} ]]",
             env.pattern
         )),
         original: None,
@@ -2052,21 +2052,20 @@ fn convert_simple_expansion(
         match child.kind() {
             "variable_name" => {
                 let name = node_text(child, source);
-                // Numeric positional parameter: $0 → $(arg 0), $N → $(arg N).
+                // Numeric positional parameters consume text, not lookup status.
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     if !in_function {
                         patches.push(positional_hoist(start, end, name));
                     }
                 } else if let Some(env) = crate::known_externals::lookup_env_var(name) {
-                    // Known env var: $HOME → $(getenv HOME) + attest
+                    // A Bash variable read consumes text without testing presence.
                     let var = name.to_lowercase();
-                    // Emit: var=$(getenv NAME); attest var [[ $var =~ pattern ]]
                     patches.push(Patch {
                         start,
                         end,
                         replacement: format!("${}", var),
                         prefix_line: Some(format!(
-                            "{}=$(getenv {}); attest {} [[ ${} =~ {} ]]",
+                            "{}=$(- getenv {}); attest {} [[ ${} =~ {} ]]",
                             var, name, var, var, env.pattern
                         )),
                         original: None,
@@ -2160,7 +2159,7 @@ fn positional_hoist(start: usize, end: usize, index: &str) -> Patch {
         end,
         replacement: format!("${var}"),
         prefix_line: Some(format!(
-            "{var}=$(arg {index}); attest {var} [[ {PLACEHOLDER_PREDICATE} ${var} ]]  \
+            "{var}=$(- arg {index}); attest {var} [[ {PLACEHOLDER_PREDICATE} ${var} ]]  \
              # MANUAL: tighten this predicate — sash-convert cannot know what ${index} must look like"
         )),
         original: None,
@@ -2259,7 +2258,7 @@ fn convert_expansion(
 ) {
     let text = node_text(node, source);
 
-    // ${1}, ${2}, etc. → $(arg N); ${@} → $(argv); ${#} → user-arg count.
+    // ${1}, ${2}, etc. → $(- arg N); ${@} → $(argv); ${#} → user-arg count.
     // Function-local positionals (inside a function body) pass through.
     if text.starts_with("${") && text.ends_with('}') {
         let inner = &text[2..text.len() - 1];

@@ -40,7 +40,7 @@ run_sash 'x=hi; echo ${x@Q}'
 run_sash 'case $x in a) echo m;; esac'
 [[ $rc != 0 && -z $out && $err == *SB4029* ]]; chk cov.9
 # cov.10 a tainted value placed into an array via subscript assign → SB5021
-run_sash 'array a=(); a[0]=$(getenv HOME)'
+run_sash 'array a=(); a[0]=$(- getenv HOME)'
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.10
 # cov.11 `source` / `.` is rejected as dynamic execution → SB4001. (Was SB4002
 # from the parser's removed-builtin table; that table is gone and SB4001 from
@@ -382,7 +382,7 @@ run_sash 'echo ${y:-$(random)}'
 # (DD#60/78). The `$(arg …)` source assignment is allowed, but the default is a
 # read, checked where the capture's body is walked (`taint_cmdsub_bodies`);
 # `x=$(arg 1 cleanlit)` compiles.
-run_sash 'argv 1 a; t=$(getenv HOME); x=$(arg 1 $t)' one
+run_sash 'argv 1 a; t=$(- getenv HOME); x=$(arg 1 $t)' one
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.93
 
 # ── The removed-builtin table is gone (DG 2026-09-12) ───────────────
@@ -887,7 +887,7 @@ run_sash 'array args=(1 2)'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk cov.189
 # cov.190 a tainted `:-` default into an array element. Was SB5021 via the
 # read discipline; SB4070 now, in the parser.
-run_sash 's=$(getenv HOME)
+run_sash 's=$(- getenv HOME)
 c="q"
 array a=("${c:-$s}")
 echo "${a[0]}"'
@@ -1371,12 +1371,12 @@ run_sash 'array g=(); f() { argv g; }; f; for v in @g { /bin/echo $v }'
 [[ $rc != 0 && $err == *SB5020* && $err != *SB5067* ]]; chk cov.266
 run_sash 'str g=""; f() { mapfile g; }; f; f'
 [[ $rc != 0 && $err == *SB5067* ]]; chk cov.267
-run_sash 'str g=""; f() { g=$(getenv HOME); }; f; f'
+run_sash 'str g=""; f() { g=$(- getenv HOME); }; f; f'
 [[ $rc != 0 && $err == *SB5067*assignment* ]]; chk cov.268
 run_sash 'str g=""; f() { g=$(/bin/date); }; f; f'
 [[ $rc != 0 && $err == *SB5067*assignment* ]]; chk cov.269
 # The same taint into a *local* is the allowed shape — attest it and use it.
-run_sash 'f() { str l=$(getenv HOME); attest l [[ -n $l ]]; echo ok; }; f'
+run_sash 'f() { str l=$(- getenv HOME); attest l [[ -n $l ]]; echo ok; }; f'
 [[ $rc == 0 && $out == ok && $err != *SB5067* ]]; chk cov.270
 
 # cov.271-275 SB4020 through the DD#93 attest carve-out. `validate` exempts an
@@ -1395,23 +1395,23 @@ run_sash 'f() { str l=$(getenv HOME); attest l [[ -n $l ]]; echo ok; }; f'
 # unattested `s` is SB5020 (DD#24: a disposition converts, it does not
 # declassify — journal 400). Attesting the source first is the sanctioned
 # route. Do not strip it to shorten the line.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n ? (d++) : 1 )); then echo $c $d; else exit 1; fi'
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n ? (d++) : 1 )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.271
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d++) )); then echo $c $d; else exit 1; fi'
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d++) )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.272
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + v[d++] )); then echo $c $d; else exit 1; fi'
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + v[d++] )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.273
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + (v[0] = 3) )); then echo $c $d; else exit 1; fi'
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + (v[0] = 3) )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.274
 # The shape the old local copy did catch — a plain `BinOp` operand. Keeps the
 # regression guard honest: the fix must not narrow what already worked.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d++) )); then echo $c $d; else exit 1; fi'
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d++) )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.275
 # Widening the walk into `Ternary`/`Subscript`/`UnaryOp` must not turn a
 # mutation-free operand under those nodes into a false positive.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n ? v[d] : -d )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n ? v[d] : -d )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 6 && $err != *SB4020* ]]; chk cov.276
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d) )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d) )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 6 && $err != *SB4020* ]]; chk cov.277
 
 # cov.278-282: reads inside an attest's `(( … ))` predicate. The arm used to
@@ -1423,19 +1423,19 @@ run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; i
 # nothing and silently read as 0 (cov.280-281), and an undefined array walked
 # through validate into codegen and ICEd (cov.282). The arm now uses
 # `check_arith_reads`, the same collector a plain `(( … ))` statement uses.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d) )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d) )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 8 && $err != *SB5050* ]]; chk cov.278
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n + v[d] )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n + v[d] )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 13 && $err != *SB5050* ]]; chk cov.279
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + zz )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + zz )); then echo $c; else exit 1; fi' 7
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk cov.280
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int array v=(5 6); if attest n (( c = n + v[zz] )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int array v=(5 6); if attest n (( c = n + v[zz] )); then echo $c; else exit 1; fi' 7
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk cov.281
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + vv[0] )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + vv[0] )); then echo $c; else exit 1; fi' 7
 [[ $rc != 0 && -z $out && $err == *SB5031* && $err != *ICE* ]]; chk cov.282
 # The attest target is introduced by the attest, not read — it must not be
 # reported undefined now that the predicate goes through the real collector.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 7 && $err != *SB5031* ]]; chk cov.283
 
 # cov.284-297: the lexing that made deleting 27 `LogosTok` variants safe.
@@ -1467,7 +1467,7 @@ run_sash 'int n=5; str s=abc; const int K=7; echo $n $s $K'
 [[ $rc == 0 && $out == "5 abc 7" ]]; chk cov.292
 run_sash 'array a=(x y); map m; m[k]=v; echo ${a[1]}${m[k]}'
 [[ $rc == 0 && $out == yv ]]; chk cov.293
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; else exit 1; fi' 7
+run_sash 'str s=$(- arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 7 ]]; chk cov.294
 # Handler declarations are intercepted before statement dispatch.
 run_sash 'EXIT { echo bye; }'
@@ -1672,7 +1672,7 @@ run_sash 'str s=$(str y=v; /bin/echo "$y")
 attest s [[ -n $s ]]
 echo "[$s]"
 fn f {
-    str y=$(getenv HOME)
+    str y=$(- getenv HOME)
     attest y [[ -n $y ]]
 }
 f'
@@ -1682,7 +1682,7 @@ f'
 run_sash 'str y=v
 /bin/echo "$y"
 fn f {
-    y=$(getenv HOME)
+    y=$(- getenv HOME)
 }
 f
 f'
@@ -1696,7 +1696,7 @@ run_sash 'fn h {
 }
 h
 fn f {
-    str y=$(getenv HOME)
+    str y=$(- getenv HOME)
     attest y [[ -n $y ]]
 }
 f'

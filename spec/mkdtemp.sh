@@ -169,11 +169,11 @@ run_refusal 'str p; p=$(- mkdtemp) || echo "[$p]"'
 run_refusal 'str p=$(mkdtemp); echo $p $?'
 [[ $rc != 0 && $err == *SB5012* ]]; chk mkd.21
 
-run_refusal 'str p=$(getenv MKD_INPUT); p=$(mkdtemp); echo $p'
+run_refusal 'str p=$(- getenv MKD_INPUT); p=$(mkdtemp); echo $p'
 [[ $rc != 0 && $err == *SB5020* ]]; chk mkd.22
 
 SASH_CFLAGS=--no-taint-cst run_refusal \
-    'str p=$(getenv MKD_INPUT); p=$(mkdtemp); echo $p'
+    'str p=$(- getenv MKD_INPUT); p=$(mkdtemp); echo $p'
 [[ $rc != 0 && $err == *'tainted variable p_'* ]]; chk mkd.23
 
 run_refusal 'ERR { str work=$(mkdtemp); - echo $work }; fail'

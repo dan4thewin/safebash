@@ -25,11 +25,11 @@ supersedes: DD42
 ---
 
 DD101's symmetric `arg`/`getenv` contract was accepted on 2026-11-13
-(journal 631). `arg`'s new presence result and mandatory handling/discard
-are **not implemented**; the expanded
+(journal 631) and implemented in native and C on 2026-11-19 (journal 663).
+`arg`'s presence result, mandatory handling/discard and value-only default
+are delivered by
 [`require-getenv-status-handling`](../tasks/require-getenv-status-handling.md)
-owns delivery. The original trio remains implemented; `argc`, `argv` and
-function arguments are unchanged by that lookup revision. DD131 separately
+without changing `argc`, `argv` or function arguments. DD131 separately
 governs array-fill destinations.
 
 ## Addendum 2026-08-17 — `$(arg N DEFAULT)` optional default

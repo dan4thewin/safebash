@@ -205,7 +205,7 @@ ERR { - echo "err:$(join a)" }
 echo wrong'
 [[ $rc = 1 && $out = err:old && -z $err && $rerr == *"/bin/false: command failed"* ]]; chk globsel.12
 
-run_sash 'str pattern=$(getenv GLOB_PATTERN); glob a "$pattern"; echo "$(join a)"'
+run_sash 'str pattern=$(- getenv GLOB_PATTERN); glob a "$pattern"; echo "$(join a)"'
 [[ $rc != 0 && $err == *SB5020* ]]; chk globsel.13
 
 run_sash 'argv 1 a; glob a "glob-data/a.sel"; echo "$(join a)"' unsafe
@@ -624,11 +624,11 @@ run_sash 'fn directory { echo "$(join _batch)" }
 rglob _batch "$(directory)" "^a[.]sel$"; echo "$(len _batch)"'
 [[ $rc != 0 && $err == *SB5104* && $err == *'`_batch`'* ]]; chk rglob.26
 
-run_sash 'str directory=$(getenv RGLOB_DIRECTORY)
+run_sash 'str directory=$(- getenv RGLOB_DIRECTORY)
 rglob a "$directory" "."; echo "$(len a)"'
 [[ $rc != 0 && $err == *SB5020* ]]; chk rglob.27
 
-SASH_CFLAGS=--no-taint-cst run_sash 'str directory=$(getenv RGLOB_DIRECTORY)
+SASH_CFLAGS=--no-taint-cst run_sash 'str directory=$(- getenv RGLOB_DIRECTORY)
 rglob a "$directory" "."; echo "$(len a)"'
 [[ $rc != 0 && $err == *tainted* ]]; chk rglob.28
 

@@ -10,6 +10,19 @@ gates:
   - "B121: a redirected predicate call (y05, y06, y12, y18, y19) is SB4037 like its unredirected control (y24, y25, y20, y21), in both backends; its Suppressed half (y22, y23) follows the suppression rulings"
   - "batch-531-findings.md ticks B27, B43–B48, B50 and B121, and ticks B42 together with bug-reserved-names-in-arithmetic (which owns B42's `len HOME` half)"
 
+## Lookup delivery, 2026-11-19
+
+B47 is fixed by DD101's lookup implementation (journal 663).
+`flag_input_lookup`, the replacement for the historical `flag_arg_builtin`,
+uses `ir::single_value_command` for wrapped and unwrapped captures.
+`lookup.43`, `.44` and `.63` pin negative and malformed indices and a
+nonliteral default. The default assertion requires SB4070 and excludes
+SB4076: rejecting the now-statusless prefix later is not proof of this fix.
+Reverting to the raw first statement makes those checks fail in both backends.
+
+The other classifier findings remain open. The table and source locations
+below are the original measurements, not a fresh census of the whole family.
+
 ## Found
 
 2026-10-27, while porting F1+F4 (batch-531 findings B27, B42–B48 and B50,

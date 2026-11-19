@@ -357,7 +357,7 @@ if matchall "abc" "b" a extra; then echo y; fi'
 
 # 63.ma9 a tainted subject taints the result (it is external data reshaped,
 # not declassified — same as `match`)
-run_sash 'h=$(getenv HOME)
+run_sash 'h=$(- getenv HOME)
 matchall "$h" "[a-z]+" parts || :
 echo "${parts[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 63.ma9
@@ -504,7 +504,7 @@ if [[ $s =~ a{32}a{32}a{32}a{32}a{32}a{32}a{32}a{32} ]]; then echo Y; else echo 
 #       the pattern is tainted input, and before the fix it silently answered
 #       the wrong question or killed the process.
 export RE='a{1,32}'
-run_sash 'const p=$(getenv RE)
+run_sash 'const p=$(- getenv RE)
 attest p [[ -n $p && r? $p ]]
 s=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 if [[ $s =~ $p ]]; then echo Y; else echo N; fi'
@@ -778,13 +778,13 @@ echo "after [$x]"'
 [[ $rc != 0 && -z $out && $err == *SB5106* ]]; chk regexproof.49
 
 # Whole-subject anchors must not attest just one acceptable line.
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x =~ ^[a-z]{1,32}$ ]]
 echo "$x"' $'abc\nadmin=true'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'attest: x = '* \
    && $rerr == *'failed the gate'* ]]; chk 39.57
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x =~ ^[a-z]{1,32}$ ]]
 echo "$x"' $'admin=true\nabc'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'attest: x = '* \
@@ -955,17 +955,17 @@ if [[ r? $prefix ]] { echo prefix } else { echo wrong }
 if [[ r? $text ]] { echo wrong } else { echo whole }'
 [[ $rc = 0 && $out = $'prefix\nwhole' && -z $err && -z $rerr ]]; chk migratea.88
 
-run_sash 'const p=$(arg 1); attest p r?; echo $p' '[a-z]+'
+run_sash 'const p=$(- arg 1); attest p r?; echo $p' '[a-z]+'
 [[ $rc = 0 && $out = '[a-z]+' && -z $err && -z $rerr ]]; chk regexvalid.6
 
-run_sash '_p=$(arg 1); attest _p [[ r? $_p ]]; echo $_p' '^x$'
+run_sash '_p=$(- arg 1); attest _p [[ r? $_p ]]; echo $_p' '^x$'
 [[ $rc = 0 && $out = '^x$' && -z $err && -z $rerr ]]; chk regexvalid.7
 
-run_sash '_p=$(arg 1); attest _p r?; echo after' '('
+run_sash '_p=$(- arg 1); attest _p r?; echo after' '('
 [[ $rc = 1 && -z $out && -z $err && $rerr == *"attest: _p = '(' failed the gate"* \
    && $rerr != *'regexp error'* ]]; chk regexvalid.8
 
-run_sash 'p=$(arg 1)
+run_sash 'p=$(- arg 1)
 if attest p r? { echo $p } else { p=fallback; echo $p }' '('
 [[ $rc = 0 && $out = fallback && -z $err && -z $rerr ]]; chk regexvalid.9
 
@@ -980,7 +980,7 @@ run_sash 'argv 1 _patterns; attest p in _patterns r?; echo after' a '(' b
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'failed the gate'* \
    && $rerr != *'regexp error'* ]]; chk regexvalid.12
 
-run_sash 'p=$(arg 1); if [[ r? ${p:!} ]] { echo $p }' a
+run_sash 'p=$(- arg 1); if [[ r? ${p:!} ]] { echo $p }' a
 [[ $rc != 0 && $err == *SB5020* ]]; chk regexvalid.13
 
 run_sash 'int n=1; if [[ r? $n ]] { echo wrong }'
@@ -1087,21 +1087,21 @@ run_sash 'const p=a
 if match a "$(echo "$(echo ${p:!})")" { echo matched }'
 [[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.14
 
-SASH_CFLAGS=--no-taint run_sash '_p=$(arg 1)
+SASH_CFLAGS=--no-taint run_sash '_p=$(- arg 1)
 if attest _p r? { if match a ${_p:!} { echo matched } } else { exit 1 }' a
 [[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.15
 
 SASH_CFLAGS=--no-taint-cst run_sash 'const p=a; if match a ${p:!} { echo matched }'
 [[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.16
 
-run_sash '_p=$(arg 1)
+run_sash '_p=$(- arg 1)
 if attest _p r? { if match a ${_p:!} { echo matched } } else { exit 1 }' a
 [[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.17
 
 run_sash 'fn select { if match a ${args[0]:!} { echo matched } }; select a'
 [[ $rc != 0 && $err == *SB5105* ]]; chk regextrust.18
 
-run_sash 'str s=$(arg 1); str replacement=$(arg 2)
+run_sash 'str s=$(- arg 1); str replacement=$(- arg 2)
 if match ${s:!} a { echo match }
 if [[ ${s:!} =~ a ]] { echo test }
 [[ ${s:!} =~ a { echo dispatch } || { echo wrong } ]]
@@ -1116,7 +1116,7 @@ if [[ "$s" =~ ":!" ]] { echo test }
 echo $(- sub ":!" ":!" yes)'
 [[ $rc = 0 && $out = $'literal\ntest\nyes' && -z $err && -z $rerr ]]; chk migratea.90
 
-run_sash 'str p=$(arg 1)
+run_sash 'str p=$(- arg 1)
 if [[ r? ${p:!} ]] { echo candidate } else { echo invalid }
 echo ${p:!}' a
 [[ $rc = 0 && $out = $'candidate\na' && -z $err && -z $rerr ]]; chk regextrust.21
@@ -1152,7 +1152,7 @@ run_sash 'str s=aba; const p=b; s =~ s/a/X/,s/$p/Y/; echo $s'
 run_sash 'str p=a; attest p r?; if match a "$p" { echo matched }'
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.10
 
-SASH_CFLAGS=--no-taint run_sash 'const p=$(arg 1)
+SASH_CFLAGS=--no-taint run_sash 'const p=$(- arg 1)
 if match a "$p" { echo matched }' a
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.11
 
@@ -1199,7 +1199,7 @@ fn select { if match a "$1" { echo matched } }
 select "$p"'
 [[ $rc != 0 && $err == *SB5106* ]]; chk regexproof.20
 
-run_sash 'const p=$(arg 1); attest p r?
+run_sash 'const p=$(- arg 1); attest p r?
 if match aba "$p" { echo match }
 if matchall aba "$p" hits { echo "$(len hits)" }
 if [[ aba =~ "$p" ]] { echo test }

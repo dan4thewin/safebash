@@ -11,7 +11,7 @@ echo "1..$plan" >&3
 set +e
 
 # sw.1 control: with both layers on, a tainted read is rejected (SB5020)
-run_sash 'echo $(getenv HOME)'
+run_sash 'echo $(- getenv HOME)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk sw.1
 
 # ── --no-taint: full bypass (CST + SSA) ──
@@ -23,7 +23,7 @@ run_sash 'echo "$@"'
 run_sash 'echo hello'
 [[ $rc = 0 && $out = hello && -z $err ]]; chk sw.7
 # sw.2 a tainted scalar compiles & runs (leaks) under full bypass
-run_sash 'x=$(arg 1); echo $x' hello
+run_sash 'x=$(- arg 1); echo $x' hello
 [[ $rc = 0 && $out = hello && -z $err ]]; chk sw.2
 # sw.3 a tainted join compiles & runs under full bypass
 run_sash 'argv 1 a; echo $(join a)' one two
@@ -71,14 +71,14 @@ two" && -z $err ]]; chk sw.13
 # spec. Same reason sw.12/sw.13 live here.
 
 # sw.20 scalar, attest passes: then-branch runs and the subject reads back
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if attest x [[ -n $x ]]; then echo "then-taken"; fi
 echo "got=$x"' val
 [[ $rc = 0 && $out = "then-taken
 got=val" && -z $err ]]; chk sw.20
 # sw.21 scalar, attest fails: nothing catches it, so it falls through the
 # merge and the subject still reads back
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if attest x [[ -n $x ]]; then echo "then-taken"; fi
 echo "got=$x"' ""
 [[ $rc = 0 && $out = "got=" && -z $err ]]; chk sw.21
@@ -113,24 +113,24 @@ done
 # found cold by the union ranking.
 
 # sw.24 attest passes: the right side runs, and the subject reads back
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 attest x [[ -n $x ]] && echo "ok=$x"
 echo "got=$x"' val
 [[ $rc = 0 && $out = "ok=val
 got=val" && -z $err ]]; chk sw.24
 # sw.25 attest fails: `&&` short-circuits, the right side is skipped, and
 # control falls through the merge
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 attest x [[ -n $x ]] && echo "ok=$x"
 echo "got=$x"' ""
 [[ $rc = 0 && $out = "got=" && -z $err ]]; chk sw.25
 
-run_sash 'str s=$(arg 1)
+run_sash 'str s=$(- arg 1)
 if attest s (( n = s * 2 )) { (( n += 3 )); echo "then:$n" }
 echo "after:$n"' 7
 [[ $rc = 0 && $out = $'then:17\nafter:17' && -z $err && -z $rerr ]]; chk ifcv.1
 
-run_sash 'str s=$(arg 1)
+run_sash 'str s=$(- arg 1)
 if attest s (( n = s * 2 )) { echo "then:$n" }
 echo "after:$n"' bad
 [[ $rc = 0 && $out = "after:0" && -z $err && -z $rerr ]]; chk ifcv.2
@@ -155,14 +155,14 @@ echo "$x"'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk sw.28
 
 # sw.4 the SSA backstop still rejects an assigned tainted source
-run_sash 'x=$(getenv HOME); echo $x'
+run_sash 'x=$(- getenv HOME); echo $x'
 [[ $rc != 0 && -z $out ]]; chk sw.4
 # sw.5 the SSA backstop catches a value propagated through echo
-run_sash 'y=$(getenv HOME); x=$(echo $y); echo $x'
+run_sash 'y=$(- getenv HOME); x=$(echo $y); echo $x'
 [[ $rc != 0 && -z $out ]]; chk sw.5
 # sw.8 the SSA backstop catches an operand propagated through a transform
 # builtin ($(toupper …)) — cmd_subst_taint propagates operand taint (DD#82)
-run_sash 'y=$(getenv HOME); x=$(toupper $y); echo $x'
+run_sash 'y=$(- getenv HOME); x=$(toupper $y); echo $x'
 [[ $rc != 0 && -z $out ]]; chk sw.8
 # sw.9 the SSA backstop rejects a pipeline laundered through a leading
 # builtin (`echo ig | /bin/cat f | read x`). It could not: `clean_pipe` was
@@ -177,7 +177,7 @@ echo "$x"'
 # origins DD#61 names — `read`/`argv`/split/map fills — were CST-only until
 # 2026-09-30, when they were given real SSA versions; sw.14-sw.19 below.)
 # Assert the message so this cannot pass on the scalar backstop.
-run_sash 'array a=($(getenv HOME))
+run_sash 'array a=($(- getenv HOME))
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* ]]; chk sw.10
 # sw.11 control: a CLEAN array subscript is not false-positived by the
@@ -202,7 +202,7 @@ for v in @g { /bin/echo $v }'
 [[ $rc != 0 && -z $out ]]; chk sw.15
 # sw.16 SplitValue — the taint follows the SOURCE being split
 run_sash 'array g=()
-read $(getenv HOME) g
+read $(- getenv HOME) g
 for v in @g { /bin/echo $v }'
 [[ $rc != 0 && -z $out ]]; chk sw.16
 # sw.17 MapFromArray — the taint follows the source array
@@ -251,12 +251,12 @@ echo "n=$n"' x y
 # bkstp.1 NEGATIVE — a tainted REDIRECT TARGET inside a `$( )` body. This
 #         compiled, and the binary wrote a file named by the environment.
 #         :? proves nonempty (DD#119), not trusted: only the backstop refuses it.
-run_sash '/bin/echo $(str h=$(getenv TARGET); echo pwned > ${h:?target})'
+run_sash '/bin/echo $(str h=$(- getenv TARGET); echo pwned > ${h:?target})'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.1
 
 # bkstp.2 NEGATIVE — a tainted TEST OPERAND inside a `$( )` body. This
 #         compiled, and the binary branched on external input.
-run_sash '/bin/echo $(str h=$(getenv TARGET); if [[ -n $h ]] { echo yes })'
+run_sash '/bin/echo $(str h=$(- getenv TARGET); if [[ -n $h ]] { echo yes })'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.2
 
 # bkstp.3 POSITIVE — an `attest` predicate reads its tainted subject by
@@ -264,7 +264,7 @@ run_sash '/bin/echo $(str h=$(getenv TARGET); if [[ -n $h ]] { echo yes })'
 #         structurally identical to a user-written `[[ ]]`. Without
 #         `TestOrigin` marking it, making `Test` a sink rejects every
 #         caught-attest program — it took out 24.13 and bfb.1-6 in one sweep.
-run_sash 'str v=$(arg 1)
+run_sash 'str v=$(- arg 1)
 if attest v [[ $v =~ ^[0-9]+$ ]] { /bin/echo "ok $v" } else { v=none }' 42
 [[ $rc = 0 && $out = "ok 42" && -z $rerr ]]; chk bkstp.3
 
@@ -272,7 +272,7 @@ if attest v [[ $v =~ ^[0-9]+$ ]] { /bin/echo "ok $v" } else { v=none }' 42
 #         A `Redirect`'s target is an unlowered `ir::Expr`, never an
 #         `SsaValue`, so the check resolves by bare NAME via `taint_of_name`;
 #         an over-broad name match would reject this.
-run_sash 'str v=$(arg 1)
+run_sash 'str v=$(- arg 1)
 attest v [[ $v =~ ^[a-z/]+$ ]]
 /bin/echo pwned > ${v:?no}
 /bin/echo done' /dev/null
@@ -286,7 +286,7 @@ attest v [[ $v =~ ^[a-z/]+$ ]]
 #         array false-positives SB5031, which would mask this.
 # bkstp.5 NEGATIVE -- an unvouched tainted element reaches `echo`.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv T); array b=( $t @{a:-z} ); echo $b[0])'
+/bin/echo $(str t=$(- getenv T); array b=( $t @{a:-z} ); echo $b[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.5
 
 # bkstp.6 POSITIVE — a CLEAN splat default still derives clean. Guards the
@@ -299,7 +299,7 @@ run_sash 'array a=( )
 #         forces the ARRAY read, not the unrelated `$t` beside it, so the
 #         element's taint still counts.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv T); array b=( $t @{a:!-z} ); echo $b[0])'
+/bin/echo $(str t=$(- getenv T); array b=( $t @{a:!-z} ); echo $b[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.7
 
 # bkstp.8 POSITIVE — `@{a:-}` has `has_word` false and its `word` field is a
@@ -314,26 +314,26 @@ array b=( @{a:-} )
 #         Clean, so the array derives clean and the later read is allowed.
 #         In a `$( )` body so the front end is not what decides it, and so the
 #         pair below differs by exactly one character.
-run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:!~} ); echo $a[0])'
+run_sash '/bin/echo $(str t=$(- getenv HOME); array a=( ${t:!~} ); echo $a[0])'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.9
 
 # bkstp.10 NEGATIVE — the same elide WITHOUT the `!`. `:~` says what to do
 #          when the value is absent; it overrides no taint guard, so the array is
 #          tainted and reading it is caught.
-run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:~} ); echo $a[0])'
+run_sash '/bin/echo $(str t=$(- getenv HOME); array a=( ${t:~} ); echo $a[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.10
 # bkstp.11 NEGATIVE -- taint carried across a second splat. `c`'s own word is
 #          the clean literal `z`, so `splat_taint` can only reach the right
 #          answer via `b` itself, which is the one read this spec isolates.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:-z} ); echo $c[0])'
+/bin/echo $(str t=$(- getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:-z} ); echo $c[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.11
 # bkstp.12 POSITIVE -- `@{b:!-z}` is an attest-all for the splat's own read, so
 #          `c` derives clean and keeps `b`'s elements. The counterpart to
 #          bkstp.7: there `!` did NOT cover an unrelated word, here it DOES
 #          cover the subject it names.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:!-z} ); echo $c[0])'
+/bin/echo $(str t=$(- getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:!-z} ); echo $c[0])'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.12
 
 # bkstp.13-bkstp.18 cover the forced read through a MAP construction (DD#99
@@ -348,14 +348,14 @@ run_sash 'array a=( )
 #         backstop as the only judge.
 # bkstp.13 POSITIVE -- `@{a:!~}` forces the read, so the map derives clean and its
 #          VALUE is readable.
-run_sash 'str t=$(getenv HOME)
+run_sash 'str t=$(- getenv HOME)
 array a=( k $t )
 map m = @{a:!~}
 /bin/echo ${m[k]}'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.13
 # bkstp.14 NEGATIVE -- the same construction one character apart. `:~` says
 #          what to do with an odd trailing element; it overrides no taint guard.
-run_sash 'str t=$(getenv HOME)
+run_sash 'str t=$(- getenv HOME)
 array a=( k $t )
 map m = @{a:~}
 /bin/echo ${m[k]}'
@@ -363,13 +363,13 @@ map m = @{a:~}
 # bkstp.15 POSITIVE -- the KEY side of the same map. A map taints as one unit,
 #          but keys and values reach the use site by different routes
 #          (`SsaValue::TableKey` vs a subscript), so both are pinned.
-run_sash 'str t=$(getenv HOME)
+run_sash 'str t=$(- getenv HOME)
 array a=( $t v )
 map m = @{a:!~}
 for k in $(keys m) { /bin/echo $k }'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.15
 # bkstp.16 NEGATIVE -- the key route without the override.
-run_sash 'str t=$(getenv HOME)
+run_sash 'str t=$(- getenv HOME)
 array a=( $t v )
 map m = @{a:~}
 for k in $(keys m) { /bin/echo $k }'
@@ -377,14 +377,14 @@ for k in $(keys m) { /bin/echo $k }'
 # bkstp.17 POSITIVE -- mode 0 (`:-KEY`). The override is carried in its own field
 #          rather than a third `mode`, so it must hold for every disposition,
 #          not just the `:~` that shares mode 2 with it.
-run_sash 'str t=$(getenv HOME)
+run_sash 'str t=$(- getenv HOME)
 array a=( k $t )
 map m = @{a:!-z}
 /bin/echo ${m[k]}'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.17
 # bkstp.18 POSITIVE -- mode 1 (`:?MSG`), the other half of that argument. The
 #          count is even, so the abort path is not taken and the map is built.
-run_sash 'str t=$(getenv HOME)
+run_sash 'str t=$(- getenv HOME)
 array a=( k $t )
 map m = @{a:!?e}
 /bin/echo ${m[k]}'
@@ -508,12 +508,12 @@ unset SASH_CFLAGS
 
 # DD#128's binding continuity must also hold with the source taint gate off.
 export SASH_CFLAGS=--no-taint-cst
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 x=safe
 echo "$x"' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.1
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 x=${x:!}
 echo "$x"' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.2
@@ -529,14 +529,14 @@ echo "${a[0]:-missing}"' dirty
 [[ $rc != 0 && $err == *'tainted array a[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.4
 
 # Discharging the predecessor cannot bless newly acquired bytes.
-run_sash 'x=$(arg 1)
-attest x [[ $x == allowed ]] || x=$(arg 2)
+run_sash 'x=$(- arg 1)
+attest x [[ $x == allowed ]] || x=$(- arg 2)
 echo "$x"' dirty other
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.5
 
 run_sash 'str x
 fn reset { x=safe }
-x=$(arg 1)
+x=$(- arg 1)
 attest x [[ $x == allowed ]] || reset
 echo "$x"' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.6
@@ -548,16 +548,16 @@ echo "${a[0]:-missing}"' dirty
 [[ $rc != 0 && $err == *'tainted array a[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.7
 
 run_sash 'fn buffered { echo safe }
-x=$(arg 1)
+x=$(- arg 1)
 x=$(buffered)
 echo "$x"' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.8
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 for x in safe { echo "$x" }' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.9
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == allowed ]] || : $(x=safe; echo fallback)
 echo "$x"' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.10
@@ -585,14 +585,14 @@ attest item in a [[ -n $item ]]
 echo "${m[key]}"' key dirty
 [[ $rc != 0 && $err == *'tainted array m[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.14
 
-run_sash 'x=$(arg 1)
-attest x [[ $x == allowed ]] || x=$(arg 2)
+run_sash 'x=$(- arg 1)
+attest x [[ $x == allowed ]] || x=$(- arg 2)
 y=$x
 echo "$y"' dirty other
 [[ $rc != 0 && $err == *'tainted variable y_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.15
 
 run_sash 'fn f {
-  str x=$(getenv HOME)
+  str x=$(- getenv HOME)
   str result=$(x=clean; echo "$x")
   echo "$result"
 }

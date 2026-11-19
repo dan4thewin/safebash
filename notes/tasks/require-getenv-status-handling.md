@@ -1,12 +1,12 @@
 title: Implement symmetric arg/getenv lookups and explicit presence handling
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
 gates:
   - "arg N and getenv NAME supply text plus presence; arg N DEFAULT and getenv NAME DEFAULT supply only the selected string, with literal-only defaults"
   - "every otherwise-legal bare lookup must have a compatible explicit status consumer or adjacent source discard; unhandled lookups receive located compile-time refusals"
-  - "the bare-lookup obligation covers typed/untyped bindings, nested value positions and executable bodies, independently of attest, trusted reads and taint-disable switches"
+  - "the bare-lookup obligation covers typed/untyped bindings, nested value positions and executable bodies, independently of attest, forced reads and taint-disable switches"
   - "legal bare-lookup capture-conditions use actual presence: present-empty succeeds; absent fails with empty text rather than arg's former unconditional abort; evaluate the index/name and lookup once"
   - "defaults apply only on absence, including an explicitly empty default; present-empty keeps its value, and malformed/negative argument indices retain their errors"
   - "defaulted captures have no status to test, discard or grant status-read permission; explicit $(- arg N) and $(- getenv NAME) retain text while discarding only presence"
@@ -91,8 +91,9 @@ representation is selected here.
 
 ## Evidence and migration
 
-The discussions read DD42/DD60/DD65/DD101 and the original completed
-`getenv-presence-handling` record; no new native/C probe was run.
+The policy discussions read DD42/DD60/DD65/DD101 and the original completed
+`getenv-presence-handling` record; they did not include new native/C probes.
+The implementation evidence is recorded under Delivery below.
 The original task remains done for lookup-status delivery. Its no-default,
 silent-absence and taint-as-presence claims are historical, not current gates.
 The completed original arity/placement and argument-family tasks likewise
@@ -129,8 +130,8 @@ Review converter-generated lookups, executable reference examples and active
 backlog reproductions/gates too. Keep historical measurements labeled rather
 than rewriting them as though they ran under the new contract.
 Generated source receives no exemption from DD101; follow DD57's existing
-conversion/annotation boundaries. This recording does not choose an automatic
-converter rewrite or authorize implicit discard in the compiler.
+conversion/annotation boundaries. The policy recording did not choose an
+automatic converter rewrite or authorize implicit discard in the compiler.
 
 ## Coordination
 
@@ -149,3 +150,42 @@ inner-negation or quoted-RHS extensions.
 Neither the getter's status nor a named callee's return grants an anonymous
 body a new result. Resolve actual shared-path prerequisites during
 implementation; no blanket dependency or delivery sequence is selected.
+
+## Delivery, 2026-11-19
+
+Implemented after DG requested **"do the getenv/arg backlog"**.
+[Journal 663](../journal/663-symmetric-input-lookups.md) records the source,
+migration and proof details.
+
+- Shared form-sensitive classification requires bare presence handling
+  (SB4018), rejects defaulted/discarded capture-conditions (SB4025), and
+  rejects inert default prefixes and outer lookup-binding prefixes (SB4076).
+  Quoting, concatenation and nested expressions cannot hide the latter.
+- Each backend shares one lowering path for both inputs. Presence is a
+  pointer property, not string length. Valid high argument indices return
+  absence; negative computed indices remain fatal. Missing text has real
+  empty-string backing, including when stored in collections.
+- Canonical wrapped-call validation checks both default operands and argument
+  indices, closing B47 without relying on a later prefix refusal.
+  Terminal analysis retains default NUL risk and exact known integer facts.
+- Converter tilde/environment/positional hoists explicitly discard presence:
+  the original Bash expansions read values, not required-input assertions.
+  Their normal attest scaffolding remains. Intentional text-only fixtures
+  migrate similarly; required-argument cases use explicit handling.
+
+The final 65 dual-mode lookup specs have matched original compiler/runtime
+controls: 53 red and 12 preservation cases in each mode. Eleven reversion
+campaigns cover the independent rules and native/C paths; the final quoted/
+concatenated binding pair also fails on the frozen pre-repair positive
+compiler. Every mutation is restored. The actual converter round trip and
+all 70 tour programs pass; the GitHub tour is regenerated.
+
+The accepted gate is `NEW=6 FLIPS=6 RETIRED=4 TOTAL=12687 mk -p 1 gate`,
+rows 7309082-7321768: 12674 passing, 13 existing skips, no failures.
+Its six flips repair the preceding failed sweep. Against the original
+accepted baseline, all 12557 retained statuses are unchanged, with exactly
+130 new IDs and 16 retired IDs. Normal source quality gates pass without
+bypasses. No coverage run or dependency refresh was performed.
+
+This closes the lookup owner, not the general suppression, named-predicate,
+file-capture, anonymous-return or broader SB4025 owners listed above.

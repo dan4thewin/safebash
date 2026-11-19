@@ -4,11 +4,16 @@ priority: P3
 kind: bug
 depends: []
 gates:
-  - "`s=$(arg 1); attest s (( n = (strlen s) ))` reports SB5054 only, or a second diagnostic that names the attest's `(( … ))` correctly"
+  - "`s=$(- arg 1); attest s (( n = (strlen s) ))` reports SB5054 only, or a second diagnostic that names the attest's `(( … ))` correctly"
   - "a plain `x=$(( n = 1 ))` still gets SB4020's `$(( … ))` text"
 
 Found 2026-10-31 while porting F10 (journal 552). It reproduces on the pre-F10
 binary too.
+
+The historical source below predates DD101's required lookup handling.
+Current controls must use `s=$(- arg 1)`, as the gate above does, so a
+missing presence consumer cannot mask the intended attest diagnostic
+(journal 663).
 
 ```sh
 s=$(arg 1)

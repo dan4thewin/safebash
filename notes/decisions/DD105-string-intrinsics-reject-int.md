@@ -81,10 +81,10 @@ Not just the subject: `$(gsub $s "b" $n)` puts an int in the
 *replacement* and is equally a coercion. The trailing array target of
 the 3-arg `match`/`matchall` form is excluded by the count.
 
-DD101's `getenv` default form is accepted but not implemented. Its extra
+DD101's `getenv` default form is implemented in native and C. Its extra
 string slot also obeys DD65's literal restriction; quoting an expansion
-does not make it an admissible default. Delivery is owned by
-`require-getenv-status-handling`.
+does not make it an admissible default. Delivery is recorded in
+`require-getenv-status-handling` and journal 663.
 
 `join` is absent deliberately — its first operand is a collection
 (SB4030 already) and its separator must be a literal (DD#106), so

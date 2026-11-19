@@ -812,15 +812,15 @@ echo $(join items ,)'
 [[ $rc = 0 && $out = $'green\ngreen' && -z $err ]]; chk bindscope.37
 
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint-cst" \
-run_sash '/bin/echo $(str token=$(getenv HOME); echo $token)'
+run_sash '/bin/echo $(str token=$(- getenv HOME); echo $token)'
 [[ $rc != 0 && -z $out && $err == *'tainted variable token_2 used'* \
    && $err == *'SSA taint backstop'* && $err != *'__top_capture'* ]]; chk bindscope.41
 
 # A live SSA version can equal another binding's qualified base name.
 # Each body first zero-initializes its locals: the live acquisition is version 4.
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint-cst" \
-run_sash 'fn a { str b_t=$(getenv HOME); echo $b_t }
-fn a_b { str t_4=$(getenv HOME); echo $t_4 }
+run_sash 'fn a { str b_t=$(- getenv HOME); echo $b_t }
+fn a_b { str t_4=$(- getenv HOME); echo $t_4 }
 a
 a_b'
 [[ $rc != 0 && -z $out && $err == *'tainted variable b_t_4 used'* \

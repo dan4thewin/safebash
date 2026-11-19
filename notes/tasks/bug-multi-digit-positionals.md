@@ -28,10 +28,15 @@ Bash function syntax is `f() { …; }`. The two rows that agree with bash do
 so only because no argument is passed. `${10}` reads a variable called
 `10`, which nothing binds, so a function that reads it takes no arguments.
 
-At top level, SB5024 treats `${10}` and `${01}` as positionals, and the
-suggested `$(arg 01)` compiles and reads argument 1. Inside a function, the
-same names read a variable. The message also names the unbraced spelling
+At the recorded baseline, SB5024 treated `${10}` and `${01}` as positionals,
+and the suggested `$(arg 01)` compiled and read argument 1. Inside a function,
+the same names read a variable. The message also names the unbraced spelling
 `$10`, which in bash and in a sash word is `$1` followed by `0`.
+
+DD101's later lookup delivery retains the `01` index spelling but requires
+presence handling or explicit text projection, `$(- arg 01)`. Account for
+that in current controls; it does not repair the function-positional issue
+recorded here (journal 663).
 
 ## Cause
 

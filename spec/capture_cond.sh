@@ -9,7 +9,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=51
+plan=110
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -176,7 +176,7 @@ h=$(getenv SASH_SPEC_SET) || h=/fallback
 /bin/echo "$h"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd101.8
 
-# dd101.9 the carve-out is `getenv` specifically, not intrinsics generally —
+# dd101.9 a separate result is required, not just an intrinsic spelling —
 # `$(len a)` is a pure function of its argument and stays SB4025
 run_sash 'array a=(x y)
 if n=$(len a) { /bin/echo "$n" }'
@@ -192,11 +192,10 @@ run_sash 'str h=""
 if h=$(getenv) { /bin/echo "$h" }'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk dd101.11
 
-# dd101.12 ...same for a two-argument call (no DEFAULT arg — DD#101 rejected
-# the DD#60 `$(arg N DEFAULT)` shape for getenv)
+# A literal default resolves absence, so this value-only form is no condition.
 run_sash 'str h=""
 if h=$(getenv HOME X) { /bin/echo "$h" }'
-[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk dd101.12
+[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *value-only* && $err != *SB4045* ]]; chk lookup.1
 
 # ── Redirects in a capture (DD#88 addendum, DG 2026-10-12) ─────────────
 # A redirect on a captured command is fine SO LONG AS the capture pipe still
@@ -346,6 +345,257 @@ run_sash 'str c=/bin/echo
 if x=$(${c} hi 2>&1) { echo "got $x" }'
 [[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.31
 
+
+# DD101: bare lookups must handle presence independently of their tainted text.
+run_sash 'x=$(getenv SASH_SPEC_SET); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* && $err != *SB5020* ]]; chk lookup.3
+
+run_sash 'x=$(arg 1); attest x [[ -n $x ]]; echo "$x"' alpha
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* && $err != *SB5020* ]]; chk lookup.4
+
+SASH_CFLAGS=--no-taint-cst run_sash 'str x=$(getenv SASH_SPEC_SET); echo "${x:!}"'
+[[ $rc != 0 && $err == *":1:7:"* && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.5
+
+SASH_CFLAGS=--no-taint run_sash 'str x=$(arg 1); echo "${x:!}"' alpha
+[[ $rc != 0 && $err == *":1:7:"* && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.6
+
+SASH_CFLAGS=--no-taint run_sash 'echo "prefix$(getenv SASH_SPEC_SET)"'
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.7
+
+SASH_CFLAGS=--no-taint run_sash '/bin/echo $(arg 1)' alpha
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.8
+
+SASH_CFLAGS=--no-taint run_sash 'if x=$(/bin/echo "$(getenv SASH_SPEC_SET)") { echo "$x" }'
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.9
+
+run_sash 'fn f { x=$(arg 1); attest x [[ -n $x ]]; echo "$x"; return 0 }
+if f { echo yes }' alpha
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.10
+
+run_sash 'fn f { x=$(getenv SASH_SPEC_SET); attest x [[ -n $x ]]; echo "$x"; return 0 }
+- f'
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.11
+
+run_sash 'str text=$(x=$(getenv SASH_SPEC_SET); attest x [[ -n $x ]]; echo "$x")
+echo "${text:!}"'
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.12
+
+# Presence, not length, selects the branch. Failure binds this attempt's empty text.
+run_sash 'if x=$(arg 1) { echo "$? [${x:!}]" } else { echo absent }' alpha
+[[ $rc = 0 && $out = '0 [alpha]' && -z $err && -z $rerr ]]; chk lookup.13
+
+run_sash 'if x=$(arg 1) { echo "$? [${x:!}]" } else { echo absent }' ''
+[[ $rc = 0 && $out = '0 []' && -z $err && -z $rerr ]]; chk lookup.14
+
+run_sash 'str x=old
+if x=$(arg 1) { echo present } else { echo "$? [${x:!}]" }'
+[[ $rc = 0 && $out = '1 []' && -z $err && -z $rerr ]]; chk lookup.15
+
+# Missing text remains a string even when copied into collection storage.
+run_sash 'x=$(- getenv SASH_SPEC_UNSET)
+array a=("${x:!}")
+echo "[$(join a)]"'
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk lookup.16
+
+run_sash 'x=$(- arg 1)
+array a=("${x:!}")
+echo "[$(join a)]"'
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk lookup.17
+
+# Default selection is symmetric and never replaces a present empty value.
+run_sash 'a=$(getenv SASH_SPEC_SET fallback)
+b=$(getenv SASH_SPEC_EMPTY fallback)
+c=$(getenv SASH_SPEC_UNSET fallback)
+echo "[${a:!}] [${b:!}] [${c:!}]"'
+[[ $rc = 0 && $out = '[/spec/value] [] [fallback]' && -z $err ]]; chk lookup.18
+
+run_sash 'a=$(arg 1 fallback)
+b=$(arg 2 fallback)
+c=$(arg 3 fallback)
+echo "[${a:!}] [${b:!}] [${c:!}]"' alpha ''
+[[ $rc = 0 && $out = '[alpha] [] [fallback]' && -z $err ]]; chk lookup.19
+
+run_sash 'a=$(arg 1 "")
+b=$(getenv SASH_SPEC_UNSET "")
+echo "[${a:!}][${b:!}]"'
+[[ $rc = 0 && $out = '[][]' && -z $err ]]; chk lookup.20
+
+run_sash "a=\$(arg 1 'costs \$5')
+b=\$(getenv SASH_SPEC_UNSET 'costs \$5')
+echo \"[\${a:!}][\${b:!}]\""
+[[ $rc = 0 && $out = '[costs $5][costs $5]' && -z $err ]]; chk lookup.21
+
+# A present input cannot make a computed default legal.
+run_sash 'str d=fallback; x=$(getenv SASH_SPEC_SET $d); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4070* ]]; chk lookup.22
+
+run_sash 'x=$(getenv SASH_SPEC_SET "value$(( 1 + 1 ))"); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4070* ]]; chk lookup.23
+
+run_sash 'x=$(getenv SASH_SPEC_SET "$(getcwd)"); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4070* ]]; chk lookup.24
+
+# Source discard is not the lowering flag used by a legitimate consumer.
+run_sash 'x=$(- getenv SASH_SPEC_UNSET fallback); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4076* && $err == *"defaulted"* ]]; chk lookup.25
+
+run_sash 'x=$(- arg 1 ""); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4076* && $err == *"defaulted"* ]]; chk lookup.26
+
+run_sash 'if x=$(- getenv SASH_SPEC_SET) { echo "${x:!}" }'
+[[ $rc != 0 && $err == *SB4025* && $err == *"discarded status"* ]]; chk lookup.27
+
+run_sash 'x=$(- arg 1) || echo absent; echo "${x:!}"' alpha
+[[ $rc != 0 && $err == *SB4025* && $err == *"discarded status"* ]]; chk lookup.28
+
+run_sash 'if x=$(arg 1 fallback) { echo "${x:!}" }'
+[[ $rc != 0 && $err == *SB4025* && $err == *"value-only"* ]]; chk lookup.29
+
+run_sash '- x=$(getenv SASH_SPEC_SET); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4076* && $err == *"binding's result"* ]]; chk lookup.30
+
+run_sash 'if - x=$(arg 1) { echo "${x:!}" }' alpha
+[[ $rc != 0 && $err == *SB4076* && $err == *"binding's result"* ]]; chk lookup.31
+
+# Neither a default nor discarded presence grants a new status-read permission.
+run_sash 'x=$(getenv SASH_SPEC_UNSET fallback); int code=$?; echo "$code [${x:!}]"'
+[[ $rc != 0 && $err == *SB5012* ]]; chk lookup.32
+
+run_sash 'x=$(arg 1 fallback); int code=$(status); echo "$code [${x:!}]"'
+[[ $rc != 0 && $err == *SB5012* ]]; chk lookup.33
+
+run_sash 'x=$(- getenv SASH_SPEC_SET); int code=$?; echo "$code [${x:!}]"'
+[[ $rc != 0 && $err == *SB5012* ]]; chk lookup.34
+
+run_sash 'x=$(- arg 1); int code=$(status); echo "$code [${x:!}]"' alpha
+[[ $rc != 0 && $err == *SB5012* ]]; chk lookup.35
+
+SASH_CFLAGS=--no-taint run_sash 'if /bin/sh -c "exit 7" { echo wrong } else {
+  echo "$(getenv SASH_SPEC_UNSET fallback) $(arg 99 fallback) $?"
+}'
+[[ $rc = 0 && $out = 'fallback fallback 7' && -z $err && -z $rerr ]]; chk lookup.36
+
+# The same direct result works in loops, elif/negation, and logical lists.
+run_sash 'int n=1
+until x=$(arg $n) { echo "missing [${x:!}]"; break }
+echo done'
+[[ $rc = 0 && $out = $'missing []\ndone' && -z $err && -z $rerr ]]; chk lookup.37
+
+run_sash 'str key=SASH_SPEC_SET
+while x=$(getenv $key) { echo "[${x:!}]"; key=SASH_SPEC_UNSET }
+echo "[${x:!}]"'
+[[ $rc = 0 && $out = $'[/spec/value]\n[]' && -z $err ]]; chk lookup.38
+
+run_sash 'if false { echo wrong } elif ! x=$(arg 1) { echo "absent [${x:!}]" }'
+[[ $rc = 0 && $out = 'absent []' && -z $err && -z $rerr ]]; chk lookup.39
+
+run_sash 'x=$(arg 1) || fail 4
+attest x [[ -n $x ]]
+echo "$x"' alpha
+[[ $rc = 0 && $out = 'alpha' && -z $err && -z $rerr ]]; chk lookup.40
+
+# Resolving absence does not declassify text.
+run_sash 'x=$(getenv SASH_SPEC_UNSET fallback); echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *SB4018* ]]; chk lookup.41
+
+run_sash 'if x=$(arg 1) { echo "$x" }' alpha
+[[ $rc != 0 && $err == *SB5020* && $err != *SB4018* && $err != *SB4025* ]]; chk lookup.42
+
+# Discard/default never changes the index domain or catches a fatal index error.
+run_sash 'x=$(- arg -1); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB5038* ]]; chk lookup.43
+
+run_sash 'x=$(- arg 1x); echo "${x:!}"' alpha
+[[ $rc != 0 && $err == *SB5078* ]]; chk lookup.44
+
+run_sash 'ERR { - echo invalid }
+int n=-1
+x=$(arg $n) || echo absent
+echo "${x:!}"'
+[[ $rc = 1 && $out = invalid && -z $err && $rerr == *"out of range"* ]]; chk lookup.45
+
+run_sash 'ERR { - echo invalid }
+int n=-1
+x=$(arg $n fallback)
+echo "${x:!}"'
+[[ $rc = 1 && $out = invalid && -z $err && $rerr == *"out of range"* ]]; chk lookup.46
+
+# Each operand is evaluated once; its same-process effects are not replayed.
+run_sash 'int hits=0
+fn index -> int { (( hits += 1 )); return 1 }
+if x=$(arg $(index)) { echo "$hits [${x:!}]" } else { echo absent }' alpha
+[[ $rc = 0 && $out = '1 [alpha]' && -z $err && -z $rerr ]]; chk lookup.47
+
+run_sash 'int hits=0
+fn key { (( hits += 1 )); echo SASH_SPEC_SET }
+if x=$(getenv $(key)) { echo "$hits [${x:!}]" } else { echo absent }'
+[[ $rc = 0 && $out = '1 [/spec/value]' && -z $err && -z $rerr ]]; chk lookup.48
+
+SASH_CFLAGS=--no-taint run_sash 'if x=$(getenv $(arg 1)) { echo "$x" }' SASH_SPEC_SET
+[[ $rc != 0 && $err == *SB4018* && $err == *'`arg`'* && $err == *"lookup status"* ]]; chk lookup.49
+
+# Handler roots use the same lookup contract and retain their routing/status.
+run_sash 'EXIT { x=$(- arg 99); attest x [[ -z $x ]]; echo "exit [$x]" }
+echo main'
+[[ $rc = 0 && $out = $'main\nexit []' && -z $err && -z $rerr ]]; chk lookup.50
+
+run_sash 'ERR {
+  x=$(getenv SASH_SPEC_UNSET fallback)
+  attest x [[ $x == fallback ]] || x=fallback
+  - echo "err [$x]"
+}
+fail 3'
+[[ $rc = 3 && $out = 'err [fallback]' && -z $err && -z $rerr ]]; chk lookup.51
+
+# Default bytes participate in the ERR NUL proof, unlike actual environ text.
+SASH_CFLAGS=--no-taint run_sash "fail 1; ERR {
+  v=\$(getenv SASH_SPEC_UNSET \$'x\\x00y')
+  - /bin/echo \"\$v\"
+}"
+[[ $rc != 0 && $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk lookup.52
+
+run_sash 'fail 1; ERR {
+  int index=-1
+  v=$(arg $index fallback)
+  - echo "${v:!}"
+}'
+[[ $rc != 0 && $err == *SB5101* && $err == *"invalid argument index"* ]]; chk lookup.53
+
+run_sash "v=\$(getenv SASH_SPEC_UNSET \$'x\\x00y')
+echo \"\${v:!}\" | /usr/bin/od -An -tx1"
+[[ $rc = 0 && ${out// /} = 7800790a && -z $err && -z $rerr ]]; chk lookup.54
+
+# Reading a status later does not retroactively handle its producer.
+run_sash 'x=$(getenv SASH_SPEC_SET); int code=$?; echo "${x:!}:$code"'
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.55
+
+run_sash 'x=$(arg 1); int code=$?; echo "${x:!}:$code"' alpha
+[[ $rc != 0 && $err == *SB4018* && $err == *"lookup status"* ]]; chk lookup.56
+
+# Converter value projections remain executable with ordinary taint checks.
+run_convert 'echo ~ "$HOME" "$1"'
+if [[ $rc = 0 ]]; then
+    HOME=/lookup-home run_sash "$out" alpha
+fi
+[[ $rc = 0 && $out = '/lookup-home /lookup-home alpha' && -z $err && -z $rerr ]]; chk lookup.61
+
+run_sash 'fail 1; ERR {
+  int index=999
+  v=$(arg $index fallback)
+  w=$(arg $((999)) fallback)
+  - echo "${v:!} ${w:!}"
+}'
+[[ $rc = 1 && $out = 'fallback fallback' && -z $err && -z $rerr ]]; chk lookup.62
+
+# The source wrapper cannot hide an invalid default behind its later prefix error.
+run_sash 'str d=fallback; x=$(- arg 1 "$d"); echo "${x:!}"' alpha
+[[ $rc != 0 && $err == *SB4070* && $err != *SB4076* ]]; chk lookup.63
+
+run_sash '- x="$(arg 99 fallback)"; echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4076* && $err == *"binding's result"* ]]; chk lookup.64
+
+run_sash '- x=prefix$(getenv SASH_SPEC_UNSET fallback); echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4076* && $err == *"binding's result"* ]]; chk lookup.65
 
 set -e
 tally

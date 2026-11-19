@@ -2645,15 +2645,18 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
         | "random" | "waitstatus" | "getcpid" | "mkdtemp" => Some(0..=0),
         // DD#126: `wait` reaps any child, `wait PID` reaps that one.
         "wait" => Some(0..=1),
-        "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => {
-            Some(1..=1)
-        }
+        "getenv" => Some(1..=2),
+        "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" => Some(1..=1),
         "match" => Some(2..=2),
         "sub" | "gsub" => Some(3..=3),
-        // `arg` is genuinely variadic (DD#60: `$(arg N)` / `$(arg N DEFAULT)`),
-        // as are `join` and `echo`, so they have no arity to check.
+        // `arg` retains its dedicated SB5036 index/arity check.
+        // `join` and `echo` have their own argument rules.
         _ => None,
     }
+}
+
+pub(crate) fn lookup_has_status(name: &str, arg_count: usize) -> bool {
+    matches!(name, "arg" | "getenv") && arg_count == 1
 }
 
 impl VersionState {

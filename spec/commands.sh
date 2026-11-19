@@ -370,7 +370,7 @@ echo "|"'
 [[ $rc = 0 && $out = "|" && -z $err ]]; chk wr.5
 
 # wr.6 a tainted value still needs attest (DD#24 is unaffected)
-run_sash 'v=$(getenv HOME)
+run_sash 'v=$(- getenv HOME)
 write $v'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk wr.6
 

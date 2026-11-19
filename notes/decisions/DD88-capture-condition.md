@@ -33,7 +33,8 @@ DG accepted named predicate-function capture-conditions on 2026-11-12
 owns it.
 DD101's symmetric lookup decision (DG, 2026-11-13; journal 631) admits bare
 `arg` alongside bare `getenv`, but not their value-only literal-default forms.
-That extension is **unimplemented** in `require-getenv-status-handling`.
+That extension is implemented in native and C
+(`require-getenv-status-handling`, journal 663).
 DD135's direct `$(mkdtemp)` creation is implemented in both backends;
 delivery is recorded in
 [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
@@ -344,12 +345,12 @@ and `if ! x=$(getenv N) { … }`. This lookup extension is implemented.
 DG's later 2026-11-12 revision requires explicit handling or discard:
 capturing only the bare lookup's text is a compile error, while `$(- getenv NAME)`
 discards lookup status without declassifying its value. That enforcement
-is pending in `require-getenv-status-handling`.
+is implemented (`require-getenv-status-handling`, journal 663).
 
 DG's 2026-11-13 symmetric lookup rule adds bare `$(arg N)` to the same
 consumers: use actual presence, not text length, and evaluate once. Supplying
 a literal default to either lookup makes it value-only, hence ineligible as
-a capture-condition. The same task owns this pending extension; typed
+a capture-condition. This extension is implemented in native and C; typed
 declarations and other excluded RHS shapes remain excluded.
 The accepted file-read and regex extensions are
 specified above; value-only producers do not gain a separate result merely

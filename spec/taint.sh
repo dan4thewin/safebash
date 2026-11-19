@@ -61,19 +61,19 @@ run_sash 'array a=(hello); int i=0; echo ${a[$i]:!-fallback}'
 
 # The separate forced read keeps the old dead-variable fault from masking
 # the index-taint regression. Forcing a cell read never overrides its index's checks.
-run_sash 'array a=(hello); str i=$(arg 1); : ${i:!}
+run_sash 'array a=(hello); str i=$(- arg 1); : ${i:!}
 echo ${a[$(( ${i:-0} ))]:!}' 0
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.13
 
-run_sash 'array a=(hello); str i=$(arg 1); : ${i:!}
+run_sash 'array a=(hello); str i=$(- arg 1); : ${i:!}
 str z=${a[$(( ${i:-0} ))]:!}; echo "$z"' 0
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.14
 
-run_sash 'array a=(hello); str i=$(arg 1); : ${i:!}
+run_sash 'array a=(hello); str i=$(- arg 1); : ${i:!}
 array b=(${a[$(( ${i:-0} ))]:!}); echo $(join b)' 0
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk ctrs.15
 
-run_sash 'map m=([k]=hello); str key=$(arg 1); : ${key:!}
+run_sash 'map m=([k]=hello); str key=$(- arg 1); : ${key:!}
 echo ${m[$key]:!}' k
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.16
 
@@ -85,21 +85,21 @@ run_sash 'array a=(hello); int i=0; echo ${a[$(( ${i@Q} ))]:!-fallback}'
 [[ $rc != 0 && -z $out && $err == *SB4015* && $err == *'${var@Q}'* ]]; chk ctrs.18
 
 run_sash 'map m=([k]=hello)
-array b=(${m[$(arg 1)]:!}); echo $(join b)' k
+array b=(${m[$(- arg 1)]:!}); echo $(join b)' k
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk ctrs.19
 
-run_sash 'map m=([k]=hello); echo ${m[$(arg 1)]:!}' k
+run_sash 'map m=([k]=hello); echo ${m[$(- arg 1)]:!}' k
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.20
 
 run_sash 'str s=13; echo $(( ${s:!} ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* && $err == *disposition* ]]; chk ctrs.21
 
 # 24.1 getenv produces tainted var
-run_sash 'x=$(getenv HOME); echo $x'
+run_sash 'x=$(- getenv HOME); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.1
 
 # 24.2 arg produces tainted var
-run_sash 'x=$(arg 1); echo $x'
+run_sash 'x=$(- arg 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.2
 
 # 24.3 read produces tainted var
@@ -125,23 +125,23 @@ echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.7
 
 # 24.8 tainted var at use site → compile error
-run_sash 'x=$(getenv PATH); /bin/ls $x'
+run_sash 'x=$(- getenv PATH); /bin/ls $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.8
 
 # 24.9 attest makes var clean
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
 echo $x'
 [[ $rc = 0 && -z $err ]]; chk 24.9
 
 # 24.10 attest requires $VAR in test expression
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ 1 -eq 1 ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.10
 
 # 24.11 attest requires $VAR on LHS
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ "foo" == $x ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.11
@@ -157,20 +157,20 @@ echo $x'
 # passes atop.1 and atop.2 both.
 
 # atop.1 a PARAMETER EXPANSION operand names the binder
-run_sash 'str h=$(getenv NOPE_XYZ)
+run_sash 'str h=$(- getenv NOPE_XYZ)
 attest h [[ ${h:-zz} == zz ]]
 echo "ok [$h]"'
 [[ $rc = 0 && $out = "ok []" && -z $err ]]; chk atop.1
 
 # atop.2 a CONCATENATION operand names the binder
-run_sash 'str h=$(getenv NOPE_XYZ)
+run_sash 'str h=$(- getenv NOPE_XYZ)
 attest h [[ ${h}tail == tail ]]
 echo "ok [$h]"'
 [[ $rc = 0 && $out = "ok []" && -z $err ]]; chk atop.2
 
 # atop.3 the same spelling naming a DIFFERENT variable does not count
 run_sash 'str g=zz
-str h=$(getenv NOPE_XYZ)
+str h=$(- getenv NOPE_XYZ)
 attest h [[ ${g:-qq} == zz ]]
 echo "ok [$h]"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *"doesn't reference"* ]]; chk atop.3
@@ -178,20 +178,20 @@ echo "ok [$h]"'
 # atop.4 a NEGATED predicate still references its binder. `test_references_var`
 # recurses through `!`, and nothing reached that arm — a wrong answer here is
 # silent either way, so atop.5 pins the other direction.
-run_sash 'str h=$(getenv NOPE_XYZ)
+run_sash 'str h=$(- getenv NOPE_XYZ)
 attest h [[ ! $h == zz ]]
 echo "ok [$h]"'
 [[ $rc = 0 && $out = "ok []" && -z $err ]]; chk atop.4
 
 # atop.5 …and a negated predicate naming a different variable still does not
 run_sash 'str g=zz
-str h=$(getenv NOPE_XYZ)
+str h=$(- getenv NOPE_XYZ)
 attest h [[ ! $g == qq ]]
 echo "ok [$h]"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *"doesn't reference"* ]]; chk atop.5
 
 # 24.12 attest failure (unconditional) aborts at runtime
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ $x =~ ^NEVER_MATCH$ ]]
 echo $x'
 # attest fails at runtime → exits 1, no stdout
@@ -199,7 +199,7 @@ echo $x'
 
 # 24.13 if attest failure → takes false branch, no abort. DD#121 R2: the else
 # must leave the subject clean, so it reassigns from a literal.
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 if attest x [[ $x =~ ^NEVER$ ]]; then
   echo "$x"
 else
@@ -209,9 +209,9 @@ echo "$x"'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 24.13
 
 # 24.14 re-assignment from tainted source re-taints
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
-x=$(getenv USER)
+x=$(- getenv USER)
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.14
 
@@ -221,7 +221,7 @@ run_sash 'x="hello"; echo $x'
 
 # 24.16 an attest predicate SHALL NOT run code: no `$( … )`, `$(<…)` or
 # `$(( … ))` in it (SB5098; atpred.1, .3-.8, .13-.31)
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ $(echo yes) == yes ]]
 echo $x'
 [[ $rc != 0 && -z $out && $err == *:2:13:*SB5098* \
@@ -236,17 +236,17 @@ run_sash 'h=$(/bin/hostname); echo $h'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.18
 
 # 24.19 getenv without attest — tainted
-run_sash 'x=$(getenv HOME); echo $x'
+run_sash 'x=$(- getenv HOME); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.19
 
 # 50.1 tainted global at call site → error
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 fn f { echo $x; }
 f'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 50.1
 
 # 51.1 SSA backstop — tainted use caught before codegen
-run_sash 'x=$(arg 1); echo $x'
+run_sash 'x=$(- arg 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 51.1
 
 # 53.1 $HOME is an env var — must use $(getenv HOME)
@@ -254,11 +254,11 @@ run_sash 'echo $HOME'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 53.1
 
 # 53.2 only way to read env is getenv
-run_sash 'x=$(getenv HOME); attest x [[ $x =~ ^/ ]]; echo $x'
+run_sash 'x=$(- getenv HOME); attest x [[ $x =~ ^/ ]]; echo $x'
 [[ $rc = 0 && -z $err ]]; chk 53.2
 
 # 53.3 getenv result is tainted
-run_sash 'x=$(getenv HOME); echo $x'
+run_sash 'x=$(- getenv HOME); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 53.3
 
 # 53.4 no mechanism to push to env
@@ -301,37 +301,37 @@ run_sash 'echo $PATH'
 #     an array via literal, += append, or a[i]= subscript). ---
 
 # 60.1 array literal with a tainted element → reject
-run_sash 'array a=( $(getenv HOME) ); echo ${a[0]}'
+run_sash 'array a=( $(- getenv HOME) ); echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.1
 
 # 60.2 array literal with multiple tainted elements (the reported bug) → reject
-run_sash 'array a=( $(getenv HOME) $(getenv PATH) ); echo ${a[1]}'
+run_sash 'array a=( $(- getenv HOME) $(- getenv PATH) ); echo ${a[1]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.2
 
 # 60.3 the reported bug WITH a scalar attest present must STILL reject
-run_sash 'array a=( $(getenv HOME) $(getenv PATH) )
+run_sash 'array a=( $(- getenv HOME) $(- getenv PATH) )
 attest a [[ $a[0] =~ ^\S*$ ]]
 echo $a[1]'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.3
 
 # 60.4 += append of a tainted element → reject
-run_sash 'array a=(one); a+=( $(getenv HOME) ); echo ${a[1]}'
+run_sash 'array a=(one); a+=( $(- getenv HOME) ); echo ${a[1]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.4
 
 # 60.5 subscript-assign of a tainted value → reject
-run_sash 'array a=(one two); a[0]=$(getenv HOME); echo ${a[0]}'
+run_sash 'array a=(one two); a[0]=$(- getenv HOME); echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.5
 
 # 60.6 mixed clean+tainted literal → reject
-run_sash 'array a=( ok $(getenv HOME) ); echo ${a[0]}'
+run_sash 'array a=( ok $(- getenv HOME) ); echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.6
 
 # 60.7 map literal with a tainted value → reject
-run_sash 'map m=( [k]=$(getenv HOME) ); echo ${m[k]}'
+run_sash 'map m=( [k]=$(- getenv HOME) ); echo ${m[k]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.7
 
 # 60.8 concat embedding a tainted cmdsub in an array literal → reject
-run_sash 'array a=( "pre$(getenv HOME)" ); echo ${a[0]}'
+run_sash 'array a=( "pre$(- getenv HOME)" ); echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.8
 
 # 60.13 mapfile from a file → tainted; use without attest rejected
@@ -394,7 +394,7 @@ echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.26
 
 # 60.27 attest-all (1 binder) applied to a scalar → type error
-run_sash 'x=$(getenv HOME); attest y in x [[ $y =~ ^/ ]]; echo $x'
+run_sash 'x=$(- getenv HOME); attest y in x [[ $y =~ ^/ ]]; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.27
 
 # 60.28 1-binder attest-all on a map → type error (needs two binders)
@@ -428,7 +428,7 @@ run_sash 'array a=( one two ); echo ${a[0]}'
 [[ $rc = 0 && $out = "one" && -z $err ]]; chk 60.9
 
 # 60.10 escape hatch: array built from a attested scalar
-run_sash 'h=$(getenv HOME)
+run_sash 'h=$(- getenv HOME)
 attest h [[ $h =~ ^/ ]]
 array a=( "$h" ); echo ${a[0]}'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 60.10
@@ -551,7 +551,7 @@ run_sash "echo '~' \"~\" a~b"
 
 # 24.20 a failed attest names the variable and shows its value. Regression
 #       for the terse `attest: validation failed`.
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ $x =~ ^NEVER$ ]]
 echo $x'
 [[ $rc = 1 && $rerr == *"attest: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
@@ -610,13 +610,13 @@ if p { echo "t[${x:!}]" } else { echo "f[${x:!}]" }'
 # operand is a literal. Every program below is still rejected; the code moved
 # from SB5020/SB5035 to SB4070, and the read discipline it needed is gone.
 # dd78.1 a tainted variable in a `:-` default
-run_sash 'y=$(getenv HOME); echo ${x:-$y}'
+run_sash 'y=$(- getenv HOME); echo ${x:-$y}'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.1
 # dd78.2 a tainted source inline
-run_sash 'echo ${x:-$(getenv HOME)}'
+run_sash 'echo ${x:-$(- getenv HOME)}'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.2
 # dd78.3 the argv source
-run_sash 'echo ${x:-$(arg 1)}'
+run_sash 'echo ${x:-$(- arg 1)}'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.3
 # dd78.4 a CLEAN intrinsic default used to be the accepted case -- the whole
 # point of a read discipline is that it lets safe expansions through. There is
@@ -635,7 +635,7 @@ run_sash 'echo ${x:-$(random)}'
 # dd78.7 a tainted default cannot sneak through a store either. This used to
 # depend on DD#24 (the default is a read, so the assignment rejects); it now
 # needs no taint reasoning at all.
-run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
+run_sash 'y=$(- getenv HOME); z=${x:-$y}; echo $z'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.7
 # dd78.8-dd78.12 DD#78's read discipline does not reach the `:?` MESSAGE,
 # because the message is never read. It is a literal, and a `$` in it is SB4070
@@ -645,7 +645,7 @@ run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
 # single-quoted message, is literal text and still reads nothing.
 # dd78.8 a tainted var in a message is SB4070 — rejected before taint is even
 #        a question (it used to be SB5050: `h` really was dead)
-run_sash 'str h=$(getenv HOME)
+run_sash 'str h=$(- getenv HOME)
 str y=""
 str z=${y:?$h}
 echo "[$z]"'
@@ -653,12 +653,12 @@ echo "[$z]"'
 # dd78.9 an inline tainted source is likewise SB4070, so there is no route by
 #        which `$(getenv …)` reaches stderr through a message
 run_sash 'str y=""
-str z=${y:?$(getenv HOME)}
+str z=${y:?$(- getenv HOME)}
 echo "[$z]"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.9
 # dd78.10 the `:!?` forced-read form does not buy an exemption — `!` covers the
 #        subject read, and the message is still parsed as a message
-run_sash 'str h=$(getenv HOME)
+run_sash 'str h=$(- getenv HOME)
 attest h [[ -n $h ]]
 str y=""
 str z=${y:!?$h}
@@ -666,7 +666,7 @@ echo "[$z][$h]"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.10
 # dd78.11 the quoted escape is NOT a taint hole: `$h` inside `'…'` is two
 #        literal characters, so a tainted `h` is not read and nothing escapes
-run_sash 'str h=$(getenv HOME)
+run_sash 'str h=$(- getenv HOME)
 attest h [[ -n $h ]]
 str y=""
 str z=${y:?'"'"'$h'"'"'}
@@ -686,22 +686,22 @@ echo "[$z]"'
 # attest at the source, not on a copy. Regression: scalar assignment used to
 # silently PROPAGATE taint (caught only at a later sink). ──
 # np.1 z=$y (y tainted) is a rejected read, not a silent propagate
-run_sash 'y=$(getenv HOME); z=$y'
+run_sash 'y=$(- getenv HOME); z=$y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.1
 # np.2 quoted copy is equally a read
-run_sash 'y=$(getenv HOME); z="$y"'
+run_sash 'y=$(- getenv HOME); z="$y"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.2
 # np.3 a tainted read buried in a concat is rejected
-run_sash 'y=$(getenv HOME); z="pre${y}post"'
+run_sash 'y=$(- getenv HOME); z="pre${y}post"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.3
 # np.4 string `+=` append of a tainted read is rejected
-run_sash 'y=$(getenv HOME); s=clean; s+=$y'
+run_sash 'y=$(- getenv HOME); s=clean; s+=$y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.4
 # np.5 attest at the SOURCE, then the copy is a clean read (the DD#24 idiom).
-run_sash 'y=$(getenv HOME); attest y [[ -n $y ]]; z=$y; echo "$z"'
+run_sash 'y=$(- getenv HOME); attest y [[ -n $y ]]; z=$y; echo "$z"'
 [[ $rc = 0 && -z $err ]]; chk np.5
 # np.6 assignment straight from a source is allowed (taints the target).
-run_sash 'z=$(getenv HOME); attest z [[ -n $z ]]; echo "$z"'
+run_sash 'z=$(- getenv HOME); attest z [[ -n $z ]]; echo "$z"'
 [[ $rc = 0 && -z $err ]]; chk np.6
 # np.7 a clean copy chain is unaffected
 run_sash 'a=5; b=$a; c=$b; echo $c'
@@ -747,9 +747,9 @@ run_sash 'argv 1 a; x=$(join a); echo $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.43
 # 60.44/60.45 a direct tainted scalar in a `[[ ]]` operand / redirect target
 # is a read too — these positions were entirely unchecked before.
-run_sash 'x=$(getenv HOME); [[ $x == y ]] && echo z'
+run_sash 'x=$(- getenv HOME); [[ $x == y ]] && echo z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.44
-run_sash 'x=$(getenv HOME); echo hi > $x'
+run_sash 'x=$(- getenv HOME); echo hi > $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.45
 # 60.46 control: a attested-all snapshot joined is clean and runs.
 run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join a)' one two
@@ -758,7 +758,7 @@ run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join a)' one two
 # ── Gap-fill: same laundering-bypass class across read-form × source × more
 # positions, so a regression in any one path is caught (DG 2026-08-26).
 # 60.47 `echo $t` (a tainted SCALAR through a cmdsub) in assignment RHS
-run_sash 'x=$(getenv HOME); y=$(echo $x); echo $y'
+run_sash 'x=$(- getenv HOME); y=$(echo $x); echo $y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.47
 # 60.48 mapfile-sourced (not argv) tainted array joined in assignment RHS
 run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; x=$(join a); echo $x'
@@ -863,7 +863,7 @@ run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; [[ ${a[0]} == x ]] && echo 
 run_sash 'argv 1 a; x=$(join a); echo hi > $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.52
 # 60.53 `echo $t` (tainted scalar) through a cmdsub in a `[[ ]]` operand
-run_sash 'x=$(getenv HOME); [[ $(echo $x) == y ]] && echo z'
+run_sash 'x=$(- getenv HOME); [[ $(echo $x) == y ]] && echo z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.53
 # 60.54 control (positive): a CLEAN `$(echo …)` capture still compiles & runs
 # — guards the assignment-RHS cmdsub read-check against over-rejection.
@@ -881,25 +881,25 @@ run_sash 'x=hello; [[ $x == hello ]] && echo yes'
 # (caveat programmer). Attest is a runtime construct.
 # bfb.1 valid input passes the gate → V keeps its value (was wrongly the
 #       default before the fix)
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' 5000
 [[ $rc = 0 && $out = "5000" && -z $rerr ]]; chk bfb.1
 
 # bfb.2 invalid input fails the gate → the default (no abort)
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' abc
 [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.2
 
 # bfb.3 empty input fails the gate → the default
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' ""
 [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.3
 
 # bfb.4 V is clean and reusable after the fallback (both branches clean)
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v $v"' abc
 [[ $rc = 0 && $out = "8080 8080" && -z $rerr ]]; chk bfb.4
@@ -908,55 +908,55 @@ attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 # branch, so it can never leave the subject clean. bfb.5/6 now use the `if`
 # form with a resolving `else`; bfb.7 pins the rejection of the old spelling.
 # bfb.5 the guarded command runs only on pass
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else v=none; fi
 /bin/echo done' 42
 [[ $rc = 0 && $out = $'valid 42\ndone' && -z $rerr ]]; chk bfb.5
 
 # bfb.6 on fail: the guarded command is skipped, execution continues (no abort)
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else v=none; fi
 /bin/echo reached' abc
 [[ $rc = 0 && $out = "reached" && -z $rerr ]]; chk bfb.6
 
 # bfb.7 DD#121 R2: `attest … && CMD` is rejected — no failure branch exists
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
 /bin/echo done'
 [[ $rc != 0 && -z $out && $err == *SB5089* ]]; chk bfb.7
 
 # bfb.8 …and so is a caught `if attest` with no `else` at all
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; fi'
 [[ $rc != 0 && -z $out && $err == *SB5089* ]]; chk bfb.8
 
 # bfb.9 …and an `else` that falls through without resolving the subject
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else /bin/echo bad; fi'
 [[ $rc != 0 && -z $out && $err == *SB5089* ]]; chk bfb.9
 
 # bfb.10 leaving the branch resolves it — nothing reaches the merge
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else exit 3; fi' 42
 [[ $rc = 0 && $out = "valid 42" && -z $rerr ]]; chk bfb.10
 
 # ── DD#121 R1: an attest must be adjacent to the operation that taints ──
 # bfb.11 a statement between the taint source and its attest is rejected
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 str u=x
 attest v [[ -n $v ]]
 /bin/echo "$v$u"'
 [[ $rc != 0 && -z $out && $err == *SB5088* ]]; chk bfb.11
 
 # bfb.12 …and the same program with the attest moved up compiles
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 attest v [[ -n $v ]]
 str u=x
 /bin/echo "$v$u"' 42
 [[ $rc = 0 && $out = "42x" && -z $rerr ]]; chk bfb.12
 
 # bfb.13 R3 (unchanged): `:!` is still the way to read without attesting
-run_sash 'v=$(arg 1)
+run_sash 'v=$(- arg 1)
 str u=x
 /bin/echo "${v:!}$u"' 42
 [[ $rc = 0 && $out = "42x" && -z $rerr ]]; chk bfb.13
@@ -1062,12 +1062,12 @@ for v in @g { /bin/echo $v }' one
 # bfb.23 no read follows the write, so no attest is required
 run_sash 'str t=clean
 /bin/echo $t
-str q=$(t=$(getenv HOME); echo x)
+str q=$(t=$(- getenv HOME); echo x)
 /bin/echo $q'
 [[ $rc = 0 && $out = $'clean\nx' && -z $err && -z $rerr ]]; chk bfb.23
 # bfb.24 the sanctioned per-use bypass is legal for this single-use body
 run_sash 'str t=clean
-str q=$(t=$(getenv HOME); echo x)
+str q=$(t=$(- getenv HOME); echo x)
 /bin/echo $q
 /bin/echo $t:!'
 [[ $rc = 0 && $out == $'x\n'* && -z $err && -z $rerr ]]; chk bfb.24
@@ -1075,20 +1075,20 @@ str q=$(t=$(getenv HOME); echo x)
 # attest. The write still escapes (DD#86), and the attest is a real runtime
 # gate, not a compile-time waiver.
 run_sash 'str t=clean
-str q=$(t=$(getenv HOME); attest t [[ -n $t ]]; echo x)
+str q=$(t=$(- getenv HOME); attest t [[ -n $t ]]; echo x)
 /bin/echo $q
 /bin/echo $t'
 [[ $rc = 0 && $out == x* && -z $err ]]; chk bfb.25
 # bfb.26 a NON-adjacent in-body attest is R1 (SB5088), not SB5067 — the two
 # rules stay distinct inside a body exactly as they do inside a function
 run_sash 'str t=clean
-str q=$(t=$(getenv HOME); echo mid; attest t [[ -n $t ]]; echo x)
+str q=$(t=$(- getenv HOME); echo mid; attest t [[ -n $t ]]; echo x)
 /bin/echo $q
 /bin/echo $t'
 [[ $rc != 0 && -z $out && $err == *SB5088* ]]; chk bfb.26
 # bfb.27 control: a name the body INTRODUCES is body-local (DD#86), so
 # tainting it is not a global leak and must stay quiet
-run_sash 'str q=$(str L=$(getenv HOME); attest L [[ -n $L ]]; echo $L)
+run_sash 'str q=$(str L=$(- getenv HOME); attest L [[ -n $L ]]; echo $L)
 /bin/echo $q'
 [[ $rc = 0 && -n $out && -z $err ]]; chk bfb.27
 # bfb.28 both the capture and its enclosing function have one call site;
@@ -1096,7 +1096,7 @@ run_sash 'str q=$(str L=$(getenv HOME); attest L [[ -n $L ]]; echo $L)
 run_sash 'str t=clean
 /bin/echo $t
 fn f {
-    str q=$(t=$(getenv HOME); echo x)
+    str q=$(t=$(- getenv HOME); echo x)
     /bin/echo $q
 }
 f'
@@ -1106,17 +1106,17 @@ f'
 # A forced read — use a tainted value without an attest predicate
 # (the middle ground between `attest` and `--no-taint`).
 # 91.1 tainted `${x:!}` compiles & runs (the bypass).
-run_sash 'x=$(getenv HOME); /bin/echo ${x:!}'
+run_sash 'x=$(- getenv HOME); /bin/echo ${x:!}'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.1
 # 91.2 control: `${x:~}` on the SAME tainted value is rejected (SB5020) — a
 # compile-time check, so it holds in every backend.
-run_sash 'x=$(getenv HOME); /bin/echo ${x:~}'
+run_sash 'x=$(- getenv HOME); /bin/echo ${x:~}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.2
 # 91.3 brace-less `$x:!` bypasses too
-run_sash 'x=$(getenv HOME); /bin/echo $x:!'
+run_sash 'x=$(- getenv HOME); /bin/echo $x:!'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.3
 # 91.4 the `:!` value propagates CLEAN into an array literal
-run_sash 'x=$(getenv HOME); array a=(${x:!} lit); /bin/echo @a:?e'
+run_sash 'x=$(- getenv HOME); array a=(${x:!} lit); /bin/echo @a:?e'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.4
 # 91.5 tainted array splat `@a:!~` bypasses attest-all
 run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!~' HELLO
@@ -1177,7 +1177,7 @@ run_sash 'u=""
 
 # 91.17 the whole point: a TAINTED read is forced through a combination too,
 # not just through bare `:!`
-run_sash 'x=$(getenv HOME); /bin/echo ${x:!-none}'
+run_sash 'x=$(- getenv HOME); /bin/echo ${x:!-none}'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.17
 
 # 91.18 a splat still must state its emptiness behaviour — a taint override is not
@@ -1206,7 +1206,7 @@ run_sash 'x=hi; /bin/echo ${x:~!}'
 
 # 91.23 DG's reported line: split a tainted scalar into a CLEAN array with a
 # forced read, no attest predicate
-run_sash 'ckd=$(getenv HOME)
+run_sash 'ckd=$(- getenv HOME)
 read $ckd:! opts
 /bin/echo "$(len opts)"'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 91.23
@@ -1216,12 +1216,12 @@ read $ckd:! opts
 run_sash 'x=hi; bless x'
 [[ $rc != 0 && $err == *SB5011* ]]; chk 93.1
 # 93.2 `attest` clears taint end-to-end (the renamed primitive works).
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
 /bin/echo $x'
 [[ $rc = 0 && -z $err ]]; chk 93.2
 # 93.3 diagnostic wording follows the rename ("without attest")
-run_sash 'x=$(getenv HOME); /bin/echo $x'
+run_sash 'x=$(- getenv HOME); /bin/echo $x'
 [[ $rc != 0 && $err == *"without attest"* ]]; chk 93.3
 
 # ── DD#93 Part B: `attest VAR OP` unary shorthand ──
@@ -1229,16 +1229,16 @@ run_sash 'x=$(getenv HOME); /bin/echo $x'
 # by construction, so a wrong-var predicate (SB5020) cannot be written in this
 # form — strictly safer than the full form, and still greppable.
 # 93.20 the scalar shorthand declassifies, exactly like the full predicate.
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x -n
 /bin/echo $x'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 93.20
 # 93.21 …and is exactly equivalent to spelling the predicate out
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ -n $x ]]
 /bin/echo $x'
 short=$out
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x -n
 /bin/echo $x'
 [[ $rc = 0 && $out = "$short" && -z $err ]]; chk 93.21
@@ -1262,19 +1262,19 @@ attest k v in m g?
 /bin/echo ${m[K]}'
 [[ $rc = 0 && $out = "V" && -z $err ]]; chk 93.23
 # 93.24 a shorthand whose predicate fails aborts at runtime, like the full form
-run_sash 'x=$(getenv SASH_SPEC_UNSET_VAR)
+run_sash 'x=$(- getenv SASH_SPEC_UNSET_VAR)
 attest x -n
 /bin/echo $x'
 [[ $rc != 0 && -z $out ]]; chk 93.24
 # 93.25 `-v`/`-o`/`-R` stay SB5028-rejected in the shorthand (DD#93). These
 # reach codegen otherwise, which has no lowering for them and ICEs.
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x -v
 /bin/echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 93.25
 # 93.26 …and in the full predicate form too. `attest` carries its predicate as
 # a Test arg exactly like `[[ ]]`, so the same operator rules apply to both.
-run_sash 'x=$(getenv HOME)
+run_sash 'x=$(- getenv HOME)
 attest x [[ -o $x ]]
 /bin/echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 93.26
@@ -1300,7 +1300,7 @@ echo $(( c ))'
 [[ $rc != 0 && $rerr == *"attest: s = 'abc' failed the gate"* ]]; chk 93.31b
 # 93.32 both names are declassified: the tainted SOURCE (here `$(arg 1)`) is
 # usable afterwards too, not just the bound int it was converted into.
-run_sash 'n=$(arg 1)
+run_sash 'n=$(- arg 1)
 attest n (( c = n ))
 /bin/echo $n $(( c ))' 42
 [[ $rc = 0 && $out = "42 42" && -z $err ]]; chk 93.32
@@ -1401,8 +1401,8 @@ echo $(( y ))'
 [[ $rc = 0 && $out = "133" && -z $err ]]; chk 93.44
 # 93.45 a TAINTED extra operand is rejected — the value would be laundered into
 # the clean target.
-run_sash 'x=$(getenv HOME)
-z=$(getenv PATH)
+run_sash 'x=$(- getenv HOME)
+z=$(- getenv PATH)
 attest x (( y = x + z ))
 echo $(( y ))'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 93.45
@@ -1493,7 +1493,7 @@ echo "$(len a)"'
 # 60.56 a tainted value into an ARRAY element: says "array", points at
 # `read ARR`, and no longer names the retired `mapfile`
 run_sash 'array a=()
-a[0]=$(getenv HOME)
+a[0]=$(- getenv HOME)
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* \
    && $err == *"array 'a'"* && $err == *'read ARR'* \
@@ -1502,20 +1502,20 @@ echo "${a[0]}"'
 # 60.57 a tainted value into a MAP element: says "map", and names the real
 # route (array -> attest -> `map m = @{ARR:DISP}`)
 run_sash 'map m
-m[k]=$(getenv HOME)
+m[k]=$(- getenv HOME)
 echo "${m[k]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* \
    && $err == *"map 'm'"* && $err == *'@{ARR:DISP}'* \
    && $err != *mapfile* ]]; chk 60.57
 
 # 60.58 the map LITERAL form gets the map wording too
-run_sash 'map m=([k]=$(getenv HOME))
+run_sash 'map m=([k]=$(- getenv HOME))
 echo "${m[k]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* \
    && $err == *"map 'm'"* && $err != *mapfile* ]]; chk 60.58
 
 # 60.59 the array LITERAL form gets the array wording
-run_sash 'array a=($(getenv HOME))
+run_sash 'array a=($(- getenv HOME))
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* \
    && $err == *"array 'a'"* && $err != *mapfile* ]]; chk 60.59
@@ -1645,17 +1645,17 @@ echo done'
 # atint.1 the laundering shape is SB5020 at the READ, with a location — it used
 # to reach the SSA backstop (or nothing at all, atint.11) and `attest n` then
 # declassified a value nothing had vouched for.
-run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ -n $n ]]; echo "$n"' 7
+run_sash 'x=$(- arg 1); int n=$(( ${x:-0} )); attest n [[ -n $n ]]; echo "$n"' 7
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.1
 # atint.2 the same read inside a `(( … ))` mutation statement.
-run_sash 'x=$(arg 1); int n=0; (( n = ${x:-0} )); attest n [[ -n $n ]]; echo "$n"' 7
+run_sash 'x=$(- arg 1); int n=0; (( n = ${x:-0} )); attest n [[ -n $n ]]; echo "$n"' 7
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.2
 # atint.3 DD#24's sanctioned route: attest the SOURCE, then convert. The
 # disposition is now a plain conversion of a vouched-for value.
-run_sash 'x=$(arg 1); attest x i?; int n=$(( ${x:-0} )); echo "$n"' 7
+run_sash 'x=$(- arg 1); attest x i?; int n=$(( ${x:-0} )); echo "$n"' 7
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk atint.3
 # atint.4 DD#93 Part D: the conversion IS the validation, and declassifies both.
-run_sash 'x=$(arg 1); attest x (( n = x )); echo "$n"' 7
+run_sash 'x=$(- arg 1); attest x (( n = x )); echo "$n"' 7
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk atint.4
 # atint.5 attest on an int as a runtime gate — the passing case. After the
 # SB5020 fix no int can be tainted (every route is SB4030 or SB5020), so the
@@ -1673,7 +1673,7 @@ run_sash 'int n=9; attest n [[ "$n" == 5 ]]; echo "$n"'
 [[ $rc = 1 && -z $out && $rerr == *"attest: n = '9' failed the gate"* ]]; chk atint.6
 # atint.7 the string form names its value the same way — one sentence shape for
 # both types, which is what the int case now agrees with.
-run_sash 'x=$(arg 1); attest x [[ $x == good ]]; echo "$x"' bad
+run_sash 'x=$(- arg 1); attest x [[ $x == good ]]; echo "$x"' bad
 [[ $rc = 1 && -z $out && $rerr == *"attest: x = 'bad' failed the gate"* ]]; chk atint.7
 # atint.8 the attested int is a real value, not a constant folded past.
 run_sash 'int n=21; attest n [[ -n "$n" ]]; echo "$(( n * 2 ))"'
@@ -1681,18 +1681,18 @@ run_sash 'int n=21; attest n [[ -n "$n" ]]; echo "$(( n * 2 ))"'
 # atint.9 an arithmetic CONDITION is a read position too. `taint_stmt` sent
 # StmtKind::ArithTest to a walker that only visits child bodies — of which an
 # arith test has none — so the condition itself went unchecked.
-run_sash 'x=$(arg 1); if (( ${x:-0} > 5 )); then echo hi; fi' 7
+run_sash 'x=$(- arg 1); if (( ${x:-0} > 5 )); then echo hi; fi' 7
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.9
 # atint.10 …and in a `while` condition.
-run_sash 'x=$(arg 1); while (( ${x:-0} > 5 )); do echo hi; done' 7
+run_sash 'x=$(- arg 1); while (( ${x:-0} > 5 )); do echo hi; done' 7
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.10
 # atint.11 the shape that compiled CLEAN before the fix — no SB5020, and no SSA
 # backstop either, because a lone leaf never became a tainted int. It printed
 # attacker-controlled bytes verbatim.
-run_sash 'x=$(arg 1); echo "$(( ${x:-0} ))"' 7
+run_sash 'x=$(- arg 1); echo "$(( ${x:-0} ))"' 7
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.11
 # atint.12 a tainted read in a subscript index inside arithmetic.
-run_sash 'x=$(arg 1); array a=(1 2); echo "${a[${x:-0}]}"' 1
+run_sash 'x=$(- arg 1); array a=(1 2); echo "${a[${x:-0}]}"' 1
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.12
 # atint.13 THE SAME ENUM VARIANT, A DIFFERENT WALKER. atint.11 made
 # `check_expr_taint` total over ExprKind. `expr_uses_tainted` — the predicate
@@ -1700,11 +1700,11 @@ run_sash 'x=$(arg 1); array a=(1 2); echo "${a[${x:-0}]}"' 1
 # ExprKind::Arithmetic in exactly the same way. An arithmetic disposition
 # placed into a COLLECTION was laundered outright: `z` never entered the
 # tainted set, so every later check saw a clean array.
-run_sash 'x=$(arg 1); array z=($(( ${x:-0} ))); echo "${z[0]}"' 7
+run_sash 'x=$(- arg 1); array z=($(( ${x:-0} ))); echo "${z[0]}"' 7
 [[ $rc != 0 && -z $out && $err == *"SB5021"* ]]; chk atint.13
 # atint.14 ...and the map spelling, which reaches the element through the
 # other arm of taint_array_literal_assignment.
-run_sash 'x=$(arg 1); map m=([k]=$(( ${x:-0} ))); echo "${m[k]}"' 7
+run_sash 'x=$(- arg 1); map m=([k]=$(( ${x:-0} ))); echo "${m[k]}"' 7
 [[ $rc != 0 && -z $out && $err == *"SB5021"* ]]; chk atint.14
 # atint.15 WHY IT WAS A BYPASS AND NOT MERELY A LATE CATCH. `echo "${z[0]}"`
 # was stopped by the SSA backstop — a bare sentence with no SB code and no
@@ -1713,7 +1713,7 @@ run_sash 'x=$(arg 1); map m=([k]=$(( ${x:-0} ))); echo "${m[k]}"' 7
 # value matched. That is an oracle. A genuinely tainted array (`read arr`) is
 # SB5020 in the identical position, which is what makes this a hole in the
 # validator rather than a decision about the language.
-run_sash 'x=$(arg 1); array z=($(( ${x:-0} ))); if [[ ${z[0]} == 7 ]]; then echo MATCH; else echo NO; fi' 7
+run_sash 'x=$(- arg 1); array z=($(( ${x:-0} ))); if [[ ${z[0]} == 7 ]]; then echo MATCH; else echo NO; fi' 7
 [[ $rc != 0 && $out != "MATCH" && $err == *"SB5021"* ]]; chk atint.15
 # atint.16 the new arm must not OVER-reject: clean arithmetic into a
 # collection is still legal, and still computes. A taint arm that rejects
@@ -1737,19 +1737,19 @@ run_sash 'int n=5; array z=($(( n + 1 ))); echo "${z[0]}"'
 # reach the variant both walkers decline to visit. Nothing else in the suite
 # asserts the bare-name case; the neighbouring dsp.*/pex.* specs all exercise
 # the disposition, which is the permitted spelling.
-run_sash 'x=$(arg 1); echo "$(( x ))"' 7
+run_sash 'x=$(- arg 1); echo "$(( x ))"' 7
 [[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.17
 # atint.18 ...and `$x`, which parses to the OTHER bare variant (DollarVar).
 # Two variants, one answer — a divergence here would give the shield a seam.
-run_sash 'x=$(arg 1); echo "$(( $x ))"' 7
+run_sash 'x=$(- arg 1); echo "$(( $x ))"' 7
 [[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.18
 # atint.19 THE SECOND HALF, and this one IS a discriminator: the clean
 # counterpart `int n=7` compiles and prints 7. A tainted int cannot be
 # DECLARED from argv...
-run_sash 'int n=$(arg 1); echo "$(( n ))"' 7
+run_sash 'int n=$(- arg 1); echo "$(( n ))"' 7
 [[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.19
 # atint.20 ...nor from the environment.
-run_sash 'int n=$(getenv SASH_SPEC_NOPE); echo "$(( n ))"'
+run_sash 'int n=$(- getenv SASH_SPEC_NOPE); echo "$(( n ))"'
 [[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.20
 # atint.21 ...nor by copying a tainted array element. This is the sharpest
 # of the five: the clean counterpart `array arr=(7); int n=${arr[0]}` is
@@ -1768,17 +1768,17 @@ run_sash 'read arr; int n=${arr[0]}; echo "$(( n ))"'
 # 61.1 subscript assignment
 run_sash 'str x=""
 array a=(q)
-a[0]=${x:-$(getenv HOME)}
+a[0]=${x:-$(- getenv HOME)}
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.1
 # 61.2 array-literal element
 run_sash 'str x=""
-array a=( ${x:-$(getenv HOME)} )
+array a=( ${x:-$(- getenv HOME)} )
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.2
 # 61.3 map value
 run_sash 'str x=""
-map m=( [k]=${x:-$(getenv HOME)} )
+map m=( [k]=${x:-$(- getenv HOME)} )
 echo "${m[k]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.3
 # 61.4 a file slurp
@@ -1793,7 +1793,7 @@ echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.5
 # 61.6 nested inside a quoted concat
 run_sash 'str x=""
-array a=( "pre${x:-$(getenv HOME)}" )
+array a=( "pre${x:-$(- getenv HOME)}" )
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.6
 # 61.7 the slurp form, read back through a test. Before DD#61 this compiled
@@ -1813,7 +1813,7 @@ echo "${a[0]}"'
 
 # 61.9 CONTROL: DD#91's `!` still forces the read — `is_taint_source` honours
 #      `taint_off` exactly as `pexp_uses_tainted` does.
-run_sash 'str t=$(getenv HOME)
+run_sash 'str t=$(- getenv HOME)
 array a=( ${t:!} )
 echo "ok:${a[0]}"'
 [[ $rc = 0 && $out == ok:* && -z $err ]]; chk 61.9
@@ -1824,14 +1824,14 @@ echo "ok:${a[0]}"'
 #       with the *value* walker, which treats a bare source as sanctioned
 #       assignment-from-source — right for the RHS, wrong for an index.
 run_sash 'array b=(one two)
-str z=${b[$(getenv HOME)]}
+str z=${b[$(- getenv HOME)]}
 echo "$z"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 61.10
 
 # 61.11 the same index read inside a collection element
 run_sash 'array b=(one two)
 array a=(q)
-a[0]=${b[$(getenv HOME)]}
+a[0]=${b[$(- getenv HOME)]}
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 61.11
 
@@ -1870,43 +1870,43 @@ echo "$s"'
 # spelling -- including the four that used to be ACCEPTED here because `!`
 # covered both subject and operand.
 # 91.24 `${h:!-${u:!}}`, formerly accepted
-run_sash 'str h=$(getenv HOME)
-str u=$(getenv NOSUCHVAR_9124)
+run_sash 'str h=$(- getenv HOME)
+str u=$(- getenv NOSUCHVAR_9124)
 str z=${h:!-${u:!}}
 echo "ok:$z"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.24
 # 91.25 the operands the other way round, formerly accepted
-run_sash 'str u=$(getenv NOSUCHVAR_9125)
-str h=$(getenv HOME)
+run_sash 'str u=$(- getenv NOSUCHVAR_9125)
+str h=$(- getenv HOME)
 str z=${u:!-${h:!}}
 echo "ok:$z"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.25
 # 91.26 the brace-less spelling, formerly accepted
-run_sash 'str u=$(getenv NOSUCHVAR_9126)
-str h=$(getenv HOME)
+run_sash 'str u=$(- getenv NOSUCHVAR_9126)
+str h=$(- getenv HOME)
 str z=$u:!-${h:!}
 echo "ok:$z"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.26
 # 91.27 a tainted operand without its own override (was SB5020)
-run_sash 'str h=$(getenv HOME)
-str p=$(getenv PATH)
+run_sash 'str h=$(- getenv HOME)
+str p=$(- getenv PATH)
 str z=${h:!-$p}
 echo "$z"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.27
 # 91.28 a taint SOURCE materialised in the default (was SB5020)
-run_sash 'str h=$(getenv HOME)
-str z=${h:!-$(getenv PATH)}
+run_sash 'str h=$(- getenv HOME)
+str z=${h:!-$(- getenv PATH)}
 echo "$z"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.28
 # 91.29 `!` on the operand but not the subject (was SB5020)
-run_sash 'str h=$(getenv HOME)
-str p=$(getenv PATH)
+run_sash 'str h=$(- getenv HOME)
+str p=$(- getenv PATH)
 str z=${h:-${p:!}}
 echo "$z"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.29
 # 91.30 into an array literal, formerly accepted
-run_sash 'str h=$(getenv HOME)
-str u=$(getenv NOSUCHVAR_9130)
+run_sash 'str h=$(- getenv HOME)
+str u=$(- getenv NOSUCHVAR_9130)
 array a=( ${h:!-${u:!}} )
 echo "ok:${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.30
@@ -1924,14 +1924,14 @@ int b=${n:!-7}
 echo "$a:$b"'
 [[ $rc = 0 && $out = "7:7" && -z $rerr ]]; chk 91.31
 # 91.32 an operand without its own override into an array literal (was SB502x)
-run_sash 'str h=$(getenv HOME)
-str p=$(getenv PATH)
+run_sash 'str h=$(- getenv HOME)
+str p=$(- getenv PATH)
 array a=( ${h:!-$p} )
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.32
 # 91.33 a taint source into an array literal (was SB502x)
-run_sash 'str h=$(getenv HOME)
-array a=( ${h:!-$(getenv PATH)} )
+run_sash 'str h=$(- getenv HOME)
+array a=( ${h:!-$(- getenv PATH)} )
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.33
 # ── DD#91 addendum: `!` is a MODIFIER, so a forced splat read is legal in every
@@ -1988,41 +1988,41 @@ for v in @{g:!} { echo "[$v]" }'
 # taint_switch.sh, which now turns the front end off to reach it.
 
 # cbt.1 a builtin's argument
-run_sash 'str q=$(str h=$(getenv HOME); echo "$h")
+run_sash 'str q=$(str h=$(- getenv HOME); echo "$h")
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *:[0-9]*:[0-9]*:* ]]; chk cbt.1
 # cbt.2 a test operand — an `if` body is not a Command, so the old walk skipped
 #       the whole statement
-run_sash 'str q=$(str h=$(getenv HOME); if [[ -n $h ]]; then /bin/echo y; fi)
+run_sash 'str q=$(str h=$(- getenv HOME); if [[ -n $h ]]; then /bin/echo y; fi)
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *:[0-9]*:[0-9]*:* ]]; chk cbt.2
 # cbt.3 a redirect target — the position that let an environment variable
 #       choose a filename (the original P1 report)
-run_sash 'str q=$(str h=$(getenv HOME); /bin/echo x > $h)
+run_sash 'str q=$(str h=$(- getenv HOME); /bin/echo x > $h)
 attest q [[ -z $q ]]
 /bin/echo "[$q]"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *:[0-9]*:[0-9]*:* ]]; chk cbt.3
 # cbt.4 a `while` condition
-run_sash 'str q=$(str h=$(getenv HOME); while [[ -n $h ]]; do break; done; /bin/echo y)
+run_sash 'str q=$(str h=$(- getenv HOME); while [[ -n $h ]]; do break; done; /bin/echo y)
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *:[0-9]*:[0-9]*:* ]]; chk cbt.4
 # cbt.5 a subscript value gets the more specific SB5021, as it does outside
-run_sash 'str q=$(array a=(z); str h=$(getenv HOME); a[0]=$h; /bin/echo "${a[0]}")
+run_sash 'str q=$(array a=(z); str h=$(- getenv HOME); a[0]=$h; /bin/echo "${a[0]}")
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc != 0 && -z $out && $err == *SB5021* && $err == *:[0-9]*:[0-9]*:* ]]; chk cbt.5
 # cbt.6 the tainted definition must be visible to LATER statements in the same
 #       body — hole 2. The read is two statements after the definition.
-run_sash 'str q=$(str h=$(getenv HOME); /bin/echo start; /bin/echo "$h")
+run_sash 'str q=$(str h=$(- getenv HOME); /bin/echo start; /bin/echo "$h")
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cbt.6
 # cbt.7 a wrapper statement inside the body recurses like any other
 run_sash 'str v=a
-str q=$(if [[ $v == a ]]; then str h=$(getenv HOME); /bin/echo "$h"; fi)
+str q=$(if [[ $v == a ]]; then str h=$(- getenv HOME); /bin/echo "$h"; fi)
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cbt.7
@@ -2031,13 +2031,13 @@ attest q [[ -n $q ]]
 #       twice and this prints SB5020 once per path.
 run_sash 'str v=a
 int i=0
-str q=$(while (( i < 1 )); do if [[ $v == a ]]; then str h=$(getenv HOME); /bin/echo "$h"; fi; i=$(( i + 1 )); done)
+str q=$(while (( i < 1 )); do if [[ $v == a ]]; then str h=$(- getenv HOME); /bin/echo "$h"; fi; i=$(( i + 1 )); done)
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc != 0 && -z $out && $(grep -c SB5020 <<< "$err") = 1 ]]; chk cbt.8
 # cbt.9 attesting INSIDE the body clears it, so the descent is a real taint
 #       walk and not a blanket rejection of bodies that touch a source
-run_sash 'str q=$(str h=$(getenv HOME); attest h [[ -n $h ]]; /bin/echo "$h")
+run_sash 'str q=$(str h=$(- getenv HOME); attest h [[ -n $h ]]; /bin/echo "$h")
 attest q [[ -n $q ]]
 /bin/echo "[$q]"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk cbt.9
@@ -2063,7 +2063,7 @@ attest q [[ -n $q ]]
 
 # capwalk.1 a tainted read in a body is reported once (the use of `y` on
 #           line 3 is a separate report)
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 str y=$(/bin/echo "$x")
 echo "$y"'
 [[ $rc != 0 && -z $out && $err == *":2:19: error [SB5020] tainted variable \$x"* \
@@ -2071,10 +2071,10 @@ echo "$y"'
    && $err == *":3:6: error [SB5020] tainted variable \$y"* ]]; chk capwalk.1
 # capwalk.2 `b`'s body runs after `a` is bound, so it sees `a` tainted: one
 #           report, not two (walked twice) and not none (walked before `a`)
-run_sash 'str a=$(getenv X) b=$(/bin/echo "$a")
+run_sash 'str a=$(- getenv X) b=$(/bin/echo "$a")
 attest b [[ -n $b ]]
 echo "$b"'
-[[ $rc != 0 && -z $out && $err == *":1:33: error [SB5020] tainted variable \$a"* \
+[[ $rc != 0 && -z $out && $err == *":1:35: error [SB5020] tainted variable \$a"* \
    && $(grep -c 'error \[SB5020\]' <<< "$err") = 1 ]]; chk capwalk.2
 # capwalk.3 `y` is still clean when the body reads it; only the assignment
 #           that the capture feeds taints it
@@ -2122,13 +2122,13 @@ fill "${g[0]}" =g'
 [[ $rc = 0 && $out = "x" && -z $err && -z $rerr ]]; chk capwalk.8
 # capwalk.9 a tainted read in an argument's capture is reported once (the
 #           capture's own bare use is a separate report)
-run_sash 't=$(getenv HOME)
+run_sash 't=$(- getenv HOME)
 echo "$(/bin/echo "$t")"'
 [[ $rc != 0 && -z $out && $err == *":2:19: error [SB5020] tainted variable \$t"* \
    && $(grep -c ':2:19: error \[SB5020\]' <<< "$err") = 1 \
    && $err == *":2:6: error [SB5020] tainted command substitution used without attest"* ]]; chk capwalk.9
 # capwalk.10 ... in a map element's capture
-run_sash 't=$(getenv HOME)
+run_sash 't=$(- getenv HOME)
 map m=([k]=$(/bin/echo "$t"))'
 [[ $rc != 0 && -z $out && $err == *":2:24: error [SB5020] tainted variable \$t"* \
    && $(grep -c ':2:24: error \[SB5020\]' <<< "$err") = 1 \
@@ -2136,7 +2136,7 @@ map m=([k]=$(/bin/echo "$t"))'
 # capwalk.11 ... in an `arg` default, where it was reported three times
 #           (SB4070 is the default's own rule: no `$` in a default)
 run_sash 'argv 1 a
-t=$(getenv HOME)
+t=$(- getenv HOME)
 x=$(arg 1 $t)'
 [[ $rc != 0 && -z $out && $err == *":3:11: error [SB5020] tainted variable \$t"* \
    && $(grep -c ':3:11: error \[SB5020\]' <<< "$err") = 1 \
@@ -2181,23 +2181,23 @@ return 0
 f || exit 1' one two
 [[ $rc = 0 && $out = 2 && -z $err ]]; chk div.2
 # div.3 the resolve arm of R2 still works — the fix must not disturb it
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]] || x=d
 echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk div.3
 # div.4 a `||` right that FALLS THROUGH still rejects: the fix stops the
 # exemption being undone, it does not widen it
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]] || echo no
 echo "$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.4
 # div.5 `&&` has no failure branch at all — still SB5089
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]] && echo "$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.5
 # div.6 a diverting right operand does not launder an UNATTESTED read — the
 # exemption concerns resolution at the merge, not the taint itself
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 /bin/true || exit 1
 echo "$x"'
 [[ $rc != 0 && $err == *SB5020* ]]; chk div.6
@@ -2207,17 +2207,17 @@ attest v in a [[ -n $v ]] || echo no
 for v in @a; do echo "$v"; done' one
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.7
 # DD#128: even the sole surviving path cannot resolve taint by a later write.
-run_sash 'str c=$(arg 1)
+run_sash 'str c=$(- arg 1)
 attest c [[ -n $c ]]
-str x=$(arg 2)
+str x=$(- arg 2)
 if [[ $c == y ]]; then x=safe; else exit 1; fi
 echo "$x"' y tainted
 [[ $rc != 0 && $err == *':5:6: error [SB5020]'* ]]; chk adjpolicy.1
 # div.9 the converse: when the other path FALLS THROUGH the tainted version
 # does reach the merge, and must still be caught
-run_sash 'str c=$(arg 1)
+run_sash 'str c=$(- arg 1)
 attest c [[ -n $c ]]
-str x=$(arg 2)
+str x=$(- arg 2)
 if [[ $c == y ]]; then x=safe; fi
 echo "$x"' y tainted
 [[ $rc != 0 && $err == *SB5020* ]]; chk div.9
@@ -2231,29 +2231,29 @@ echo "$x"' y tainted
 
 # div.10 scalar `|| exit 1`, read after the merge. The merge now reads the
 # attested version; the diverting else is not a predecessor and gets no phi.
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]] || exit 1
 echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk div.10
 # div.11 the form named in DD#121's own table
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 if attest x [[ $x =~ ^/ ]]; then :; else exit 1; fi
 echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk div.11
 # div.12 the diverting path still diverts when the attest FAILS
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 attest x [[ -n $x ]] || exit 1
 echo "reached"' ""
 [[ $rc = 1 && -z $out ]]; chk div.12
 # div.13 resolve, attest passes: the merge takes the THEN version, not the
 # else version it used to leak
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if attest x [[ -n $x ]]; then echo t; else x=d; fi
 echo "$x"' keep
 [[ $rc = 0 && $out = "t
 keep" && -z $err ]]; chk div.13
 # div.14 resolve, attest fails: the merge takes the ELSE version
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if attest x [[ -n $x ]]; then echo t; else x=d; fi
 echo "$x"' ""
 [[ $rc = 0 && $out = "d" && -z $err ]]; chk div.14
@@ -2285,38 +2285,38 @@ y" && -z $err ]]; chk div.16
 # Both are fixed by one recursion; div.19/div.22 are the else-side pins.
 
 # div.17 the minimal braced divert
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]] || { exit 1; }
 echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk div.17
 # div.18 the shape that motivated it: say something, then divert
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 attest x [[ -n $x ]] || { echo "bad input" >&2; exit 7; }
 echo "got=$x"' val
 [[ $rc = 0 && $out = "got=val" && -z $err ]]; chk div.18
 # div.19 the same blindness on an `else` body
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 if attest x [[ $x =~ ^/ ]]; then :; else { exit 1; }; fi
 echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk div.19
 # div.20 the braced divert really diverts when the attest fails
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 attest x [[ -n $x ]] || { echo "bad input" >&2; exit 7; }
 echo "got=$x"' ""
 [[ $rc = 7 && -z $out && $rerr == *"bad input"* ]]; chk div.20
 # div.21 a braced right that FALLS THROUGH is still SB5089 — looking through
 # the group must not weaken R2
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]] || { echo no; }
 echo "$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.21
 # div.22 and the else-side guard rail
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 if attest x [[ $x =~ ^/ ]]; then :; else { :; }; fi
 echo "$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.22
 # div.23 `&&` has no failure branch, braced or not
-run_sash 'str x=$(getenv HOME)
+run_sash 'str x=$(- getenv HOME)
 attest x [[ $x =~ ^/ ]] && { echo ok; }
 echo "$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.23
@@ -2335,33 +2335,33 @@ echo "$x"'
 # is unrepresentable in one spelling but not the other is not normalised.
 
 # div.24 the brace form, pass path — the subject is clean afterwards
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]] { exit 7 }
 echo "got=$x"' val
 [[ $rc = 0 && $out = "got=val" && -z $err ]]; chk div.24
 # div.25 ... and the fail path really diverts
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]] { echo "bad input" >&2; exit 7 }
 echo "got=$x"' ""
 [[ $rc = 7 && -z $out && $rerr == *"bad input"* ]]; chk div.25
 # div.26 the then/fi spelling goes through the same constructor
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]]; then exit 7; fi
 echo "got=$x"' val
 [[ $rc = 0 && $out = "got=val" && -z $err ]]; chk div.26
 # div.27 with an `else`, the user's else body is the pass path
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]] { exit 7 } else { echo pass }
 echo "got=$x"' val
 [[ $rc = 0 && $out == *pass* && $out == *got=val* && -z $err ]]; chk div.27
 # div.28 guard rail: a negated form whose divert branch FALLS THROUGH leaves
 # the subject tainted at the merge — still SB5089, exactly as unnegated
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]] { echo no }
 echo "got=$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.28
 # div.29 guard rail: neither arm resolving is SB5089 too
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]] { echo no } else { echo yes }
 echo "got=$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.29
@@ -2369,12 +2369,12 @@ echo "got=$x"'
 # condition being false, so `if !C {A} elif C2 {B} else {D}` is
 # `if C { if C2 {B} else {D} } else {A}`. Here the attest passes and the
 # elif is taken; the subject is clean inside it.
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]] { exit 7 } elif [[ $x == hi ]] { echo mid } else { echo other }
 echo "got=$x"' hi
 [[ $rc = 0 && $out == *mid* && $out == *got=hi* && -z $err ]]; chk div.30
 # div.31 ... the same chain's else arm
-run_sash 'str x=$(arg 1)
+run_sash 'str x=$(- arg 1)
 if ! attest x [[ -n $x ]] { exit 7 } elif [[ $x == hi ]] { echo mid } else { echo other }
 echo "got=$x"' val
 [[ $rc = 0 && $out == *other* && $out == *got=val* && -z $err ]]; chk div.31
@@ -2585,14 +2585,14 @@ echo "$b"'
 # atlazy.2 a passing left operand decides an attest's `||`: a right-hand
 # `${y:?}` is never evaluated
 run_sash 'str y=""
-x=$(arg 1)
+x=$(- arg 1)
 attest x [[ -n $x || ${y:?unset} == b ]]
 echo "ok $x"' v
 [[ $rc = 0 && $out = 'ok v' && -z $err && -z $rerr ]]; chk atlazy.2
 
 # atlazy.3 a failing left operand decides `&&`: the gate fails, unevaluated
 run_sash 'str y=""
-x=$(arg 1)
+x=$(- arg 1)
 attest x [[ $x == ok && ${y:?unset} == b ]]
 echo "ok $x"' bad
 [[ $rc = 1 && -z $out && -z $err \
@@ -2600,7 +2600,7 @@ echo "ok $x"' bad
 
 # atlazy.4 the caught `if attest` form is lazy as well
 run_sash 'str y=""
-x=$(arg 1)
+x=$(- arg 1)
 if attest x [[ $x == ok || ${y:?unset} == b ]] { echo "ok $x" } else { x=none; echo "no $x" }' ok
 [[ $rc = 0 && $out = 'ok ok' && -z $err && -z $rerr ]]; chk atlazy.4
 
@@ -2657,7 +2657,7 @@ echo "done ${m[K]}"' k v K w
 
 # atonce.1 one stat, so a second answer that would differ is never asked for
 : > atonce.file
-run_sash_under 'x=$(getenv ATONCE)
+run_sash_under 'x=$(- getenv ATONCE)
 if attest x [[ -f $x ]] { echo pass } else { x=none; echo fail }
 echo "end $x"' env ATONCE="$PWD/atonce.file" strace -qq -o atonce.trace \
     -P "$PWD/atonce.file" -e inject=newfstatat:error=ENOENT:when=2
@@ -2665,7 +2665,7 @@ echo "end $x"' env ATONCE="$PWD/atonce.file" strace -qq -o atonce.trace \
    && $(grep -c . atonce.trace) = 1 ]]; chk atonce.1
 
 # atonce.2 ... in the `||` form too, which lowers to the same caught attest
-run_sash_under 'x=$(getenv ATONCE)
+run_sash_under 'x=$(- getenv ATONCE)
 attest x [[ -f $x ]] || { echo caught; exit 4 }
 echo "end $x"' env ATONCE="$PWD/atonce.file" strace -qq -o atonce.trace \
     -P "$PWD/atonce.file" -e inject=newfstatat:error=ENOENT:when=2
@@ -2733,7 +2733,7 @@ attest x [[ $x =~ ^[a-z]+$ ]]
 
 # atpred.1 a user function in a predicate capture would receive the value
 run_sash 'fn f { echo b }
-x=$(arg 1)
+x=$(- arg 1)
 attest x [[ $x == $(f) ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:3:19:*SB5098* \
@@ -2741,21 +2741,21 @@ echo "$x"' b
 
 # atpred.3 ... including a bare int-function name in the DD#93 Part D form
 run_sash 'fn f -> int { return 4 }
-s=$(getenv SHLVL)
+s=$(- getenv SHLVL)
 attest s (( n = s + f ))
 echo "$n"'
 [[ $rc != 0 && -z $out && $err == *SB5098* \
    && $err == *'its arithmetic calls function `f`'* ]]; chk atpred.3
 
 # atpred.4 a capture body of several statements runs code
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == $(y=b; echo $y) ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
    && $err == *'runs something other than one plain command'* ]]; chk atpred.4
 
 # atpred.5 a suppressed capture lowers as a body, even with an in-place head
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == $(- toupper b) ]]
 echo "$x"' B
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
@@ -2763,7 +2763,7 @@ echo "$x"' B
 
 # A statement builtin runs code; the predicate rule reaches EXIT.
 run_sash 'EXIT {
-  x=$(getenv HOME)
+  x=$(- getenv HOME)
   attest x [[ $x == $(read y) ]]
   echo "$x"
 }
@@ -2773,14 +2773,14 @@ echo main'
 
 # atpred.7 a shape rule, not a taint rule: it holds under --no-taint, where
 # SB5020 is silent
-SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+SASH_CFLAGS=--no-taint run_sash 'x=$(- arg 1)
 attest x [[ $x == $(/bin/echo b) ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
    && $err == *'runs `/bin/echo`'* && $err != *SB5020* ]]; chk atpred.7
 
 # atpred.8 a pipeline body is not one plain command
-SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+SASH_CFLAGS=--no-taint run_sash 'x=$(- arg 1)
 attest x [[ $x == $(echo a | /usr/bin/tr a b) ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
@@ -2788,30 +2788,30 @@ echo "$x"' b
 
 # atpred.13 a taint SOURCE read inline vouches for nothing, even when no
 # other name is tainted (the check used to return early in that case)
-run_sash 'x=$(arg 1)
-attest x [[ $x == $(getenv USER) ]]
+run_sash 'x=$(- arg 1)
+attest x [[ $x == $(- getenv USER) ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5020* \
    && $err == *'tainted command substitution used without attest'* ]]; chk atpred.13
 
 # atpred.14 ... nor does file contents
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == $(</etc/hostname) ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5020* \
    && $err == *'tainted file contents'* ]]; chk atpred.14
 
 # atpred.15 ... nor in the caught `if attest` form
-run_sash 'x=$(arg 1)
-if attest x [[ $x == $(getenv USER) ]]; then echo "ok $x"; else x=none; fi
+run_sash 'x=$(- arg 1)
+if attest x [[ $x == $(- getenv USER) ]]; then echo "ok $x"; else x=none; fi
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:2:22:*SB5020* \
    && $err == *'tainted command substitution used without attest'* ]]; chk atpred.15
 
 # atpred.16 a DD#93 Part D value's `${…}` import is a read like any other,
 # rejected by the front end rather than left to the unlocated SSA backstop
-run_sash 't=$(getenv USER)
-s=$(arg 1)
+run_sash 't=$(- getenv USER)
+s=$(- arg 1)
 attest s (( n = ${t:-0} + s ))
 echo "$n"' 5
 [[ $rc != 0 && -z $out && $err == *SB5020* \
@@ -2821,7 +2821,7 @@ echo "$n"' 5
 # atpred.17 no `$(( ))` in a predicate, even quoted; the rule reaches an
 # attest inside a function body (a quoted word reports at its `"`)
 run_sash 'fn g {
-  x=$(arg 1)
+  x=$(- arg 1)
   attest x [[ -n $x && "$(( 2 + 1 ))" == 3 ]]
   echo "$x"
 }
@@ -2830,27 +2830,27 @@ g' b
    && $err == *'`$(( … ))` evaluates arithmetic'* ]]; chk atpred.17
 
 # atpred.18 a value intrinsic is code too
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == $(toupper b) ]]
 echo "$x"' B
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
    && $err == *'`$(toupper …)` runs `toupper`'* ]]; chk atpred.18
 
 # atpred.19 ... even one that reads only the attested name, under --no-taint
-SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+SASH_CFLAGS=--no-taint run_sash 'x=$(- arg 1)
 attest x [[ $x == "$(tolower "$x")" ]]
 echo "$x"' abc
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
    && $err == *'`$(tolower …)` runs `tolower`'* && $err != *SB5020* ]]; chk atpred.19
 
 # atpred.20 the rule reaches the caught `if attest` form
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 if attest x [[ $x == "$(echo b)" ]] { echo "ok $x" } else { x=none; echo "no $x" }' b
 [[ $rc != 0 && -z $out && $err == *:2:22:*SB5098* \
    && $err == *'`$(echo …)` runs `echo`'* ]]; chk atpred.20
 
 # atpred.21 `$(<file)` reads a file: a shape rule, so --no-taint too
-SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+SASH_CFLAGS=--no-taint run_sash 'x=$(- arg 1)
 attest x [[ $x == $(</etc/hostname) ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
@@ -2858,7 +2858,7 @@ echo "$x"' b
 
 # atpred.22 at any depth: a capture in a map key (reported at the `${`)
 run_sash 'map m=([k]=b)
-x=$(arg 1)
+x=$(- arg 1)
 attest x [[ $x == ${m[$(echo k)]} ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:3:19:*SB5098* \
@@ -2866,7 +2866,7 @@ echo "$x"' b
 
 # atpred.23 ... and arithmetic in one
 run_sash 'map m=([1]=b)
-x=$(arg 1)
+x=$(- arg 1)
 attest x [[ $x == ${m[$(( 1 ))]} ]]
 echo "$x"' b
 [[ $rc != 0 && -z $out && $err == *:3:19:*SB5098* \
@@ -2874,14 +2874,14 @@ echo "$x"' b
 
 # atpred.24 a Part D value calls no function, as a sexpr either
 run_sash 'fn f -> int { return 4 }
-s=$(arg 1)
+s=$(- arg 1)
 attest s (( n = (f) + s ))
 echo "$n"' 1
 [[ $rc != 0 && -z $out && $err == *:3:1:*SB5098* \
    && $err == *'its arithmetic calls function `f`'* ]]; chk atpred.24
 
 # atpred.25 ... nor an intrinsic
-run_sash 's=$(arg 1)
+run_sash 's=$(- arg 1)
 attest s (( n = (strlen $s) + s ))
 echo "$n"' 1
 [[ $rc != 0 && -z $out && $err == *:2:1:*SB5098* \
@@ -2889,7 +2889,7 @@ echo "$n"' 1
 
 # atpred.26 the `s///` sugar is a `$(gsub …)` call (DD#63), and the message
 # names both spellings
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == "${x:s/[^a-z]//g}" ]]
 echo "ok $x"' abc
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
@@ -2904,28 +2904,28 @@ echo "${a[0]}"' b
 
 # atpred.28 control: comparisons, regex matches, file tests and a `${…}`
 # operand stay legal ...
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == abc || $x =~ ^z+$ || -f $x || ${x:-d} == d ]]
 echo "ok $x"' abc
 [[ $rc = 0 && $out = 'ok abc' && -z $err && -z $rerr ]]; chk atpred.28
 
 # atpred.29 ... and still decide the gate
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 attest x [[ $x == abc || $x =~ ^z+$ || -f $x || ${x:-d} == d ]]
 echo "ok $x"' no
 [[ $rc = 1 && -z $out && -z $err \
    && $rerr == *"attest: x = 'no' failed the gate"* ]]; chk atpred.29
 
 # atpred.30 the rule reaches an attest inside a capture body
-run_sash 'y=$(x=$(arg 1); attest x [[ $x == $(echo b) ]]; echo "$x")
+run_sash 'y=$(x=$(- arg 1); attest x [[ $x == $(echo b) ]]; echo "$x")
 echo "$y"' b
-[[ $rc != 0 && -z $out && $err == *:1:35:*SB5098* \
+[[ $rc != 0 && -z $out && $err == *:1:37:*SB5098* \
    && $err == *'`$(echo …)` runs `echo`'* ]]; chk atpred.30
 
 # atpred.31 the sugar is the one way code reaches a Part D value's `${…}`
 # import; reported at the attest
 run_sash 't=2
-s=$(arg 1)
+s=$(- arg 1)
 attest s (( n = ${t:s/2/3/} + s ))
 echo "$n"' 1
 [[ $rc != 0 && -z $out && $err == *:3:1:*SB5098* \
@@ -3744,17 +3744,17 @@ echo "$x"'
 [[ $rc != 0 && $err == *':2:6: error [SB5020]'* ]]; chk loopflow.21
 
 # DD#128: overwriting bytes does not discharge a live binding's taint.
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 x=safe
 echo "$x"' dirty
 [[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk adjresolve.1
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 x=safe
 attest x [[ $x == safe ]]' dirty
 [[ $rc != 0 && $err == *':3:1: error [SB5088]'* ]]; chk adjresolve.2
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 x=${x:!}
 echo "$x"' dirty
 [[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk adjresolve.3
@@ -3769,12 +3769,12 @@ unset a
 echo "${a[0]:-missing}"' dirty
 [[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk adjresolve.5
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 for x in safe { echo "$x" }' dirty
 [[ $rc != 0 && $err == *SB5020* && $err == *'$x'* ]]; chk adjresolve.6
 
 run_sash 'fn buffered { echo safe }
-x=$(arg 1)
+x=$(- arg 1)
 x=$(buffered)
 echo "$x"' dirty
 [[ $rc != 0 && $err == *':4:6: error [SB5020]'* ]]; chk adjresolve.7
@@ -3782,7 +3782,7 @@ echo "$x"' dirty
 # A helper's literal write neither satisfies its own read nor clears a slot.
 run_sash 'str x
 fn reset { x=safe; echo "$x" }
-x=$(arg 1)
+x=$(- arg 1)
 reset' dirty
 [[ $rc != 0 && $err == *':4:1: error [SB5020]'* && $err == *'reset'* ]]; chk adjresolve.8
 
@@ -3795,20 +3795,20 @@ echo "${a[0]:-missing}"' dirty
 # R2 is mandatory even without a later read. Permission does not enter helpers.
 run_sash 'str x
 fn reset { x=safe }
-x=$(arg 1)
+x=$(- arg 1)
 attest x [[ $x == allowed ]] || reset' dirty
 [[ $rc != 0 && $err == *':4:1: error [SB5089]'* ]]; chk adjresolve.10
 
 # Only the failing path continues, so a mistaken permission for y cannot hide
 # behind the success path's still-tainted y at the merge.
-run_sash 'y=$(arg 2)
-x=$(arg 1)
+run_sash 'y=$(- arg 2)
+x=$(- arg 1)
 if attest x [[ $x == allowed ]] { exit 0 } else { x=safe; y=safe }
 echo "$y"' dirty other
 [[ $rc != 0 && $err == *':4:6: error [SB5020]'* ]]; chk adjresolve.11
 
 run_sash 'str mode=yes
-x=$(arg 1)
+x=$(- arg 1)
 if attest x [[ $x == allowed ]] {
     :
 } else {
@@ -3843,11 +3843,11 @@ argv 1 a
 attest v in a [[ $v == allowed ]] || reset =a' dirty
 [[ $rc != 0 && $err == *':3:1: error [SB5089]'* ]]; chk adjresolve.16
 
-run_sash 'x=$(arg 1)
-attest x [[ $x == allowed ]] || x=$(arg 2)' dirty other
+run_sash 'x=$(- arg 1)
+attest x [[ $x == allowed ]] || x=$(- arg 2)' dirty other
 [[ $rc != 0 && $err == *':2:1: error [SB5089]'* ]]; chk adjresolve.17
 
-run_sash 'x=$(arg 1)
+run_sash 'x=$(- arg 1)
 if attest x [[ $x == allowed ]] { : } else {
   : $(x=safe; echo "$x")
   x=safe

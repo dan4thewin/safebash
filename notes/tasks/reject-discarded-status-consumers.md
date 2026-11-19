@@ -69,9 +69,12 @@ DD101 likewise requires explicit handling/discard for bare `arg`/`getenv`.
 `x=$(- arg N)` / `x=$(- getenv NAME)` retain the value while discarding
 status; neither can then supply a capture-condition result. Their literal-
 default forms are value-only, not implicitly suppressed or always-successful
-status producers. Coordinate this form-aware distinction with the expanded
-`require-getenv-status-handling`; do not mistake ordinary handling for source
-`-`, or grant a defaulted lookup a status that it does not expose.
+status producers. This lookup subset is implemented by
+`require-getenv-status-handling` (journal 663): `lookup.27/.28` pin discarded
+capture-condition refusals, and the form-classification reversions protect
+the distinction. The general command/list/pipeline work remains open.
+Do not mistake ordinary handling for source `-`, or grant a defaulted lookup
+a status that it does not expose.
 
 Check nested list consumption, wrappers and all executable bodies.
 `a || - b` is legal as a statement, but its tail is consumed in

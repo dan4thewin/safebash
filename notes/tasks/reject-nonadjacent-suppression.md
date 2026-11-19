@@ -17,6 +17,14 @@ DD55 records the rule; DD71 applies it to value bindings, and DD70/DD88
 and GUIDE preserve the surrounding result and handling contracts.
 Journal 588 is the policy recording, not an implementation claim.
 
+**Lookup subset delivered, 2026-11-19:** DD101's implementation rejects an
+outer `-` on bindings containing `arg`/`getenv`, including cell/append
+bindings, quoted/concatenated values and nested expressions. It uses the
+shared expression walker, not a direct-RHS-only exception.
+`lookup.30/.31/.64/.65` and before/reversion controls pin this subset
+(journal 663). Other assignment forms, list binding and the independent
+operand-barrier obligations keep this task open.
+
 Reject `- x=$(cmd)` instead of making it shorthand for `x=$(- cmd)`.
 This covers scalar/cell assignment and append, with literal, captured,
 interpolated or nested values and with captures in indices. Typed

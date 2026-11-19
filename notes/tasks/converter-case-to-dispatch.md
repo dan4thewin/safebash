@@ -25,8 +25,8 @@ auto-generated regex can be subtly wrong and must get human eyes. So:
   and literal `a|b|c` alternation arms map to a `==` dispatch, using
   **multi-exact** (DD#71, commit `e9fc520`): `[[ $x == a b c { … } ]]`.
   `*)` → `|| { … }`. Arm bodies still get their inner conversions
-  (`$HOME`→`$(getenv HOME)`, etc.). Emit an informational
-  `# sash-convert:` comment (mechanical-rewrite convention from
+  (`$HOME` gets the `$(- getenv HOME)` hoist and attest, etc.). Emit an
+  informational `# sash-convert:` comment (mechanical-rewrite convention from
   `converter-compound-postfix`). No review flag — the mapping is exact.
 
 - **Any glob-metachar arm → comment + keep original (compile-blocker).**
@@ -94,7 +94,7 @@ fall-through.
 - `case $x in a) …;& b) …;; esac` (fall-through)
   → comment path + original kept
 - an all-literal arm body containing `$HOME` still converts to
-  `$(getenv HOME)`
+  an explicitly discarded `getenv` hoist plus its normal attest (DD101)
 - genuinely unparseable → MANUAL annotation retained
 
 ## Notes

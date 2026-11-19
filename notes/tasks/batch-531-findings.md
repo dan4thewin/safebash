@@ -503,9 +503,11 @@ Filed as backlog tasks while researching B55, under the same rule:
 - [ ] **B46** (open; DD55). `flag_operand_spelling` ICEs on a suppressed
   capture.
   - Tracked by `bug-peel-family-classifiers` (journal 537).
-- [ ] **B47** (open; DD55). `flag_arg_builtin` does not peel Suppressed, so
-  a suppressed form bypasses SB4070 and SB5038.
-  - Tracked by `bug-peel-family-classifiers` (journal 537).
+- [x] **B47** (fixed; DD60/DD65/DD101). The historical `flag_arg_builtin`
+  did not peel Suppressed, bypassing SB4070 and SB5038.
+  - Its replacement, `flag_input_lookup`, uses `single_value_command`;
+    `lookup.43/.44/.63` and the classifier reversion pin the repair
+    (journal 663). The broader `bug-peel-family-classifiers` remains open.
 - [ ] **B48** (open; DD55, DD69). `x=$(- keys m)` ICEs, and iterating `$(-
   keys m)` or `$(- argv 1)` draws SB5009, because the splat recognizers do
   not peel.

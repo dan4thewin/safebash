@@ -1043,7 +1043,7 @@ run_sash 'int array a=(3)
 
 # The key remains a checked read even though it is no longer copied into the RHS.
 run_sash 'int array a=(3)
-str key=$(getenv SUBSCRIPT_INDEX)
+str key=$(- getenv SUBSCRIPT_INDEX)
 (( a[${key:-0}] += 1 ))
 echo $a[0]'
 [[ $rc != 0 && -z $out && $(grep -cF '[SB5020]' <<< "$err") = 1 ]]; chk subonce.12
