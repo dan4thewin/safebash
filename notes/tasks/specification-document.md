@@ -98,7 +98,8 @@ Known exclusions and corrections from the assessment:
 - Do not carry forward the `read` flags, `mapfile` or `echo -n` survey
   (220-348), its old BUGS catalogue (1160-1253), or the retired diagnostic
   entries. DD99's shipped interface uses flagless `read`/`readline` and
-  `echo`/`write`; provisional scratch/accumulation policy is not implemented.
+  `echo`/`write`. DD131's scratch/accumulation policy is now implemented and
+  accepted; do not copy the former replacement-fill contract.
 - The regex additions preamble wrongly says Bash does not accept counted
   repetition. A Bash control accepts `^a{2}$`; do not reproduce that claim.
 - At the assessment, the whole-subject anchor promise contradicted the
@@ -108,9 +109,9 @@ Known exclusions and corrections from the assessment:
 - The regex interior-NUL restriction (1066-1099) is instead a
   [deliberately documented limitation](limitation-regex-stops-at-interior-nul.md):
   matching stops at the first NUL although scalar storage retains the suffix.
-- DD132's runtime-pattern proof model is provisional and unimplemented.
-  DD39's literal-regex precompilation/cache delivery is also pending;
-  neither may be inferred from older prose.
+- DD132's runtime-pattern proof and regex text/Boolean model is implemented
+  and accepted. DD39's literal-regex precompilation/cache delivery remains
+  pending; validation-before-use does not supply compiled-program reuse.
 
 Use safebash for the language, sash for the compiler, and `.sb` for source
 examples. Journal 623 records the manual refresh. This preservation does not

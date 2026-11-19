@@ -1,39 +1,30 @@
 title: Status
-modified: 2026-11-18
+modified: 2026-11-19
 
 # Current status
 
 ## Focus
 
-The integrated DD131/DD132 trial is underway on `glob-scratch-trial`,
-branched from `6c7b899f`; main is unchanged pending DG's evaluation.
-The independent const-validation prerequisite, source-identity immutable
-scratch construction, atomic accumulating ordinary fillers and coarse
-`glob` with ordered list sugar are complete on the trial branch, as are
-the quiet actual-engine `r?` predicate, rejection of forced pattern reads,
-mandatory immutable-pattern proofs, caught-scratch read/failure semantics
-and regex text-plus-Boolean results. Guarded redirect-cell indices now use
-shared ordered lowering rather than reaching an unlowered-value ICE.
-`rglob` and pattern-list splats are complete too, including empty-list
-success without directory work. The integrated evaluation is recorded in
-[journal 654](journal/654-glob-scratch-regex-evaluation.md).
-DG subsequently authorized the append optimization, now delivered in
-[journal 655](journal/655-append-reservation-and-index-cache.md):
-cached next indices and complete reservation remove the repeated scan/clone
-cost without weakening failure atomicity. Unchanged sequential mapfile
-conversions still silently retain old entries; hand adaptations are not a
-converter repair. Converter compatibility and DG's adoption/revision/withdrawal
-decision remain open; this optimization does not adopt the package on main.
-DG settled underscore-only construction,
-initializer self-read rejection and bare-literal-only glob sugar.
-This is a current handoff,
+DG accepted DD131/DD132 on 2026-11-18 and requested landing on `main`.
+The complete selector, immutable-scratch, accumulating-filler and validated-regex
+package is now on main, including the append optimization and expanded tour.
+The integrated owner and both glob repairs are complete;
+[journal 661](journal/661-accept-glob-scratch-regex.md) records acceptance
+and landing. The original `glob-scratch-trial` branch is retained.
+
+[Converter migration](tasks/convert-glob-scratch-regex-migration.md) remains
+open: unchanged sequential mapfile translations can silently retain old
+entries, and names/proofs/result consumption need adaptation. Adoption
+does not claim that repair or select its policy.
+[Regex allocation/reuse](tasks/dd39-precompile-literal-regex.md) remains
+separately owned. This is a current handoff,
 not a second journal: keep the dated account in [journal/](journal/) and
 delivery boundaries in the individual [task records](tasks/).
 
 ## Outline and tour
 
 [Language-specification outline](../docs/SPEC-outline.md): one terse nested
-list, treating provisional and pending DD rules as complete for this draft
+list, treating still-pending DD rules as complete for this draft
 only. Original snapshot `2ef86c2a` remains available; the pedagogically
 reordered draft and accepted-policy updates are now committed on `spec-outline`.
 [Journal 630](journal/630-language-specification-outline.md) records the outline;
@@ -64,7 +55,7 @@ Regex examples cover
 whole-subject anchors guarded with `! 0?` against NUL truncation, `r?`,
 immutable runtime-pattern proofs, fresh captures,
 `rglob` and text-plus-Boolean results before the convenience spellings.
-The provisional branch boundary and converter-review caveat are explicit.
+The features are accepted on main; the converter-review caveat remains explicit.
 [Journal 656](journal/656-tour-globs-scratch-regex.md) records the expansion.
 [Journal 657](journal/657-motivated-read-and-scratch.md) records the
 NUL filename and numeric-import examples.
@@ -75,6 +66,12 @@ limitation with its guard and the combined-attest guidance.
 
 ## Just completed
 
+- **DD131/DD132 accepted and brought to main.**
+  DG's adoption settles the former trial boundary. Current DD rules, GUIDE,
+  tour and task pointers agree; existing journals and the evaluated trial
+  branch are retained. The integrated owner and both glob repairs close,
+  with remaining converter migration given its own owner.
+  [Journal 661](journal/661-accept-glob-scratch-regex.md) records the closeout.
 - **`:!` is a forced read, not a trusted read.**
   DDs, maintained docs, both tour editions and source/spec comments now
   describe the per-read taint override without implying validation.
@@ -93,14 +90,14 @@ limitation with its guard and the combined-attest guidance.
   The tour now has 70 programs; all 69 retained programs and outputs are
   unchanged. [Journal 658](journal/658-scratch-starts-with-the-loader.md)
   records the revision.
-- **Tour expanded for the provisional package.**
+- **Tour expanded for selectors, scratch and validated regexes.**
   Fifteen new programs and a fuller glob example demonstrate the recently
   delivered features and their important contrasts. The GitHub edition is
   regenerated from the single authored deck; the native helpers and
   presenterm configuration are unchanged.
   [Journal 656](journal/656-tour-globs-scratch-regex.md) records the examples
-  and verification. This does not adopt DD131/DD132 or repair the converter.
-- **Append scan/clone costs removed on the trial branch.**
+  and verification. The later adoption does not repair the converter.
+- **Append scan/clone costs removed.**
   Maintained next-index metadata and whole-batch capacity reservation permit
   allocation-free publication by transferring owned keys. ERR still sees
   the old logical destination on failure; aliases and live iteration retain
@@ -109,26 +106,27 @@ limitation with its guard and the combined-attest guidance.
   endpoint drops from 324 KiB to 164 KiB in both backends, not a peak-memory
   measurement. [Journal 655](journal/655-append-reservation-and-index-cache.md)
   records costs, sparse/deletion behavior and independent failure controls.
-- **Integrated trial evaluated, not adopted.**
+- **Integrated trial evaluated before adoption.**
   Eight practical scenarios run in both backends, with reviewed migration
   examples and 58 resource configurations across 17 workloads. Before the
   optimization above, two-cell append at 4,000 iterations took about 328 ms
   rather than main's 2.5-2.7 ms, with a roughly doubled 1,000-iteration
   configured-heap bracket. Repeated
-  scalar regex operations exhaust 64 MiB before 4,000 iterations on main
+  scalar regex operations exhaust 64 MiB before 4,000 iterations on original main
   too, separately from the trial's append cost. All 29 affected DD paths
-  are accounted for; provisional dispositions remain pending.
+  are accounted for; journal 661 records DG's acceptance.
   [Journal 654](journal/654-glob-scratch-regex-evaluation.md) records the
-  evidence and recommendation to keep the package off main while reconciling
-  converter compatibility and addressing or accepting the append cost.
-- **Regex directory selection delivered on the trial.**
+  original evaluation and recommendation. DG subsequently commissioned
+  the append optimization and accepted the native package; converter
+  compatibility remains a separate follow-up.
+- **Regex directory selection delivered.**
   `rglob` matches basenames with validated immutable regexes and shares
   sorted, atomic publication with `glob`. Both accept pattern-list splats;
   empty expansion performs no directory work but retains operand effects.
   Directory/pattern snapshots, list/default proofs, independent native/C
   calls and runtime release/failure boundaries are pinned.
   [Journal 653](journal/653-regex-directory-selection.md) records the unit.
-- **Regex results and executable redirect indices delivered on the trial.**
+- **Regex results and executable redirect indices delivered.**
   Scalar `match`/`sub`/`gsub` bind text plus matched/no-match truth; direct
   capture-conditions consume both, otherwise explicit discard is required.
   Substitution sugar and basename/dirname remain text projections.
@@ -137,14 +135,14 @@ limitation with its guard and the combined-attest guidance.
   after the complete redirect list succeeds.
   [Journal 652](journal/652-regex-results-and-redirect-indices.md) records
   the two failed draft gates, diagnostic repairs and final acceptance.
-- **Caught-scratch permissions enforced on the trial branch.**
+- **Caught-scratch permissions enforced.**
   SB5107 limits ordinary reads to the caught attest's success arm, including
   negated/logical forms; failed data stays intact and permits forced data reads.
   Ordinary bindings retain R2, and handlers receive actual incoming
   restrictions. Forced-read splice metadata and signal deferral through acquisition,
   but not indefinitely after failed predicates, are repaired.
   [Journal 651](journal/651-caught-scratch-permissions.md) records the unit.
-- **Immutable runtime regex proofs enforced on the trial branch.**
+- **Immutable runtime regex proofs enforced.**
   SB5106 requires a successful check of the same immutable value on every
   reaching path, including helper, collection and process uses. Caught
   scratch regex proofs cannot escape their lexical arm through copies.
@@ -153,22 +151,22 @@ limitation with its guard and the combined-attest guidance.
   [Journal 650](journal/650-immutable-regex-proofs.md) records the unit.
   Journal 651 supplies the ordinary-read/failure follow-up, and journal 652
   supplies regex result channels.
-- **Forced regex-pattern reads rejected on the trial branch.**
+- **Forced regex-pattern reads rejected.**
   SB5105 covers every existing consumer, including substitution sugar,
   nested indices, arithmetic and capture bodies, independently of taint
   switches. Forced subject, replacement and `r?` candidate reads remain legal.
   The ERR fixture now distinguishes this earlier refusal from its original
   dynamic-regex safety rule. [Journal 649](journal/649-regex-pattern-trust-guard.md)
   records this prerequisite; journal 650 supplies the immutable-value proof.
-- **Quiet regex validity implemented on the trial branch.**
+- **Quiet regex validity implemented.**
   `r?` tests the complete counted candidate with the real engine; invalid
   syntax is quiet false, while allocation failure remains fatal.
   Trailing backslashes and overflowing repetition counts now reject.
-  Temporary candidate/program storage is reclaimed. Later trial units supply
+  Temporary candidate/program storage is reclaimed. Journals 650-652 supply
   proof and result handling; journal 653 supplies `rglob`.
   [Journal 648](journal/648-quiet-regex-validity.md) records the unit and
   the independently filed map-literal element-loss defect.
-- **Coarse directory selectors implemented on the trial branch.**
+- **Coarse directory selectors implemented.**
   Explicit `glob` and bare-word array/append/loop sugar share bounded
   patterns, bytewise per-pattern sorting, absolute paths and private
   publication. Quoted/computed list words remain data; earlier word/list
@@ -177,15 +175,15 @@ limitation with its guard and the combined-attest guidance.
   redundant initialization and using allocation-before-publication for
   one-cell batches. [Journal 647](journal/647-coarse-directory-selectors.md)
   records controls, three contract migrations and the remaining costs.
-- **Ordinary array fillers accumulate atomically on the trial branch.**
+- **Ordinary array fillers accumulate atomically.**
   `argv`, array `read`, `keys`, `match` and `matchall` append complete
   private batches, preserving aliases and the prior contents on error.
   Sparse append no longer overwrites surviving keys; integer literal
   append/replacement preserves integer-cell encoding. Old taint and
   ownership survive clean fills, including through helpers and ERR analysis.
   [Journal 646](journal/646-atomic-accumulating-fillers.md) records
-  migration, genuine late-failure controls and the remaining trial costs.
-- **Immutable scratch construction implemented on the trial branch.**
+  migration, genuine late-failure controls and the then-unoptimized costs.
+- **Immutable scratch construction implemented.**
   Source sites create fresh scalar/collection instances; mutation and
   initializer self-reads reject through helpers and mapped slots too.
   Allocation-free resets precede fallible work, and scratch collection
@@ -312,9 +310,11 @@ limitation with its guard and the combined-attest guidance.
 ## Deferred work and boundaries
 
 - [Multiline regex syntax](tasks/regex-multiline-mode.md) is a deferred
-  decision, not an implemented flag. Literal-regex caching and diagnostics,
-  general dynamic-pattern failure handling and the DD131/DD132 trial remain
-  separate from the completed default-anchor repair.
+  decision, not an implemented flag. Literal-regex allocation/reuse and
+  diagnostic improvements remain separate from the completed default-anchor
+  and validation-before-use work.
+- [Converter migration](tasks/convert-glob-scratch-regex-migration.md) remains
+  open after native DD131/DD132 acceptance; the language trial itself is complete.
 - DD135's three implementation owners are complete. The broader
   [failure classification](tasks/runtime-failure-classification.md) and
   [recoverable file handling](tasks/recoverable-file-failures.md) remain
@@ -332,8 +332,8 @@ limitation with its guard and the combined-attest guidance.
   [converter annotation](tasks/bug-convert-annotate-midline.md) work remains.
 - Accepted DDs are not necessarily implemented; task records carry delivery
   status. [DD131](decisions/DD131-directory-selectors-scratch-collections.md)
-  and [DD132](decisions/DD132-validated-regex-immutable-scratch.md) describe
-  the provisional selectors/scratch/regex package, not shipped features.
+  and [DD132](decisions/DD132-validated-regex-immutable-scratch.md) are now
+  both accepted and implemented; that does not close unrelated pending DD work.
 - The indexed-update fix does not complete the general
   [expression-order repair](tasks/q-capture-hoisting-order.md).
 - Coverage remains paused pending DG's direction. Resumption requires a
@@ -342,18 +342,18 @@ limitation with its guard and the combined-attest guidance.
 
 ## Last recorded gate
 
-The generated block records journal 655's append-optimization gate:
-12573 checks, no failures, eight first-ever mode IDs, no flips or retirements.
-All 12565 accepted pre-optimization statuses are unchanged.
-Its commit label is the pre-publication HEAD `6773fdf7`, not the
-implementing commit.
+The generated block records journal 661's acceptance gate on main:
+12573 checks, 12560 passing and 13 existing skips, with no failures,
+flips, first-ever IDs or retirements. The sweep occupies rows
+7283824-7296396. Its commit label is the pre-publication trial tip
+`10345a0d`, not the following acceptance-record commit.
 
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
-## Current branch: glob-scratch-trial
+## Current branch: main
 
-## Spec status: 12560 passing / 0 failing of 12573 (spec.db @ c12a3586)
+## Spec status: 12560 passing / 0 failing of 12573 (spec.db @ 10345a0d)
 
-_Regenerated 2026-11-18 by `mk status`. Edits inside this block will be
+_Regenerated 2026-11-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

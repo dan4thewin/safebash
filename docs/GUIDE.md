@@ -134,10 +134,10 @@ Synthetic variables are allocated through `VersionState::reserve_temp_name`
 with their actual type before definition. A prefix or counter alone is not
 a collision guarantee: source names beginning with `__` are legal.
 
-### Immutable scratch on the trial branch
+### Immutable scratch
 
-The separate `glob-scratch-trial` branch implements DD131 scratch
-construction; the combined DD131/DD132 package is not adopted on main.
+DD131 defines fresh immutable scratch construction; DG accepted the combined
+DD131/DD132 package for main after its separate-branch evaluation.
 [`scratch.rs`](../sash/src/scratch.rs) records construction sites against
 resolved identities, interpreting the original source spelling rather than
 qualified local names. Source checks reject second construction sites,
@@ -189,7 +189,7 @@ retained strings still cost memory. The matched before/after costs and
 failure controls are recorded in
 [journal 655](../notes/journal/655-append-reservation-and-index-cache.md).
 
-### Directory selection on the trial branch
+### Directory selection
 
 Explicit `glob`, `rglob` and bare-word array/append/loop sugar share `GlobFill`
 and [`directory.rs`](../sash-rt/src/directory.rs). Its optional directory
@@ -367,7 +367,7 @@ The Plan 9 regex engine is built into the compiler for literal-pattern
 validation and into the runtime for matching and substitution; both build
 scripts must track its shared C sources and headers.
 
-On `glob-scratch-trial`, `r?` uses that same engine through a quiet
+`r?` uses that same engine through a quiet
 compilation entry. The runtime rejects counted interior NUL, copies
 exactly the candidate's bytes into a terminated buffer, and releases both
 that copy and the compiled program. Invalid syntax is false; allocation
@@ -406,14 +406,19 @@ does not finish an acquisition guard; a caught scratch predicate finishes it
 on either outcome, without cleaning failed data or deferring signals forever.
 These analyses add no runtime storage or compiled-regex cache.
 
-Scalar regex `match`, `sub` and `gsub` now carry text and a matched/no-match
-Boolean on the trial branch. Direct capture-conditions consume both;
+Scalar regex `match`, `sub` and `gsub` carry text and a matched/no-match
+Boolean. Direct capture-conditions consume both;
 SB4018 requires explicit discard for text-only calls. Substitution sugar
 and `basename`/`dirname` project only text. Shared SSA values carry that
 choice, and both backends use an optional status pointer added to the
 runtime's existing pointer/length-returning APIs. No compiled pattern handle
-persists. Integrated utility, migration and memory/time evaluation remains
-pending before DG's adoption decision.
+persists. [Journal 654](../notes/journal/654-glob-scratch-regex-evaluation.md)
+records integrated utility, migration and memory/time evaluation;
+[journal 655](../notes/journal/655-append-reservation-and-index-cache.md)
+records the subsequent append optimization. The package is accepted.
+[Converter migration](../notes/tasks/convert-glob-scratch-regex-migration.md)
+remains open: unchanged sequential converted `mapfile` fills can accumulate
+where Bash replaces, so converted code still needs review.
 
 Executable redirect indices use shared nested scopes: retain command
 arguments, evaluate and open each target in order, then run the body.

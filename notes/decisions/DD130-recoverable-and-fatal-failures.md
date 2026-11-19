@@ -164,11 +164,11 @@ extend suppression into argument evaluation, or choose retry mechanics.
 DD39/DD69/DD73/DD131). A directory successfully enumerated with no
 matches produces zero elements; a failed directory open/read or required
 `getcwd` is an operation failure. Preserve the cause, rather than treating
-an errno as empty success or a read error as EOF. DD131 provisionally supplies explicit
+an errno as empty success or a read error as EOF. DD131 supplies explicit
 `glob`/`rglob` commands with operational statuses, including success on
 zero matches. On operation error an ordinary existing target is unchanged;
 an immutable scratch construction leaves a fresh empty instance, not
-its previous batch. These modes are a branch experiment, not shipped behavior.
+its previous batch. These modes are implemented and accepted.
 
 DD132 adds required validation before runtime regex use: `r?` returns
 quiet false for an invalid candidate, while allocation/resource faults
@@ -176,8 +176,9 @@ remain fatal. Regex consumers' logical no-match results are distinct
 from their I/O or redirect failures. Neither failed validation nor
 `rglob`'s zero matches may disguise an actual operation failure.
 
-Coordinate the trial with `recoverable-file-failures` and the classification
-inventory. It neither grants a status to an assignment/loop nor changes
+The selector implementation is recorded in `q-glob-semantics`;
+`recoverable-file-failures` and the classification inventory retain their
+broader obligations. The package neither grants a status to an assignment/loop nor changes
 fatal-fault handling. An atomic collection update is not rollback of
 already consumed input or other completed effects. The implementation must
 account for allocation failures and the actual destination visible to ERR,

@@ -12,8 +12,9 @@ supersedes: DD42
    test or discard. Index validation still applies.
 4. Argument indices obey DD#112; malformed and negative indices are rejected.
 5. `argv [N] a` fills an array with `argv[N:]`, defaulting to zero,
-   auto-declaring an eligible target and replacing its contents. A slice
-   starting beyond the arguments is empty, not an error.
+   auto-declaring an eligible target. Ordinary targets accumulate complete
+   batches; scratch targets construct fresh immutable instances (DD131).
+   A slice starting beyond the arguments is empty, not an error.
 6. `$(argv)` and `$(argv N)` are tainted source splats, usable only as the
    sole source of a `for` header. Each iteration binds source data; a
    stored tainted array instead needs attest-all before an ordinary splat.
@@ -28,7 +29,8 @@ DD101's symmetric `arg`/`getenv` contract was accepted on 2026-11-13
 are **not implemented**; the expanded
 [`require-getenv-status-handling`](../tasks/require-getenv-status-handling.md)
 owns delivery. The original trio remains implemented; `argc`, `argv` and
-function arguments are unchanged.
+function arguments are unchanged by that lookup revision. DD131 separately
+governs array-fill destinations.
 
 ## Addendum 2026-08-17 — `$(arg N DEFAULT)` optional default
 
@@ -90,10 +92,12 @@ array is the trailing positional, like ~~`mapfile -m m` / `read -a a`~~ /
     argv a        # fill array a with all program args (incl. argv[0])
     argv N a      # fill a with the slice argv[N:]   (array last; N optional)
 
-The shipped fill replaces the destination. DD131 provisionally includes
-`argv` in an accumulation/fresh-scratch destination model to evaluate
-on a separate branch; it is not implemented. The snapshot's source slice,
-taint and the existing splat/scalar forms are unchanged by that proposal.
+DD131 supersedes the original replacement fill: an ordinary destination
+accumulates a complete batch, while a leading-underscore target constructs
+a fresh immutable scratch instance. A failed operation leaves an ordinary
+target unchanged and scratch fresh-empty. This model is implemented and
+accepted. The snapshot's source slice, taint and existing splat/scalar forms
+are unchanged by the destination rule.
 
 This deletes the lone case in the language where a command substitution
 *yields an array* (the `ArgvSnapshot` value + the `array a=$(argv)`

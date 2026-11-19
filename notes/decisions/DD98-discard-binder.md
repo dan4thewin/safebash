@@ -5,8 +5,10 @@ status: accepted
    legal binder position, including conversion targets and attest-all binders.
 2. Every read of `_` is an error. Because its value cannot be observed,
    discarding needs neither an unused-variable acknowledgment nor validation.
-3. Names merely beginning with underscore remain ordinary readable bindings,
-   subject to the usual unused-variable, scope and taint rules.
+3. Leading-underscore construction introduces fresh immutable readable
+   scratch (DD131), not discard. These bindings remain subject to the usual
+   unused-variable, scope and taint rules, including DD132's caught-read
+   and regex-proof restrictions.
 
 ---
 
@@ -99,18 +101,18 @@ and ~~`read _ b _` (a repeated target) was already tolerated~~. The whole featur
 three checks: an exemption in `report_dead`, an exemption in the attest-all
 both-binders rule, and the new SB5056 read reject.
 
-In the shipped language, names *prefixed* with `_` (`_n`, `_args`) remain
-ordinary variables, still subject to SB5050. Only the bare name `_` has
-this discard meaning. Nothing in `spec/` or `contrib/` used `_` as a
+Names *prefixed* with `_` (`_n`, `_args`) remain readable and subject to
+SB5050; only the bare name `_` has this discard meaning. Nothing in
+`spec/` or `contrib/` used `_` as a
 variable in the original census, so that migration cost was zero.
 
-DD131's 2026-11-09 **provisional** branch trial proposes `_batch`-style
+DD131's accepted model gives `_batch`-style
 fresh immutable scratch bindings, including scalar constructions and
 loop binders as well as collections. They remain readable and subject
 to normal unused-variable and taint rules, with DD132's explicit
 caught-attest/proof restrictions; none inherits bare `_`'s exemptions.
 Bare `_` stays repeatable, write-only discard, not a fresh readable
-scratch binding. The prefix rule is not shipped. DG selected the leading
+scratch binding. The prefix rule is implemented. DG selected the leading
 underscore alone, without extra `const`, for scalar as well as collection
 construction on 2026-11-17.
 

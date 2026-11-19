@@ -224,23 +224,22 @@ deliberately diverges from bash's "a quoted substring matches literally"
 rule, in favour of the simpler "the pattern is just a string arg to
 `match()`" model.
 
-## Dynamic regex (shipped interface and provisional proof rule)
+## Dynamic regex and immutable-value proof
 
-An interpolated pattern (`[[ $y =~ "$x" ]]`, `=~ $pat`) is supported. When
-the pattern is **static** (bare or single-quoted literal) it is validated
-at compile time (DD#39/#63, `regex_validate.rs`); when it is **dynamic**
-(interpolated) it defers to the runtime regcomp, whose failure ~~aborts~~
-is handled via the DD#55 (A) channel. ~~Validate-when-static / abort-when-dynamic.~~
-Unchecked recoverable failures abort; legal handling or discard remains available.
+An interpolated pattern (`[[ $y =~ "$x" ]]`, `=~ $pat`) is supported when
+its value meets DD132's proof rule. A static pattern is validated at
+compile time (DD39/DD63, `regex_validate.rs`); a dynamic pattern compiles
+at runtime only after its immutable value has been successfully validated.
 
-That is the shipped interface, not the 2026-11-09 trial's contract.
-DD132 provisionally requires successful `r?` proof for the exact
+DD132 requires successful `r?` proof for the exact
 immutable runtime pattern before any regex consumer. Invalid candidates
 are quiet false at the predicate; literal regex use stays statically
 validated. Ordinary operand-word lexing is unchanged, but assembled or
 transformed patterns need validation of their final value. Neither
 quoting nor a taint override manufactures proof; `:!`-bearing pattern
-reads are forbidden. The trial is tracked in `q-glob-semantics`.
+reads are forbidden. Implementation, evaluation and acceptance are recorded
+in `q-glob-semantics`; the former consumer-side invalid-data interface is
+superseded.
 
 ## Removed / added
 

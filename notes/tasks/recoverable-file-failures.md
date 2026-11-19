@@ -68,7 +68,7 @@ or partial, never the target's old value. An open failure supplies empty
 data **and failure**; an error after progress can supply partial data.
 Keep existing byte/newline behavior. Ordinary unhandled slurps remain checked
 before assignment, and fatal causes remain fatal. A scratch target in the
-separate DD131 trial gets its new instance, not a previous one.
+DD131 model gets its new instance, not a previous one.
 
 Preserve the first-class in-process file read; do not lower the new form to
 an external `cat` or introduce a reader command. Share classification and
@@ -118,22 +118,22 @@ and ERR handling do not complete this whole file-API inventory.
 can rule out particular argv failures; they do not catch those guards or
 complete the remaining operational-failure repairs here.
 
-DD131 (2026-11-09) provisionally supplies a concrete directory-selector
+DD131 supplies a concrete directory-selector
 surface: `glob`/`rglob` have operational statuses, succeed on zero
 matches, and preserve an ordinary existing destination on operation
 error. A scratch construction leaves a fresh empty instance, not the
 preceding batch or a partially produced one.
-`q-glob-semantics` owns their separate-branch trial and the related
-accumulation/immutable-scratch model. DD132 adds validated runtime regex
-operands, not an exemption from directory failures. Coordinate
-open/read/getcwd and partial-progress paths with this task; no
+`q-glob-semantics` records their completed implementation and acceptance,
+including the accumulation/immutable-scratch model. DD132 adds validated
+runtime regex operands, not an exemption from directory failures. Preserve
+the delivered open/read/getcwd and partial-progress handling; no
 assignment/loop status is invented.
-The trial's all-or-nothing collection update does not roll back consumed
+The all-or-nothing collection update does not roll back consumed
 input or prior argument/file effects, and fatal causes remain fatal.
 External capture failures still preserve this attempt's partial stdout
 under DD88; do not extend array atomicity to every scalar producer.
-This is queued work, not a claim that the current glob silently-empty
-failure paths have been repaired.
+Journals 647/653 record the selector failure repairs; they do not complete
+the other file APIs owned here.
 
 This does not extend a prefix into a helper body or argument capture.
 DD86 separately settles attached-redirect timing: arguments first in both

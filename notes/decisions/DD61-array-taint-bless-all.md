@@ -55,19 +55,17 @@ validation uses `attest` (DD#93).
 
 ### Why
 
-This makes every tainted array **dynamic-arity and homogeneous** by
-construction (all elements share one origin: lines of a file, fields of
-a record, program args). Consequences:
+Whole-array taint is a binding-level obligation, not a claim that every
+element has the same acquisition history. DD131 permits successive bulk
+batches from different sources and clean additions to a still-unresolved
+array; the original single-origin/homogeneity rationale is superseded.
 
-- Whole-array taint (~~a `HashSet<String>` of variable names~~) becomes
-  *correct*, not a compromise: ~~per-element and whole-array taint coincide
-  because all elements are uniformly tainted. DD#24's "each element
-  carries its own taint" stays literally true — they all carry it
-  together.~~ DD#86 supplies lexical identities; DD#128 tracks unresolved
-  live-binding obligations even after clean bytes replace input.
-- "Validate every element with one predicate" (bless-all, below) is the
-  complete and sound bless mechanism. Heterogeneous tainted arrays — the
-  only case that would need per-element bless — cannot exist.
+- DD86 supplies lexical identities; DD128 retains unresolved live-binding
+  obligations and their owners. A clean appended batch does not clear
+  earlier taint.
+- A legal attest-all validates every present element with the authored
+  predicate. Adjacency and source ownership still apply; accumulating
+  batches does not grant per-element declassification or a late attest.
 - The original bug is rejected at construction, earlier and clearer than
   any downstream bless gap.
 
@@ -173,7 +171,7 @@ Specs `93.62`/`93.63`. Arithmetic attest-all remains DD#113's SB5054 in
   Python loop-binder intuition).~~ DD#86 governs lexical identity and
   no-shadowing.
 
-**Provisional immutable-scratch extension (DD131/DD132, 2026-11-09).**
+**Immutable-scratch extension (DD131/DD132, accepted 2026-11-18).**
 An otherwise-legal attest-all may validate an immutable collection
 without modifying it.
 Successful `r?` checks can prove validity of the present elements; empty
@@ -182,7 +180,7 @@ scratch attest, normal reads and any regex proof are confined to the
 attest-success arm. The failed collection may remain unresolved and be
 read explicitly through `:!` as data, but not as a regex-pattern operand.
 This changes neither the all-or-nothing quantifier nor the construction
-restrictions, and is not implemented by this recording.
+restrictions. Journals 650-651 record the implemented proof/read rules.
 
 ### Rules carried over from scalar bless
 

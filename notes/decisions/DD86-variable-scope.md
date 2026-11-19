@@ -10,13 +10,15 @@ status: accepted
    scope and a type fixed at first introduction; a later typed declaration
    cannot retype an existing binding. Loop binders introduce or write
    ordinary variables, preserving their types and outliving the loop.
+   Leading-underscore construction instead starts a fresh immutable instance
+   each time its source site runs, with no initializer self-read (DD131).
 3. Every function/capture entry, including self-tail entry, initializes
    newly owned private bindings to meaningful zeros: empty strings,
    zero integers and empty collections. Globals, arguments, slots and
    active enclosing bindings retain their values and unresolved taint.
 4. Const freezes the value, not validation. Otherwise-legal attest may
    validate it, including as a conversion source; actual writes and
-   conversion targets still require mutability. Ordinary const
+   existing conversion targets still require mutability. Ordinary const
    declarations are not legal in loop bodies.
 5. Apply DD#62's unbound-read checks in every scope. Every assigned name
    must be read; consts, reader targets and loop variables are not exempt.
@@ -87,13 +89,13 @@ global) that a reviewer can't trace. Both are footguns.
 - **`local fn` (DD#18) is abandoned** — it was the only other user of `local`,
   and "designed, not built."
 
-## Provisional immutable scratch bindings (DG, 2026-11-09)
+## Immutable scratch bindings (accepted 2026-11-18)
 
-DD131's separate-branch trial now gives scalar and collection scratch
+DD131 gives scalar and collection scratch
 constructions fresh **immutable instances**. The same source site may
 execute again, beginning a new lifetime without the preceding value or
 proof; arbitrary writes and second declaration sites remain forbidden.
-The trial uses a leading underscore alone at introduction, without requiring
+Use a leading underscore alone at introduction, without requiring
 `const` (DG, 2026-11-17). Typed declarations still do not become DD88
 capture-conditions. An initializer cannot read its own scratch target,
 directly or through a helper.
@@ -110,8 +112,8 @@ DD132 adds regex proof and the caught-scratch rule: ordinary reads only
 in the attest-success arm; outside it, only explicit forced data reads,
 never forced pattern reads. Failed scratch may remain unresolved
 without being replaced or abandoned. This exception is not granted to
-ordinary consts. `q-glob-semantics` owns the integrated trial and DD revision
-inventory; neither model is implemented by this recording.
+ordinary consts. `q-glob-semantics` records the completed integrated trial,
+DD revision inventory and DG's acceptance. Both models are implemented.
 
 ## Function names: one definition each (DG, 2026-11-06)
 
@@ -190,11 +192,11 @@ fall-through paths. Being an ordinary const grants no late or
 inherited-input attest, no batch resolution, and no new clean-read
 permission on failure. `:!` remains an explicit data-read override,
 not validation of the binding or a regex
-proof (DD132). The provisional scratch exception above is separate.
+proof (DD132). The scratch exception above is separate.
 Signal deferral and EXIT/ERR entry requirements continue to follow the
 actual legal resolution.
 
-**Implemented on `glob-scratch-trial` (2026-11-17).** Value-preserving
+**Implemented (2026-11-17, journal 644).** Value-preserving
 attests use a distinct SSA validation-version path; real writes retain
 SB4044 and the lowering invariant. This supersedes F13's retained retag
 rejection, not its write checks, and adds no declaration syntax or diagnostic
@@ -902,8 +904,8 @@ the then-enumerated binding channels, and the backstop becomes an invariant.
 every actual write to a const other than its initialization: an assignment,
 a `for` variable, a `(( ))` write, a command out-param (`readline`, `read`,
 `argv`, ~~`mapfile`,~~ a `keys` or `match` fill), and DD#93's conversion target.
-An attest's value-preserving retag of its subject is allowed, implemented on
-`glob-scratch-trial` in journal 644. Every real write is
+An attest's value-preserving retag of its subject is allowed, implemented
+in journal 644. Every real write is
 reported, each at the innermost statement that makes it, whether that comes
 before or after the declaration in the text (a binding does not depend on
 textual order, above). Two channels stay with

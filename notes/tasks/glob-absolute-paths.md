@@ -19,11 +19,12 @@ gates:
 
 This records DD73's **cwd-only** implementation on 2026-07-29. The
 original plan below included literal-directory cases which the callers
-never supplied to the runtime; they remain open in
-`bug-glob-directory-portion`. Corrected on 2026-11-09 (journal 603).
+never supplied to the runtime. They were later delivered in
+`bug-glob-directory-portion` (journal 647), with main adoption in journal 661.
+The original scope was corrected on 2026-11-09 (journal 603).
 
-DD131's provisional selectors/scratch model is a later separate-branch
-trial owned by `q-glob-semantics`, not evidence that this old task
+DD131's accepted selectors/scratch model is a later delivery recorded by
+`q-glob-semantics`, not evidence that this old task
 implemented those forms. The remaining sections are the historical
 implementation plan, including now-retired Janet/e2e tooling.
 

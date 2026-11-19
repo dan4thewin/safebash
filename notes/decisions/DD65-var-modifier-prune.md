@@ -41,14 +41,14 @@ dropped or moved into the awk-style string-builtin family
   context, so use `$(getenv HOME)`); `$(external)` is tainted, `$(user_fn)`
   and `$((…))` are clean.~~ The final literal-only follow-on below governs.
 - **`${var:off:len}`** — substring. Useful, no glob/regex.
-- **`${var:s/re/sub/[g]}`** — regex replace; per DD#63 this is sugar for
-  `$(sub|gsub var "re" "sub")` in the shipped model. DD132 provisionally
-  adds a boolean beside substitution text: the sugar explicitly projects
+- **`${var:s/re/sub/[g]}`** — regex replace; per DD#63 this uses the
+  `sub`/`gsub` builtins. DD132 adds a boolean beside substitution text:
+  the sugar explicitly projects
   text and discards that boolean, while every dynamic pattern still needs
   proof for its final immutable value. Mutation sugar remains resultless
   and cannot write immutable scratch. The text projection and immutable-value
-  checks are implemented on `glob-scratch-trial` (journals 650 and 652);
-  the package remains provisional, not adopted on main.
+  checks are implemented (journals 650 and 652); DG accepted the package
+  for main on 2026-11-18 (journal 661).
 
 (Implemented 2026-07-04: `${x:-$y}` now interpolates via the `:- ≡ "…"`
 model above — a `DoubleQuoted` operand lowered to `SsaValue::DefaultValue`

@@ -80,11 +80,11 @@ status or empty-success fallback is introduced here.
 New glob elements are **clean**: a directory entry is a compiler-trusted
 value like `$(getppid)`, so a fresh glob result carries no taint and needs
 no value-bless. Splat use still declares cardinality (§2). Under DD131's
-provisional accumulation model, adding a clean batch does not resolve
+accumulation model, adding a clean batch does not resolve
 existing destination taint or its owners; DD128 still governs that state.
 
-**The 2026-11-09 package is provisional and not implemented (DD131).**
-`glob ARRAY PATTERN...` is the proposed canonical operation. Its
+**The DD131/DD132 package is implemented and accepted (2026-11-18).**
+`glob ARRAY PATTERN...` is the canonical operation. Its
 operational status is separate from the array; successful zero-match
 enumeration succeeds. Normal fill targets accumulate, while a leading-
 underscore target requests a fresh immutable scratch binding. The companion
@@ -97,11 +97,12 @@ accumulating fill into its old destination. Immutable scratch cannot be
 an append/mutation target. DD131 preserves an ordinary existing target
 on operation error, but a failed scratch construction leaves the fresh
 empty instance, never the previous batch. It owns scope/re-execution
-and sugar/quoting questions in the separate-branch trial.
+and the sugar/quoting boundary: only bare literal list words activate sugar;
+quoted/computed words remain data.
 
-`q-glob-semantics` owns that trial, coordinating the directory-prefix,
-multi-star-rejection and file-failure tasks. The historical single-glob
-implementation below is not evidence that these new forms already work.
+`q-glob-semantics` records the completed trial, including directory-prefix,
+multi-star-rejection and file-failure evidence. The single-glob
+implementation notes below describe the superseded baseline.
 
 ## 2. External-command array splats state their empty behavior
 

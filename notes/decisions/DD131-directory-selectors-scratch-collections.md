@@ -1,65 +1,69 @@
 title: DD#131 - Directory selectors and immutable scratch bindings
-status: provisional
+status: accepted
 
-1. **Trial only:** evaluate the combined DD131/DD132 model on a separate
-   branch; DG reviews evidence and revisions before adoption on main.
-2. `glob ARRAY PATTERN...` and `rglob ARRAY DIRECTORY REGEX...` produce
+1. `glob ARRAY PATTERN...` and `rglob ARRAY DIRECTORY REGEX...` produce
    string arrays from ordinary operands; runtime regexes require DD132 proof.
    Pattern-list splats preserve element boundaries. An empty expanded list
    succeeds without enumeration; the target and directory are fixed operands.
-3. Each glob pattern permits at most one star, in the final component, and
+2. Each glob pattern permits at most one star, in the final component, and
    literal directory prefixes. Glob needs a leading dot for dotfiles;
    both selectors exclude `.` and `..`. Regex selection tests basenames
    without an extra dotfile filter.
-4. Concatenate bytewise-sorted per-pattern batches in source order, retaining
+3. Concatenate bytewise-sorted per-pattern batches in source order, retaining
    duplicates. Results are clean, lexically normalized absolute paths.
-5. Completed enumeration succeeds even with no matches; errors are not empty
+4. Completed enumeration succeeds even with no matches; errors are not empty
    success. Preserve DD130 failure classes and handling.
-6. Array fillers append complete batches to ordinary destinations.
+5. Array fillers append complete batches to ordinary destinations.
    Leading-underscore introductions construct fresh immutable scratch;
    no extra `const` is required. Existing bindings cannot be reused or
    shadowed. Bare `_` remains discard.
-7. Re-executing a construction site starts a new instance without old values,
+6. Re-executing a construction site starts a new instance without old values,
    taint or proof. Skipping it changes nothing; block scope is unchanged.
    An initializer cannot read its own target, directly or through a helper.
-8. Immutability survives aliases and collection slots. Validation may refine
+7. Immutability survives aliases and collection slots. Validation may refine
    checked properties, not mutate the value.
-9. Failed array fills leave existing ordinary targets unchanged and fresh
+8. Failed array fills leave existing ordinary targets unchanged and fresh
    scratch empty; publish no partial batch. Preserve each producer's own
    EOF/no-match result, independently of destination contents.
-10. Assignment replaces, append adds and iteration supplies items through
-    checked fresh results; none gains a status or implicit argument globbing.
-    Only bare literal list words activate glob sugar. Quoted/computed strings
-    are data; mixed words containing an unquoted source star are errors.
+9. Assignment replaces, append adds and iteration supplies items through
+   checked fresh results; none gains a status or implicit argument globbing.
+   Only bare literal list words activate glob sugar. Quoted/computed strings
+   are data; mixed words containing an unquoted source star are errors.
 
 ---
 
-DG adopted this package provisionally on 2026-11-09 (journal 603):
+DG accepted the complete implemented DD131/DD132 package and directed its
+landing on main on 2026-11-18
+([journal 661](../journal/661-accept-glob-scratch-regex.md)).
+The separate-branch trial and evaluation are complete; the remaining
+[converter migration](../tasks/convert-glob-scratch-regex-migration.md)
+does not change these language contracts.
+
+DG originally adopted this package provisionally on 2026-11-09 (journal 603):
 
 > let's adopt glob, rglob, and scratch collections as a provisional
 > decision; when implementing we'll use a branch and evaluate the utility
 > and ramifications
 
-This is a decision to try the model, not a claim that it ships or a final
-language commitment. Implement and evaluate it on a separate branch.
-Bring the evidence and any proposed revisions back to DG before landing
-the behavior on main. `q-glob-semantics` owns that integrated trial.
+That decision required implementation and evaluation on a separate branch,
+followed by DG's review before landing on main. `q-glob-semantics` records
+the completed integrated trial.
 
 Later the same day DG provisionally adopted the aligned immutable-scratch,
 `r?` and boolean-regex model (journal 604, DD132). That owner now covers
-the combined experiment and contains the **DD revision inventory**, with
+the combined experiment and retains the **DD revision inventory**, with
 the pre-revision commit and the contracts to revisit if part of the trial
 proves untenable.
 
 The earlier text retaining a scratch batch after a failed repeat was the
 AI's extrapolation, not a separately selected DG rule. It is corrected
 below: unchanged-on-error applies to ordinary existing destinations;
-scratch starts a new instance. Rejecting some future part of the experiment
+scratch starts a new instance. Revising any part of the accepted model
 must not silently reinstate that extrapolation.
 
 ## Directory selectors
 
-The working command forms are:
+The command forms are:
 
 ```sash
 glob files '.*' '*'
@@ -133,7 +137,7 @@ an empty success; preserve the operation and cause. Missing directories
 do not acquire an ENOENT-as-empty exception, and a read error is not EOF.
 Fatal faults remain fatal.
 
-DD132 supplies the provisional regex prerequisite: invalid candidates
+DD132 supplies the regex prerequisite: invalid candidates
 produce quiet false at `r?`, not a bad-pattern result from a later regex
 consumer. `rglob` still has directory-operation failures; successful
 enumeration with no matches is not false. Glob-bound errors, directory
@@ -142,10 +146,10 @@ may publish partial output or conceal failure as successful emptiness.
 
 ## Fill destinations: accumulation or an immutable scratch result
 
-The trial applies one destination model to the array-filling forms of
+One destination model applies to the array-filling forms of
 `read`, `argv`, `keys`, `match`, `matchall`, `glob` and `rglob`:
 
-| Target at the fill site | Working rule |
+| Target at the fill site | Rule |
 |---|---|
 | Ordinary name | Append the operation's complete batch; an undeclared target auto-declares empty first. |
 | Leading-underscore name such as `_batch` | Introduce a fresh immutable scratch binding and populate it with the operation's batch. An already-bound target is an error. |
@@ -173,8 +177,7 @@ an exception only for regex variables. DG selected the leading underscore
 itself as the construction notation on 2026-11-17: `_re=...`,
 `str _re=...`, readers and loop binders need no additional `const`.
 `if _out=$(...)` remains an untyped capture-condition; typed declarations
-still do not acquire a result under DD88. These are trial rules, not a claim
-that the grammar ships. This does not add a `readonly` operation or
+still do not acquire a result under DD88. This does not add a `readonly` operation or
 generally legalize `const array` / `const map` declarations.
 
 ### Scope, repeated execution and parameters
@@ -305,9 +308,9 @@ Use explicit `glob files "$dir/*.sb"` for computed patterns. Explicit
 selectors continue to interpret their ordinary string operands as patterns
 regardless of quoting; list sugar does not.
 
-## Evaluate before adoption
+## Evaluation and delivery
 
-The branch must assess the package, not just demonstrate two matchers:
+The branch evaluation assessed the package, not just two matchers:
 
 - usefulness of accumulating results versus refreshing snapshots, fields
   and capture groups, including the loss of fixed latest-match indices
@@ -325,16 +328,14 @@ The branch must assess the package, not just demonstrate two matchers:
 - agreement of native/C behavior, real refusal/failure-path evidence,
   before/reversion controls and the normal predicted gate.
 
-Current DD60/DD63/DD75/DD99 replacement contracts describe the shipped
-baseline. They are not silently rewritten as if this experiment already
-passed. Maintain `q-glob-semantics`' DD revision inventory through the
-trial. Record which parts DG adopts, revises or drops, and reconcile
-every affected contract in place rather than leaving contradictory
-addenda. The original recording had no implementation branch or compiler
-change. DG authorized implementation on 2026-11-17; `glob-scratch-trial`
-starts from `6c7b899f`, with adoption on main still requiring his evaluation.
+DD60/DD63/DD75/DD99 now state the accepted accumulation/scratch contract
+in place of their former replacement rules. `q-glob-semantics` retains the
+complete DD revision inventory, evidence and DG's acceptance dispositions.
+The original recording made no compiler change. DG authorized implementation
+on 2026-11-17; `glob-scratch-trial` started from `6c7b899f` and was evaluated
+before his 2026-11-18 acceptance.
 
-The selector implementation is complete on that branch (journals 647 and
+The selector implementation is complete (journals 647 and
 653): explicit `glob`/`rglob`, ordered list sugar, pattern-list splats,
 empty-list success, immutable regex proofs and atomic publication use shared
 lowering and runtime traversal. Scratch and accumulating fillers are recorded
@@ -346,6 +347,6 @@ maintained next-index metadata, complete reservation and allocation-free
 owned-key transfer replace repeated scans and destination cloning. The
 old-logical-contents guarantee on fatal failure and stable collection identity
 remain intact. Sequential converted mapfile fills still need reconciliation;
-hand adaptations are not a converter repair. DG's adoption decision remains
-pending, and these delivery records do not change this decision's provisional
-status.
+hand adaptations are not a converter repair. That remaining work is tracked
+separately in
+[convert-glob-scratch-regex-migration](../tasks/convert-glob-scratch-regex-migration.md).

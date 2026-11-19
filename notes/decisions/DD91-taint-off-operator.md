@@ -9,7 +9,8 @@ status: accepted
    defaults and messages retain DD65's literal-only contract.
 3. Scalar `:!` is legal wherever the corresponding data read is legal.
    Splats still require an explicit emptiness disposition; cells follow
-   the same read/type rules as scalar variables.
+   the same read/type rules as scalar variables. DD132 forbids forced
+   regex-pattern reads, independently of taint switches.
 4. Ordinary writes, including a self-copy through `:!`, do not resolve a
    live binding's outstanding taint (DD128). Other name, type, scope and
    ownership constraints remain.
@@ -121,7 +122,7 @@ nothing (`echo A $u B` passes three arguments). So removing the elide from `:!`
 leaves it behaving exactly like the bare expansion. The modifier overrides
 the taint guard and nothing else, so it is valid in ordinary data-read
 positions where a bare expansion is valid, including a scalar assignment.
-DD132's provisional regex-pattern restriction below is separate.
+DD132's regex-pattern restriction below is separate.
 
 That reverses this DD's original *"`:!` is not a way to assign a trusted value
 to a scalar; use `bless` for that."* The justification given there was *"This
@@ -130,7 +131,7 @@ not chosen on taint-policy grounds. With the elide gone the rationale goes with
 it. `attest` is the predicate-bearing form; `:!` is the
 per-read taint override.
 
-### Provisional regex and scratch boundary (DG, 2026-11-09)
+### Regex and scratch boundary (accepted 2026-11-18)
 
 DD132 requires successful `r?` proof for runtime regex operands and
 forbids `:!`-bearing reads in those operands, even in a successful attest
@@ -143,7 +144,7 @@ in its success arm. Failure/post-construct code may retain the unchanged
 candidate and use `:!` for data reads, not pattern use. A copy through a
 forced read is ordinary data and needs its own successful check before
 becoming a regex.
-This is a provisional, unimplemented extension, not general const
+This is an accepted, implemented extension, not general const
 reassignment or a revocation of the ordinary data-read escape hatch.
 
 ### `@a:!` becomes an error, and should

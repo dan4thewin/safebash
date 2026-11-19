@@ -17,9 +17,8 @@ Using this tour
 Every `sash` snippet in this tour is a complete program. The
 [GitHub edition](README.md) includes recorded output.
 
-**Trial features:** this edition includes the provisional selectors,
-immutable scratch values and validated regexes on `glob-scratch-trial`.
-They are implemented on that branch, not yet adopted on `main`.
+This edition includes directory selectors, immutable scratch values and
+validated regexes, all accepted and implemented on `main`.
 
 **When running under presenterm** (`mk -p 1 tour`):
 
@@ -2019,6 +2018,6 @@ echo "hi $name"
 This safebash snippet creates a two-line Bash script and runs `sash-convert`
 on it.
 
-For this trial, converter output still needs review for accumulating fills,
-mutable underscore names and runtime regexes. The converter has not yet been
-adapted to these provisional rules.
+Converter output still needs review for accumulating fills, mutable underscore
+names, reserved selector names and runtime regex proof/result requirements.
+The converter has not yet been adapted to all these accepted rules.

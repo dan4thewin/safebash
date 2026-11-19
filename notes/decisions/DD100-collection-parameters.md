@@ -12,7 +12,7 @@ status: accepted
 3. A slot denotes the caller's actual collection, so legal mutations
    affect that collection. Language constructs keep bare collection-name
    operands rather than call-site sigils or splats. DD135's readonly ERR
-   imports remain readonly through slots.
+   imports and DD131's immutable scratch remain readonly through slots.
 4. Collection arguments have distinct identities and cannot overlap
    globals accessed by the callee or any transitive callee. Reads, writes,
    attests, metadata and identity forwarding all count, even in
@@ -202,7 +202,7 @@ It is not general `const array`/`const map` syntax. The implemented restriction
 is recorded in
 [err-readonly-inputs-and-nul-proofs](../tasks/err-readonly-inputs-and-nul-proofs.md).
 
-DD131's provisional immutable-scratch trial preserves this identity
+DD131's immutable-scratch model preserves this identity
 and the actual collection's immutability. A read-only helper may accept
 scratch, but writes, fills, append and unset must reject, including
 through transitive forwarding. Mutable A-E targets accumulate under
@@ -213,7 +213,8 @@ DD132 additionally requires real regex proof when a received element
 serves as a pattern; cleanliness or identity alone is not validation.
 No call may launder a forced read into proof or export a caught
 scratch attest's limited permission. Non-aliasing, element/kind typing
-and the one-signature rule remain; the integrated trial owns enforcement.
+and the one-signature rule remain. Enforcement and acceptance are recorded
+in `q-glob-semantics`.
 
 ### `=foo` is not a read; `@foo` is
 

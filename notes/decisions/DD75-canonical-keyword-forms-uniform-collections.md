@@ -10,8 +10,9 @@ status: accepted
    string bytes. Both return integers in value and arithmetic contexts.
    Collection operands are bare names, not values or splats (DD#100).
 4. `keys MAP` yields keys only as the sole `for` source;
-   `keys MAP ARRAY` replaces an eligible, auto-declared array with an
-   independent clean key snapshot in map iteration order. Existing
+   `keys MAP ARRAY` appends an independent clean key snapshot in map
+   iteration order to an eligible ordinary array, or constructs fresh
+   immutable scratch (DD131). The target may auto-declare. Existing
    unresolved destination taint remains subject to DD#128.
 5. `@a` splats array elements and `@m` splats map values, not indices.
    String joining is explicit with `join NAME [SEPARATOR]`; its literal
@@ -421,16 +422,17 @@ keys m k            # k = (alpha beta), in iteration order
 - **The array is a snapshot, not a view.** Deleting a key afterwards leaves it
   alone. `$(keys m)` walks the live map; this copies out of it.
 - **Order is the map's iteration order**, the same order `$(keys m)` yields.
-- **Shipped destination behavior:** the target auto-declares and is replaced.
+- **Destination behavior:** the target may auto-declare. Ordinary arrays
+  accumulate complete batches; scratch construction starts a fresh instance.
 - The source may be a DD#100 collection-parameter slot, so a function can
   snapshot the keys of a map it was passed.
 
-DD131 provisionally includes `keys` in an accumulation/immutable-scratch
-branch trial. Each produced batch is still an independent key snapshot,
-but an ordinary destination could then contain several accumulated
+DD131 includes `keys` in the accepted accumulation/immutable-scratch
+model. Each produced batch is still an independent key snapshot,
+but an ordinary destination can contain several accumulated
 snapshots. A scratch result is fresh and frozen; later source-map changes
-or mutation through an alias cannot change it. That changed use pattern
-must be evaluated, not presented as the current replacement behavior.
+or mutation through an alias cannot change it. This supersedes the original
+replacement behavior; the separate-branch evaluation is recorded in journal 654.
 
 ### The result is clean
 

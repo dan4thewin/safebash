@@ -46,17 +46,17 @@ construct's merge; DD121 already exempts non-fall-through transfers.
 Explicit `:!` reads, handler entry requirements and signal deferral
 retain their contracts.
 
-The later DD131/DD132 **provisional** model is distinct: immutable
+The later DD131/DD132 model is distinct: immutable
 scratch has fresh per-construction instances and a restricted
-caught-attest exception. `q-glob-semantics` owns that integrated branch
-trial and its DD revision inventory, with this accepted const-validation
+caught-attest exception. `q-glob-semantics` records the completed trial,
+acceptance and DD revision inventory, with this const-validation
 work as a prerequisite. Do not silently extend scratch lifetimes or
 failed-attest permission to ordinary consts, or treat successful taint
 validation alone as regex proof.
 
 **Implemented on `glob-scratch-trial`, 2026-11-17** (journal 644).
-The independently accepted policy is complete; main has not yet moved to
-the trial branch. DG did not select either retaining the retag refusal
+The independently accepted policy is complete and included in the
+2026-11-18 main adoption (journal 661). DG did not select either retaining the retag refusal
 or banning tainted const initializers.
 
 ## Delivery

@@ -1,14 +1,14 @@
-title: "Dynamic regex handling: provisionally settled by validation before use"
+title: "Dynamic regex handling: accepted validation before use"
 status: done
 priority: P3
 kind: question
 depends: []
 gates:
-  - "DG's provisional validation-before-use choice is recorded in DD132 and the existing error/regex DDs are reconciled"
-  - "implementation, native/C proofs, diagnostic/spec migration and evaluation are explicitly owned by q-glob-semantics, not claimed complete here"
+  - "DG's accepted validation-before-use choice is recorded in DD132 and the existing error/regex DDs are reconciled"
+  - "implementation, native/C proofs, diagnostic/spec migration and evaluation are recorded by q-glob-semantics; converter migration has its separate owner"
   - "the implementation owner tracks every modified/new DD and its pre-revision baseline for coherent revision or withdrawal"
 
-## Provisional answer, 2026-11-09
+## Accepted answer, 2026-11-18
 
 DG chose a different interface from the two historical alternatives:
 `r?` tests a whole candidate, returning quiet false for invalid regex
@@ -21,21 +21,21 @@ or discard and the selected sugar projection.
 DD131/DD132 combine that choice with fresh immutable scratch and DG's
 caught-attest rule: ordinary reads and proved regex use only in the
 attest-success arm; failure and post-construct reads only as explicitly
-trusted data, never trusted pattern operands. Ordinary consts retain
+forced data reads, never forced pattern reads. Ordinary consts retain
 their independent rules. Directory selectors keep operational statuses.
 
-The choice is **provisional**, to be implemented and evaluated on a
-separate branch before DG decides what lands. This record is done
-**as a policy question only**. All compiler/runtime/converter/spec work
-is open in the integrated P2 `q-glob-semantics` owner, including its
-exact DD revision inventory. Journal 604 records the adoption.
-No implementation or new runtime measurement accompanies this closure.
+The choice was provisional on 2026-11-09 (journal 604). Following the
+separate-branch implementation and evaluation, DG accepted the package and
+requested landing on main on 2026-11-18 (journal 661). This record remains
+done **as a policy question**; `q-glob-semantics` records the completed
+compiler/runtime/spec delivery and DD revision inventory.
+[Converter migration](convert-glob-scratch-regex-migration.md) remains open.
 
-That owner must cover the real CLI in both modes, distinguish invalid
-candidates from no match and fatal faults, migrate changed contracts
-at fresh ids and reconcile diagnostics such as SB4025's old "cannot fail"
-advice. The historical `A.regcomp` contract row is transferred there,
-not marked implemented by answering the question.
+That owner's evidence covers the real CLI in both modes, distinguishes invalid
+candidates from no match and fatal faults, migrates changed contracts
+at fresh ids and reconciles diagnostics such as SB4025's old "cannot fail"
+advice. Its delivery, not merely answering this question, supplies the
+replacement for the historical `A.regcomp` contract row.
 
 ## Historical F15 evidence (not rerun)
 

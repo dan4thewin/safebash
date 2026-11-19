@@ -46,7 +46,7 @@ The second clause ships today and needed no change:
   (`/bin/echo "$t"`). Arithmetic is SB4030.
 - **`:!` (DD#91) is already the sanctioned per-use bypass**, and since that
   DD's 2026-09-09 split it is valid in ordinary data-read positions where
-  a bare expansion is. DD132 provisionally excludes regex-pattern operands.
+  a bare expansion is. DD132 excludes regex-pattern operands.
 - **An anonymous taint source is already forced to bind a name**:
   `/bin/echo $(getenv HOME)` is *"tainted command substitution used without
   attest — assign it to a variable and attest before use"*. So "the operation
@@ -89,7 +89,7 @@ tainted.
 readable only through `:!` (DD#91) or its eligible attest predicate.
 DD132's separate regex-validity check is not supplied by that taint override.
 
-**Provisional scratch exception (DG, 2026-11-09; DD131/DD132).** A caught
+**Scratch exception (DD131/DD132, accepted 2026-11-18).** A caught
 attest on immutable scratch may leave its failed instance unresolved on
 a fall-through path, including a no-else form. Ordinary reads are confined
 to the attest-success arm; failure and post-construct reads require `:!`
@@ -100,8 +100,8 @@ construct. Standalone attest still permits subsequent use on success.
 
 The candidate is not abandoned, changed or cleaned at the merge.
 Adjacency and received-taint ownership still apply; ordinary consts
-do not gain this exception. The model is unimplemented work in
-`q-glob-semantics`. R2's existing non-fall-through exemption above is
+do not gain this exception. The implemented model and its acceptance are
+recorded in `q-glob-semantics`. R2's existing non-fall-through exemption above is
 not a new scratch permission; references to ordinary R2 resolution
 below retain that distinction.
 

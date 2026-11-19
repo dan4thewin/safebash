@@ -5,8 +5,10 @@ status: accepted
    absent and a scalar value otherwise. It always fills an array and
    auto-declares an eligible target. `readline SCALAR` reads one
    newline-terminated record, preserving other bytes. Neither takes flags.
-2. Ordinary reads replace their targets: empty input, shorter input and
-   stdin EOF leave no old contents or suffix. Every fd-backed read
+2. Bulk `read` appends a complete batch to an ordinary array; a failed
+   operation leaves that array unchanged. A scratch target constructs a
+   fresh immutable instance, fresh-empty on failure (DD131).
+   Ordinary scalar `readline` replaces, including at EOF. Every fd-backed read
    introduces taint; splitting an in-memory value introduces none and
    does not clear unresolved destination taint (DD#127/DD#128).
 3. Bulk `read` is not a `while`/`until` condition, including through a
@@ -49,21 +51,22 @@ readline TARGET         # consume one line (terminated by newline)
 - **`readline` binds a scalar.** One record is one value.
 - **`read` always produces an array.** No declaration-dependent behaviour, no
   second target kind. An undeclared target auto-declares (DG, 2026-07-08).
-- **Shipped destination behavior: each read replaces its target.**
-  Empty input clears it; shorter input leaves no old suffix. This also
-  holds at stdin EOF (implementation corrected in journal 518).
+- **Bulk reads accumulate; scalar reads replace.** `read` appends a
+  complete batch to an ordinary array, and empty input appends nothing.
+  `readline` replaces its scalar even at EOF, leaving no old line.
 - **`$SRC`, if given, is a scalar to split** instead of stdin. This is the
   operation that would otherwise be called `split` — DG's observation that it
   is just a two-argument `read`.
 
-DD131 provisionally gives ordinary **array** fill targets accumulation
-and scratch targets fresh immutable instances. The revised trial also
+DD131 gives ordinary **array** fill targets accumulation
+and scratch targets fresh immutable instances. The same model also
 covers scalar `readline _line`: every execution constructs a fresh
 immutable scalar, including an EOF attempt, without resurrecting the
 previous line. Ordinary scalar `readline` still replaces, not appends.
-The NUL boundary, source selection and EOF's meaning remain. The
-replacement rule above is the shipped baseline until the trial is
-evaluated; it does not yet implement either scratch form.
+The NUL boundary, source selection and EOF's meaning remain. A producer's
+verdict reflects this attempt's input, not the accumulated array length.
+This accepted model supersedes the original bulk-replacement rule
+(including its journal 518 EOF repair); both scratch forms are implemented.
 
 ```sh
 readline ln                     # one line → scalar

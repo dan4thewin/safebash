@@ -35,15 +35,15 @@ one request is not a rollback guarantee. Preserve ordinary legal
 catching/suppression, fatal staging allocation, and operand/body
 boundaries. The ruling did not choose retry mechanics or a new error ABI.
 
-DD131/DD132's provisional selectors/immutable-scratch/regex branch trial
-(`q-glob-semantics`) needs the affected operation/cause/publication
+DD131/DD132's accepted selectors/immutable-scratch/regex implementation
+(`q-glob-semantics`) supplies the affected operation/cause/publication
 classification. In particular, EOF/no matches are not read/open errors,
 and partially produced entries must not escape on failure. Account for
 allocation faults and actual globals visible to ERR without weakening
 their fatal class. Ordinary targets retain their old data on operation
 error; scratch attempts remain fresh and empty. Invalid regex candidates
 give quiet false at `r?`, not a fatal fault or a directory/no-match error.
-Regex validity does not erase possible I/O failures. The trial is a consumer
+Regex validity does not erase possible I/O failures. The package is a consumer
 of this shared policy, not a reason to create another per-backend classifier.
 
 The mapping may depend on the operation, errno and known post-failure

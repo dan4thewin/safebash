@@ -99,13 +99,14 @@ is the best partial fix available and it is a strict improvement).
    mistaken for EOF or silently publish an incomplete successful array.
    DG directed errors to follow established patterns on 2026-11-09.
 
-DD131 provisionally supplies the command interface: `glob`/`rglob` have
+DD131 supplies the command interface: `glob`/`rglob` have
 an operational status and an array destination. Successful zero-match
 enumeration succeeds. On operation error an ordinary existing destination
 is unchanged, while an immutable scratch attempt leaves its fresh empty
 instance, never a previous batch. A new ordinary target starts empty.
-`q-glob-semantics` owns the separate-branch trial, coordinating
-with `recoverable-file-failures`, not claiming that recovery already works.
+`q-glob-semantics` records implementation, evaluation and acceptance,
+including actual selector failure handling. `recoverable-file-failures`
+retains the unrelated file-API work.
 
 Assignments and loops remain resultless, and suppression does not reach
 into helpers or operand captures. Lacking implemented handling is not
@@ -184,7 +185,8 @@ pin) + `wordsplit.sh` 20.6; native+c 0 regressions. Journal 135. A separate
 pre-existing c-backend bug surfaced (`bug-emit-c-splat-vla-jump`), filed.
 
 This did **not** implement the literal-directory cases in the Decision.
-They remain in `bug-glob-directory-portion`; the historical completion
-record in `glob-absolute-paths` is qualified accordingly. The new
-2026-11-09 matching/composition/error policies are also pending, not
-covered by the July result.
+They were subsequently implemented under `bug-glob-directory-portion`;
+the historical completion record in `glob-absolute-paths` is qualified
+accordingly. Journals 647/653 record the later matching, composition and
+error-handling implementation; journal 661 records adoption. None of that
+delivery is attributed to the July result.

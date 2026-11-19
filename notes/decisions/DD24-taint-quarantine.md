@@ -64,14 +64,15 @@ unresolved, even if main normally attests them. DD135 makes inherited ERR
 bindings readonly without validating them; fresh handler acquisition needs
 writable ERR-owned state. Its NUL predicate/proofs do not change quarantine.
 
-**Provisional scratch exception (DD131/DD132, 2026-11-09).** Re-executing
+**Scratch exception (DD131/DD132, accepted 2026-11-18).** Re-executing
 a scratch construction site starts a fresh immutable instance, not a
 taint-clearing write to a live binding. After a caught scratch attest,
 ordinary reads are confined to its success arm; failure and post-merge
 code may retain the unresolved candidate and read it explicitly through
 `:!` as data. Regex-pattern use instead requires successful `r?` proof
 and forbids forced reads. Ordinary bindings retain DD128's resolution
-rule. This experiment is unimplemented and tracked in `q-glob-semantics`.
+rule. Implementation, evaluation and acceptance are recorded in
+`q-glob-semantics`.
 
 ## Clean sources
 
@@ -246,8 +247,8 @@ DD#86 separates immutability from validation (DG, 2026-11-09): a const
 subject may be attested under the same adjacency and ownership rules.
 It is not clean merely because it is const, and it cannot be overwritten
 on the failed path. This includes a const used as DD#93's conversion
-source, not its writable target. Const-attest support is implemented on
-`glob-scratch-trial`; journal 644 records the independent prerequisite.
+source, not its writable target. Const-attest support is implemented;
+journal 644 records the independent prerequisite.
 
 ### Amendment (2026-09-01, DG): bless in a caught `&&`/`||` position
 

@@ -82,17 +82,17 @@ This supersedes the sketch in journal 042, which proposed `arr=(* =~ re)` as
 the "full power" replacement for the dropped `?` and `[abc]` glob characters.
 That need is real; the loop serves it.
 
-## Provisional directory-selector counterpart (2026-11-09)
+## Directory-selector counterpart (accepted 2026-11-18)
 
-DD131 proposes `rglob ARRAY DIRECTORY REGEX...` for a separate-branch
-trial. It selects directory entries using **one** pattern language,
+DD131 defines `rglob ARRAY DIRECTORY REGEX...`.
+It selects directory entries using **one** pattern language,
 regex, with an explicit directory and documented basename subject.
 It is not a glob followed by a regex filter and does not restore the
 content/arity-sensitive array shorthand or `sash_glob_regex`.
 The loop remains the explicit way to refine existing arrays or choose
-a different subject. No new selector is implemented by this recording.
+a different subject. Journal 653 records the selector implementation.
 
-The coordinated DD132 trial requires successful `r?` proof for runtime
+DD132 requires successful `r?` proof for runtime
 immutable patterns. `rglob` still reports operational success even on
 zero matches; directory failure is not a regex no-match boolean.
 Its destination obeys DD131's ordinary accumulation or fresh immutable

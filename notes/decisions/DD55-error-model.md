@@ -44,19 +44,19 @@ status: implemented
 ---
 
 No `set -e` at runtime. The compiler inserts implicit exit checks for
-recoverable operational failures: nonzero command status or a runtime error
-such as `regcomp` on a dynamic pattern. DD130 distinguishes these from
+recoverable operational failures: nonzero command status or a path-specific
+I/O error. DD130 distinguishes these from
 fatal faults, which abort rather than produce a resumable result.
 `- cmd` discards that operation's result, including a recoverable failure
 of its attached redirect; it does not suppress every failure in its
 operands or body.
 
-**DD132's 2026-11-09 regex revision is provisional and unimplemented.**
+**DD132's regex revision is implemented and accepted (2026-11-18).**
 It moves malformed runtime regex data to `r?` (quiet false), requires
 successful proof before an immutable pattern is consumed, and gives
-`sub`/`gsub` a match/no-match boolean alongside their text. The current
-`regcomp` consumer path below describes the shipped baseline, not an
-exception to that proposed prerequisite. Fatal faults and ordinary I/O
+`sub`/`gsub` a match/no-match boolean alongside their text. The historical
+`regcomp` consumer path below is not an exception to that prerequisite.
+Fatal faults and ordinary I/O
 failures retain DD130's classification.
 
 **DD130's 2026-11-06 classification extension is accepted, with
@@ -111,8 +111,8 @@ Anything that can fail due to external state or data:
   check status); single-external-command background jobs instead exec
   directly, as specified below
 - Builtins that wrap syscalls (`cd`, `echo`/`printf` via `write(2)`)
-- Runtime calls that can fail on data (`regcomp` on dynamic patterns in
-  the shipped model; DD132's trial replaces that interface as above)
+- Runtime calls with recoverable operational failures; invalid regex
+  candidates instead return quiet false at `r?` before consumer use (DD132)
 - Command substitution (`x=$(cmd)` — check before assignment)
 - Direct file reads (`x=$(<file)` — check before assignment)
 - DD135's direct `x=$(mkdtemp)` creation — check before assignment
@@ -329,7 +329,7 @@ presence: it is implicitly checked unless legally handled or discarded.
 empty text on handled creation failure. The constructor is unimplemented;
 it does not make a prefix meaningful on a statusless intrinsic.
 
-Under DD132's provisional model, `sub`/`gsub` also have a real second
+Under DD132, scalar `match`/`sub`/`gsub` also have a real second
 result: a boolean beside the text. A text capture may explicitly discard
 that boolean with `$(- sub ...)`, or consume it as a regex
 capture-condition (DD88). This is not permission for an inert prefix

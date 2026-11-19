@@ -8,7 +8,9 @@ status: accepted
    shorthand applies its operator to the subject or to every binder.
 2. `i?` tests complete i64 representability; `p?` and `g?` require
    nonempty ASCII printable and graph bytes respectively. `0?` tests for
-   NUL in counted contents, false on empty (DD135). They are ordinary
+   NUL in counted contents, false on empty (DD135). `r?` tests actual-engine
+   regex validity, with quiet false on malformed candidates (DD132).
+   They are ordinary
    unary tests, subject to normal result-consumption rules.
 3. Predicates may read their attested subject but every other input must
    be clean. `[[ ... ]]` predicates contain no captures, intrinsic calls,
@@ -20,7 +22,7 @@ status: accepted
    SOURCE and TARGET are distinct scalar names; TARGET must be a new
    integer binding or an existing mutable integer.
 5. Validation may leave a const source's value unchanged (DD#86);
-   conversion targets and failed-attest replacements still require
+   existing conversion targets and failed-attest replacements still require
    mutability. A newly introduced conversion target reads as zero on
    failure, while a tainted source remains unresolved.
 6. A caught predicate runs once; `&&`/`||` short-circuit, and attest-all
@@ -149,7 +151,7 @@ and runtime guards are implemented
 dependent ERR proof is also implemented
 ([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
 
-#### Provisional addition: `r?` (DG, 2026-11-09)
+#### `r?` (accepted 2026-11-18)
 
 DD132 adds `r?`: true iff the whole candidate is an accepted sash regex.
 It follows the same ordinary-test, unary-shorthand and attest-all forms,
@@ -168,12 +170,12 @@ DD131's immutable scratch may be attested without a write. In caught
 forms its normal reads and `r?` proof are confined to the success arm;
 failure/post-merge uses require explicit forced data reads, and pattern
 operands forbid `:!` altogether. Ordinary consts retain their separate
-caught-resolution rules. This remains provisional work in
+caught-resolution rules. This is implemented and accepted under
 `q-glob-semantics`, not a relaxation of predicate shape or locality.
 
-The predicate itself is implemented on `glob-scratch-trial`, including
-full/shorthand and collection attests (journal 648). Mandatory consumer
-proofs and caught-scratch permissions are not implemented by that unit.
+The predicate itself is implemented, including full/shorthand and collection
+attests (journal 648). Mandatory consumer proofs and caught-scratch permissions
+follow in journals 650-651.
 
 ### Part D — arith-assign attest: `attest numstr (( myint = numstr ))`
 
@@ -189,12 +191,12 @@ predicate). On success it declassifies **both** names —
 The source may be **const** (DD#86, DG 2026-11-09): validation does not
 change its bytes or type. This applies to both standalone and legal
 caught conversions, just as to full and shorthand `[[ ]]` attests.
-Const-attest support is implemented on `glob-scratch-trial` (journal 644).
+Const-attest support is implemented (journal 644).
 The target is different: conversion really writes it, so an existing
 const target remains SB4044. The distinction does not permit same-name
 retyping or replacement of a const source on failure.
 
-DD131's provisional scratch conversion target is a **new instance** at
+DD131's scratch conversion target is a **new instance** at
 each execution of its construction site, not a write to an existing
 const. For example, `attest s (( _n = s ))` constructs an immutable integer;
 a failed attempt cannot expose the preceding iteration's `_n`, and its

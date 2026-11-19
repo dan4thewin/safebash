@@ -67,13 +67,14 @@ text and failure, never an old pathname. The sole-producer and result-use
 rules still apply. Native/C delivery is recorded in
 [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 
-DD132's 2026-11-09 **provisional** trial gives `sub`/`gsub` a real
-match/no-match boolean alongside their text. Captures may then discard
+DD132 gives scalar `match`/`sub`/`gsub` a real
+match/no-match boolean alongside their text. Captures may discard
 that boolean with `$(- sub ...)` / `$(- gsub ...)`, or consume it through
 DD88's regex capture-condition extension. This does not exempt other
 status-less intrinsics, widen the sole-statement rule, or invent an
 unrestricted bare statement form. Substitution sugar explicitly projects
-text and discards the boolean; the trial remains unimplemented.
+text and discards the boolean. Journal 652 records implementation;
+journal 661 records acceptance.
 
 ## Why
 

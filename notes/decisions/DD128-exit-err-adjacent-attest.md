@@ -31,6 +31,9 @@ status: accepted
    values instead.
 10. Ordinary caught attests must resolve every continuing path; outgoing
     transfers retain their real state and handler obligations.
+    Caught immutable-scratch attests instead restrict ordinary reads and
+    regex proofs to their success arm, permitting unresolved fall-through
+    with forced data reads only (DD132).
 11. Defer signal dispatch into EXIT across legal acquisition/resolution pairs,
     including call and reader boundaries. Do not defer signal receipt,
     ordinary failure, explicit termination or fatal faults.
@@ -59,11 +62,11 @@ contract; its classification/fork/file-error implementation tasks remain
 open. This does not claim that the shipped handler checks already enforce
 the new classification in every form.
 
-DD131/DD132's 2026-11-09 **provisional** trial adds fresh immutable scratch
+DD131/DD132's accepted model adds fresh immutable scratch
 instances and restricted unresolved fall-through after their caught
 attests. Section 3 states that narrow exception; ordinary bindings and
-the handler contracts remain. Implementation is queued in
-`q-glob-semantics`, whose DD revision inventory tracks the experiment.
+the handler contracts remain. `q-glob-semantics` records implementation,
+evaluation, DG's acceptance and the complete DD revision inventory.
 
 DG supplied the design principles and decisions. The AI assembled the
 writeup and implemented the handler/termination work described above.
@@ -312,12 +315,12 @@ newly owned locals to meaningful zeros and starts fresh private taint state
 binding. Globals, collection slots and captured enclosing locals retain their
 existing values and unresolved state.
 
-DD131 provisionally adds another genuine lifetime boundary: execution of
+DD131 adds another genuine lifetime boundary: execution of
 an immutable scratch construction site starts a new instance. It cannot
 inherit the preceding value, unresolved state or regex proof. No reset
 occurs if the site is skipped, and this gives no ordinary overwrite a
 taint-clearing privilege. This is not a new block scope or automatic
-destruction at loop exit; the trial must cover actual global state and
+destruction at loop exit. Journals 645/651 cover actual global state and
 handler-visible publication as well as local loops.
 
 A genuine new acquisition has its own adjacency opportunity, even if its
@@ -351,7 +354,7 @@ failed-attest replacement and `:!` contracts are unchanged.
 In particular, `v=${v:!}` is still an unrelated assignment when written
 outside the permitted failed-attest resolution, and leaves v tainted.
 Reading through `:!` into a different clean binding remains the existing
-explicit per-read taint override. DD132 provisionally forbids forced reads
+explicit per-read taint override. DD132 forbids forced reads
 in regex-pattern operands: neither `:!` nor disabled taint checking
 supplies successful regex-validation proof. A copy through a forced read
 needs its own check before pattern use.
@@ -365,7 +368,7 @@ body/loop/handler checks. A deliberately unattested value is read only
 through the existing permitted
 forms, principally `:!` and its eligible attest predicate.
 
-### Provisional exception: a caught attest on immutable scratch
+### Scratch exception: a caught attest on immutable scratch
 
 DG's 2026-11-09 rule (DD132) lets the failed instance remain intact,
 immutable and unresolved, including on a fall-through path or in a

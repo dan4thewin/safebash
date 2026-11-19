@@ -1,5 +1,5 @@
 title: "Bug: a glob with a directory portion (`sub/*`, `./*`, `/etc/*`) silently matches nothing"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -13,9 +13,9 @@ gates:
 ## Current ownership
 
 Literal directory prefixes were already required by DD73. DD131's
-2026-11-09 provisional `glob`/`rglob`/scratch trial does not replace that
-obligation; `q-glob-semantics` coordinates implementation on a separate
-branch. The old completion task now explicitly limits its completed
+`glob`/`rglob`/scratch package retains that obligation;
+`q-glob-semantics` records implementation, evaluation and acceptance.
+The old completion task explicitly limits its completed
 scope to cwd globs and points here. No compiler repair accompanied that
 record correction (journal 603).
 
@@ -30,9 +30,10 @@ computed operands use the same boundary. Both native and C are gated.
 
 [Journal 647](../journal/647-coarse-directory-selectors.md) records the
 matched before controls, actual syscall failures and accepted full gate.
-This task stays open at the separate-branch adoption boundary; main has
-not received the repair. The causal description and outline below describe
-the pre-trial implementation, not the current trial ABI.
+DG accepted the package and requested landing on main on 2026-11-18
+([journal 661](../journal/661-accept-glob-scratch-regex.md)), closing this
+task's remaining adoption boundary. The causal description and outline below
+describe the pre-trial implementation, not the current ABI.
 
 ## Historical F13 observation
 

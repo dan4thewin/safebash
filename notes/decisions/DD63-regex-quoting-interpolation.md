@@ -9,18 +9,24 @@ status: accepted
    2. Global operations resume at the previous match's end. After a
       zero-width match, advance one byte, or stop at the subject's end.
       Empty subjects and terminal positions are valid match positions.
-2. Literal patterns are checked at compile time; dynamic patterns compile
-   at runtime under the ordinary recoverable-failure contract. Patterns
+2. Literal patterns are checked at compile time; runtime patterns require
+   successful `r?` proof for the same immutable value, without forced
+   (`:!`) pattern reads (DD132). Invalid candidates give quiet false;
+   allocation failure remains fatal. Patterns
    support exact two-digit `\xNN` escapes; replacements support only
    `\0`-`\9` backreferences and `\\` as backslash escapes.
-3. `match` supplies a boolean, a whole-match value, or a boolean with an
+3. `match` supplies a boolean, whole-match text plus a boolean, or a boolean with an
    out-array of whole match and up to nine groups. `matchall` requires an
    out-array and collects each match's groups, or whole matches if ungrouped.
-   Both out-array forms introduce their target if needed and clear it before
-   filling; no match leaves it empty. Boolean results obey DD70.
+   Both out-array forms append complete batches to ordinary targets or
+   construct fresh immutable scratch (DD131); no match adds nothing and
+   returns false. Scalar `sub`/`gsub` return text plus matched/no-match truth.
+   Capture-conditions consume both results; text-only explicit calls discard
+   the boolean. Boolean results obey DD70.
 4. `[[ SUBJECT =~ PATTERN ]]` is regex-test sugar. Substitution sugar uses
    slash-delimited interpolating words, a mandatory final slash, and optional
-   `g`; mutation writes its subject without producing a result.
+   `g`; each edit projects text and discards match truth. Mutation writes
+   its subject without producing a result.
 5. Regex subjects are examined only before the first interior NUL; later
    bytes are preserved. Case folding uses `toupper`/`tolower`.
 6. Attest predicates may use regex tests, but not substitution captures or
@@ -56,16 +62,16 @@ The attest-predicate addendum below retains a regex test node.
 
 ## The builtins
 
-The out-array fill contracts below describe the shipped replacement/
-clear behavior. DD131 provisionally includes `match`/`matchall` in an
-accumulation/immutable-scratch branch trial, preserving their own no-match
-verdicts and capture layout within each produced batch. It also proposes
-the separate basename selector `rglob`; neither that command nor the new
-destination model is implemented by this recording.
+DD131 makes `match`/`matchall` out-arrays accumulating ordinary destinations
+or fresh immutable scratch instances, preserving their own no-match
+verdicts and capture layout within each produced batch. No match appends
+nothing; failure leaves an ordinary target unchanged and scratch fresh-empty.
+The separate basename selector `rglob` uses the same publication model.
+Both selectors and the destination model are implemented and accepted.
 
-DD132 extends that **provisional** trial: runtime patterns require
-successful `r?` proof for the same immutable value, and `sub`/`gsub`
-return a match/no-match boolean alongside their text. No match yields
+DD132 requires successful `r?` proof for the same immutable runtime pattern,
+and scalar `match`/`sub`/`gsub` return a match/no-match boolean alongside
+their text. For substitutions, no match yields
 the original subject and false; an identity replacement can yield true.
 Existing text-producing regex forms may use a capture-condition to
 consume the boolean; text-only explicit calls discard it with
@@ -80,7 +86,8 @@ Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
     boolean form, used by `if` / `&&` / the `[[ =~ ]]` sugar).
   - As `$(match SUBJECT PATTERN)`: ~~prints~~ the whole match (`resub[0]`)
     ~~to stdout — an ordinary scalar command substitution~~.
-    This is a value-intrinsic capture (DD111).
+    This is a value-intrinsic capture (DD111), with matched/no-match truth
+    consumed by a capture-condition or explicitly discarded for text-only use.
   - **`match SUBJECT PATTERN OUTARRAY`** — out-array form (the array is
     the trailing positional, ~~consistent with `mapfile -m m` / `read -a a`~~):
     fills `OUTARRAY` with `[whole, g1 … g9]` and returns
@@ -93,8 +100,8 @@ Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
   DD#65). Compensates for the engine's missing `i` flag — case-insensitive
   match is `match $(tolower $x) $(tolower $pat)`.
 
-The case-folded-pattern example describes the existing value interface.
-In the DD132 trial, construct and validate the **folded result** first;
+The case-folded-pattern example describes value transformation, not a legal
+unvalidated pattern operand. Under DD132, construct and validate the **folded result** first;
 proof for the original pattern or for a substring does not certify it.
 
 `g` is therefore the `sub`/`gsub` choice, not a flag argument. There are
@@ -115,7 +122,7 @@ A nonempty match resumes at its end. A zero-width match resumes one byte
 later, except at the terminal position, where iteration ends. The empty
 subject has one such position. The terminal position is also searched
 after a nonempty match ending there: `matchall a 'a|$' m` finds `"a"` and
-an empty match; `$(gsub a 'a|$' X)` is `XX`. An empty pattern on `ab`
+an empty match; `$(- gsub a 'a|$' X)` is `XX`. An empty pattern on `ab`
 therefore gives `.a.b.` when globally replaced by `.`.
 
 These are the existing "every match" and byte-advancement rules, now applied
@@ -176,12 +183,10 @@ engine. In the **function form** this is just argument evaluation. In the
 - Metachar collisions in an interpolated value are the user's concern
   (use `'…'` in the function form, or `fgrep`/`grep -F` for literal
   containment — see "Compromises").
-- Dynamic patterns (containing interpolation) compile at runtime in the
-  shipped model. DD132's trial requires a previously validated immutable
-  finished pattern instead: interpolation that assembles new bytes needs
-  its own construction and `r?` check. A literal pattern retains
-  compile-time validation via `regcomp9` (DD#39). Within that trial:
-  Neither `:!` nor disabled
+- Dynamic patterns compile at runtime, but DD132 requires a previously
+  validated immutable finished pattern: interpolation that assembles new
+  bytes needs its own construction and `r?` check. A literal pattern retains
+  compile-time validation via `regcomp9` (DD#39). Neither `:!` nor disabled
   taint checking supplies regex proof, and pattern operands forbid forced
   reads even when those reads are legal for subjects and replacements.
 
@@ -203,13 +208,12 @@ function form.
   `=~ 'a b'` is single-quoted (literal), `=~ $pat` interpolates,
   `=~ /re/` is the literal regex `/re/`. No special parsing — `/` is not
   a delimiter here.
-- **`var =~ s/RE/SUB/`** → `var = $(sub $var "RE" "SUB")`;
-  **`var =~ s/RE/SUB/g`** → `var = $(gsub $var "RE" "SUB")`.
-- **`${var:s/RE/SUB/}`** → `$(sub $var "RE" "SUB")`;
-  **`${var:s/RE/SUB/g}`** → `$(gsub $var "RE" "SUB")`.
+- **`var =~ s/RE/SUB/`** → `var = $(- sub $var "RE" "SUB")`;
+  **`var =~ s/RE/SUB/g`** → `var = $(- gsub $var "RE" "SUB")`.
+- **`${var:s/RE/SUB/}`** → `$(- sub $var "RE" "SUB")`;
+  **`${var:s/RE/SUB/g}`** → `$(- gsub $var "RE" "SUB")`.
 
-These are the shipped text-only desugarings. Under the DD132 trial,
-substitution value sugar explicitly projects text and discards the new
+Under DD132, substitution value sugar explicitly projects text and discards the
 boolean (equivalent to consuming the value from `$(- sub ...)` or
 `$(- gsub ...)`). Mutation sugar still performs a resultless write,
 so it cannot target immutable scratch. Chained edits retain their order,
@@ -364,10 +368,9 @@ separates, so `key=val=ue` keeps its value intact.
   precedent (DG 2026-07-08). ~~Singular `match` does not; that asymmetry is a
   filed bug (`bug-match-outarray-no-autodeclare`), not a rule.~~
 
-Boolean like `match`: exit 0 when at least one match. The array is cleared on
-entry in the shipped model, so the no-match path leaves it empty.
-DD131's trial instead appends this batch to an ordinary target, or
-constructs a fresh immutable scratch batch. No match appends nothing
+Boolean like `match`: exit 0 when at least one match. DD131 supersedes
+the original clear-on-entry rule: a fill appends its batch to an ordinary
+target or constructs a fresh immutable scratch batch. No match appends nothing
 or leaves the new scratch empty, and is false regardless of prior
 destination contents. An operation error preserves an ordinary target
 but cannot resurrect a preceding scratch instance.

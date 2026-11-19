@@ -6,6 +6,9 @@ status: implemented
 2. Ordinary `const` is scalar-only and prohibits writes, not validation;
    immutability does not imply cleanliness.
 3. Scope and lifetime are positional under DD86.
+4. Leading-underscore construction creates a fresh immutable scalar or
+   collection instance each time its site runs (DD131), without extra
+   `const`, general const collections or a `readonly` operation.
 
 ---
 
@@ -17,10 +20,10 @@ Coercions: `declare -i` → `int`, `declare -a` → `array`, etc.
 Immutability constrains value writes, not validation (DD#86, DG
 2026-11-09). A const may hold tainted input and be attested without
 changing its value; it is not implicitly clean. Const-attest support is
-implemented on `glob-scratch-trial` (journal 644); the declaration axes are
+implemented (journal 644); the declaration axes are
 unchanged.
 
-DD131/DD132's later 2026-11-09 **provisional** trial adds immutable scratch
+DD131/DD132's accepted model adds immutable scratch
 instances, both scalar and collection, fresh on each execution of their
 construction site. Collection immutability includes contents and aliases.
 It is not general `const array` / `const map` support or a new `readonly`

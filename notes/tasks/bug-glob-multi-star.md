@@ -1,21 +1,21 @@
 title: Reject unsupported multi-star glob patterns
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
 gates:
   - "known multi-star glob patterns such as a*b*c and ** are rejected in explicit calls and every glob sugar position, not silently matched or normalized"
-  - "computed glob patterns enforce the same limit at runtime, reporting failure without changing the destination"
+  - "computed glob patterns enforce the same limit at runtime, reporting failure without partial publication; ordinary targets stay unchanged and scratch stays fresh-empty"
   - "valid single-star patterns and zero-star explicit patterns remain legal; regex patterns and ordinary literal text do not acquire a glob star limit"
   - "native/C CLI specs pin refusal and preservation with before/reversion controls and fresh ids for changed contracts"
-  - "the `sash_glob` doc comment lists what the matcher supports, accurately"
+  - "the shared glob-pattern boundary and its documentation agree on the supported one-star, final-component grammar"
 
 ## Selected remedy (DG, 2026-11-09)
 
-DD39 now limits a glob to **at most one star**, and DD131 provisionally
-packages the command/sugar enforcement in a separate-branch experiment.
+DD39 limits a glob to **at most one star**, and DD131
+packages the command/sugar enforcement in the accepted selector model.
 This task owns rejection, not a general multi-star matcher.
-`q-glob-semantics` coordinates that trial with literal directory support,
+`q-glob-semantics` records its delivery with literal directory support,
 dynamic string patterns and recoverable errors. The policy recording did
 not change the compiler.
 
@@ -28,9 +28,11 @@ fail without publication, and ordinary quoted star data remains legal.
 pin those roles; independent bound and quote reversions establish sensitivity.
 
 [Journal 647](../journal/647-coarse-directory-selectors.md) records native/C
-before controls and the accepted full gate. The task remains open pending
-the trial's adoption boundary; main is unchanged. The cause below is
-historical, not a description of the current trial runtime.
+before controls and the accepted full gate. DG accepted the package and
+requested landing on main on 2026-11-18
+([journal 661](../journal/661-accept-glob-scratch-regex.md)), closing this
+task's remaining adoption boundary. The cause below is historical, not a
+description of the current runtime.
 
 ## Historical F13 observation
 

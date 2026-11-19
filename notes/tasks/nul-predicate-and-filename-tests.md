@@ -43,7 +43,7 @@ fails to repair `-nt`; reject either invalid operand at the predicate boundary.
 Wire `0?` through the canonical unary operator, parsing, typing, validation,
 IR and native/C paths; reuse shared dispatch rather than a private predicate
 list. Preserve DD12/DD87's counted-content/terminator distinction and the
-existing definitions of `i?`, `p?` and `g?`. DD132's provisional `r?` remains
+existing definitions of `i?`, `p?` and `g?`. DD132's implemented `r?` remains
 separate.
 
 Repair all filename predicates, not only `-d`. `-t` takes a descriptor,

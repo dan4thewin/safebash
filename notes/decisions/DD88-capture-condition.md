@@ -4,7 +4,8 @@ status: accepted
 1. An untyped single-producer binding may consume the actual status of a single
    external command, named predicate, otherwise-legal pipeline, bare
    `arg`/`getenv` lookup, direct file slurp or `mkdtemp` creation (DD135).
-   Capture preserves stage eligibility.
+   Scalar `match`/`sub`/`gsub` similarly bind text and consume matched/no-match
+   truth (DD132). Capture preserves stage eligibility.
 2. Invoke a named predicate once: bind its stdout and consume its explicit
    returned status. Same-process effects persist on either result.
 3. Bind this attempt's bytes on false too, including partial/empty text;
@@ -39,7 +40,8 @@ delivery is recorded in
 
 These are scoped forms, not general multi-value binding. The general
 multi-value `return` / `(stdout, status, stderr)` trio remains deferred to
-`multi-assignment-and-capture-trio`. The regex extension below is provisional.
+`multi-assignment-and-capture-trio`. The regex extension below is implemented
+and accepted.
 
 ## The gap
 
@@ -190,7 +192,7 @@ retain the target's previous value or present partial input as a completed
 read. Existing slurp byte/newline handling stays unchanged.
 
 This is the scalar capture rule, not DD131's atomic array-fill rule. If the
-target is an immutable scratch introduction in that separate trial, the
+target is an immutable scratch introduction under DD131, the
 same-site execution creates its new instance; it cannot recover an older
 instance's value or proof. No new scratch spelling is selected here.
 
@@ -211,11 +213,11 @@ Named predicates have the separate accepted extension above.
 `runtime-failure-classification`, owns the runtime result, native/C lowering,
 source and ERR analysis, and independent failure/publication proofs.
 
-### Provisional regex extension (DG, 2026-11-09; DD132)
+### Regex extension (DD132, accepted 2026-11-18)
 
-The integrated DD131/DD132 trial adds capture-conditions for regex
+DD131/DD132 add capture-conditions for regex
 operations that really supply **text plus a boolean**: scalar `match`
-and the proposed `sub`/`gsub` result contract. For example,
+and `sub`/`gsub`. For example,
 `if _out=$(sub "$text" "$_re" replacement) { ... }` binds the text and
 branches on whether a match occurred. For `sub`/`gsub`, no match supplies
 valid original-subject text and false, not a failed/empty substitution fallback.
@@ -224,15 +226,15 @@ Runtime patterns require successful proof for their immutable values.
 This is not a status on assignment itself, a scalar `matchall` form,
 or permission for void/integer function, multi-statement, concatenated
 or status-less intrinsic conditions. Existing declaration-position
-restrictions remain; final scratch declaration spelling is an explicit
-trial design item. To consume only text, discard the real boolean
+restrictions remain; a leading underscore alone requests scratch construction,
+without extra `const` (DD131). To consume only text, discard the real boolean
 inside the capture (`_out=$(- sub ...)`), not outside the binding.
 
 DD131's fresh scratch lifetime also applies to an external capture
 target, but does not overwrite this DD's partial-stdout rule: on failure,
 this attempt's bytes remain, not the preceding instance's bytes.
 Atomic array publication is not a new scalar-capture transaction.
-Implementation and the DD revision inventory are in `q-glob-semantics`.
+Implementation, acceptance and the DD revision inventory are in `q-glob-semantics`.
 
 ### Handling and discard (DD55)
 
@@ -349,7 +351,7 @@ consumers: use actual presence, not text length, and evaluate once. Supplying
 a literal default to either lookup makes it value-only, hence ineligible as
 a capture-condition. The same task owns this pending extension; typed
 declarations and other excluded RHS shapes remain excluded.
-The accepted file-read extension and provisional regex extension are
+The accepted file-read and regex extensions are
 specified above; value-only producers do not gain a separate result merely
 by using `$()` notation.
 

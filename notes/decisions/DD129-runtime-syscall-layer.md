@@ -149,12 +149,12 @@ The choice retains the no-libc runtime model. It does not select a
 particular implementation provider, adopt musl/libc startup, change the
 regex engine/dialect, or choose a compiled-regex cache or new public ABI.
 
-Recovery and reporting remain separate. Under DD132's provisional model,
+Recovery and reporting remain separate. Under DD132,
 an invalid `r?` candidate must return quiet false; resource faults remain
 fatal under DD130. Keeping the jump does not authorize an unconditional
 diagnostic or process exit for every regex compilation failure. The
-current runtime's printing and caller-side abort behavior still need
-the separately owned trial's changes.
+quiet predicate entry is implemented (journal 648); it does not claim
+delivery of the separately owned AArch64 jump support.
 
 This is an accepted implementation direction, not delivered AArch64
 support or authorization to begin the implementation.
@@ -221,11 +221,10 @@ runtime syscall sites were accounted for in the repair rather than left
 for a later migration. This repair does not select the remaining
 mechanisms or authorize the cross-compilation/regex implementation.
 
-`notes/tasks/q-glob-semantics.md` retains DD131/DD132's integrated
-separate-branch trial, including quiet invalid-candidate reporting and
-the distinction from fatal faults. It must coordinate with the jump
-support work; the accepted native recovery mechanism is not a
-trial-only choice.
+`notes/tasks/q-glob-semantics.md` records the completed DD131/DD132 trial
+and acceptance, including quiet invalid-candidate reporting and the
+distinction from fatal faults. Native cross-target jump support remains
+separately owned; its accepted mechanism was never trial-only.
 
 The research and resolution are in `notes/tasks/q-runtime-syscall-layer.md`;
 journals 572, 612, 613 and 614 record the layer, output targets, regex

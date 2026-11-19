@@ -75,8 +75,8 @@ the resulting control-flow block, and retain ordinary taint, operand failure
 and DD86 argument/redirect ordering. The repair is implemented and gated
 with the DD132 regex-result unit on `glob-scratch-trial`
 ([journal 652](../journal/652-regex-results-and-redirect-indices.md)).
-This closes the index ICE on that branch, not adoption of the provisional
-package on main.
+That closed the index ICE; DG's 2026-11-18 acceptance brings the package
+to main (journal 661).
 
 The shared scope builder evaluates and applies each target only after the
 preceding open succeeds. Arguments are retained first; executable stage

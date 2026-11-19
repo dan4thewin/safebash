@@ -15,15 +15,17 @@ status: accepted
       newline; the regex subject still ends at its first NUL (DD63).
 5. Validate every static regex at compile time and identify the offending
    pattern; validated literals are to be compiled once for runtime reuse.
-6. Dynamic invalid-pattern failures retain DD55/DD70's ordinary operational
-   handling contract, distinct from fatal faults.
+6. Runtime regex operands require successful `r?` proof for the same
+   immutable value (DD132), independently of taint switches. Forced (`:!`)
+   pattern reads are forbidden. Invalid candidates give quiet false at
+   `r?`; allocation faults remain fatal.
 
 ---
 
 The selected file-glob policy is deliberately coarse: at most one `*`
 in the final filename component, with a non-wildcard directory prefix.
 No additional `?`/`[abc]` wildcard operators, multiple stars or wildcard
-directory traversal. DD131 packages this in a provisional branch trial
+directory traversal. DD131 packages this
 with explicit `glob`/`rglob` commands and scratch collections.
 Perl-style regex for string mutation: `var =~ s/re/str/flags` (statement, mutates).
 Expression form: `${var:s/re/str/flags}` (returns value, no mutation).
@@ -65,15 +67,15 @@ DD73 still requires normalized absolute paths; DD69 still supplies clean
 array elements without word splitting. Directory-operation failures follow
 DD130, not a blanket fatality rule or an invented empty-success value.
 
-**Implementation is a provisional branch experiment (DD131).**
-`q-glob-semantics` owns the composed behavior and evaluation;
-`bug-glob-multi-star` now owns rejection, not a general matcher.
-`bug-glob-directory-portion` retains the already-required literal-prefix
-repair. This revision narrows the old unrestricted count of `*` characters;
-it does not claim that the current compiler enforces the new contract.
+**Implemented and accepted for main (DD131, 2026-11-18).**
+`q-glob-semantics` records the composed behavior and evaluation;
+`bug-glob-multi-star` records rejection, not a general matcher.
+`bug-glob-directory-portion` records the already-required literal-prefix
+repair. This revision narrows the old unrestricted count of `*` characters,
+with shared static and runtime enforcement.
 The explicit regex selector uses ordinary regexes rather than the glob
 star limit and does not restore DD108's combined shorthand. Journal 603
-records the decisions and provisional implementation boundary.
+records the original provisional decision; journal 661 records acceptance.
 
 ## Regex engine
 
@@ -90,13 +92,11 @@ entrypoints, which call `regcomp9` on use (source inspection, 2026-11-10).
 `dd39-precompile-literal-regex` is reopened to reconcile that record and
 the outstanding work; it is separate from the diagnostic goal below.
 
-In the shipped implementation, dynamic patterns (containing `$var`) are
-compiled at runtime; `regcomp9` failure prints an error to stderr.
-DD132 provisionally replaces that consumer-side invalid-data path:
+DD132 replaces the former consumer-side invalid-data path:
 runtime regex operands must be immutable and successfully checked with
 `r?` before use. Invalid candidates give quiet false at the predicate;
 actual literal regex use retains static validation, and allocation
-faults remain fatal. The predicate is implemented on `glob-scratch-trial`
+faults remain fatal. The predicate is implemented
 (journal 648), as is the unconditional SB5105 refusal of forced reads
 within pattern operands (journal 649). SB5106 now requires immutable-value
 proofs at every existing consumer (journal 650), independently of taint
@@ -105,8 +105,9 @@ scalar regex text/Boolean results and explicit projections follow in
 journal 652. `rglob` and its pattern-list proof handling are implemented in
 journal 653. Journal 654 records the integrated practical, converter and
 resource evaluation, including silent sequential-fill migration and append
-costs. DG's adoption decision remains pending; none of these trial
-deliveries adopts the package on main.
+costs. Journal 655 records the subsequent append optimization; journal 661
+records DG's acceptance and landing on main. Converter compatibility remains
+with [its own owner](../tasks/convert-glob-scratch-regex-migration.md).
 
 ## Whole-subject anchors (DG, 2026-11-16)
 
@@ -134,14 +135,14 @@ introduced. [Journal 642](../journal/642-regex-subject-boundaries.md)
 records the repair; [regex-multiline-mode](../tasks/regex-multiline-mode.md)
 owns the deferred syntax decision.
 
-## Clarification (2026-05-24): Runtime regex abort (shipped baseline)
+## Clarification (2026-05-24): Runtime regex abort (historical baseline)
 
 ~~When a dynamic pattern (containing $variables) fails regcomp9 at
 runtime, the program aborts with exit code 2.~~ That supplies DD55's
 unchecked-failure behavior, but does not establish that its handling
 levers work; the F15 section below records that discrepancy. DD132's
-provisional validation-before-use model supersedes this as the proposed
-dynamic-pattern interface, not as a claim about the current binary.
+accepted, implemented validation-before-use model supersedes this
+dynamic-pattern interface.
 
 Literal patterns are validated at compile time (SB5023) and cannot
 fail at runtime for invalid syntax. This does not make allocation
@@ -259,7 +260,7 @@ The upstream reference under `contrib/plan9port-regexp/` is unchanged.
 `regaux.c` remains byte-identical to it; `regexec.c` now has the
 whole-subject anchor changes above. The existing parser additions include
 counted repetition and its cap, shorthand classes and hex escapes, with
-local bounds/group-repeat checks. On the trial branch, journal 648 adds
+local bounds/group-repeat checks. Journal 648 adds
 quiet predicate compilation with a distinct allocation-failure channel.
 It also rejects a trailing backslash before reading past the terminator
 and checks each repetition-count digit before the accumulator can
@@ -301,7 +302,7 @@ Neither exact-character locations nor diagnostic grouping is prescribed.
 `q-sb5023-names-the-test-not-the-pattern` owns the work.
 
 The diagnostic code, regex dialect and validation scope remain unchanged.
-DD132's provisional quiet-false contract for invalid `r?` candidates stays;
+DD132's quiet-false contract for invalid `r?` candidates stays;
 better diagnostics do not make those candidates static-regex errors or
 select runtime caching.
 
@@ -318,22 +319,23 @@ gone.
 This supersedes the 2026-07-08 scope sentence ("Literal-pattern compile
 validation (SB5023) runs on the `=~` mutation form and `[[ =~ ]]`").
 
-A dynamic pattern still compiles at runtime. `sub`/`gsub` used to print
-`regexp error`, return the subject unchanged and carry on with status 0; they
-now exit 2, as `match`, `matchall` and `[[ =~ ]]` already did. That covers the
-`${x:s/…}` sugar and the statement form, which run on `sub`/`gsub`.
+At the F15 baseline, a dynamic pattern still compiled at runtime without
+DD132's later proof requirement. `sub`/`gsub` previously printed
+`regexp error`, returned the subject unchanged and carried on with status 0.
+They then exited 2, as `match`, `matchall` and `[[ =~ ]]` already did. That
+covered the `${x:s/…}` sugar and the statement form, which ran on `sub`/`gsub`.
 
-**Historical discrepancy, now provisionally addressed by DD132.**
-DD#55 says `-` suppresses a dynamic regcomp
-failure, and DD#70 (A) adds that `if`/`||` catch it. This DD's 2026-05-24
-clarification says only that it aborts. DD#71 says it "aborts via the DD#55
-(A) channel" and names no lever, though that channel is the one DD#70 gives
-levers. No regex builtin honours either lever. `match`, `matchall` and
-`[[ =~ ]]` exit 2 regardless, before this change and after it; `sub` and
-`gsub` carried on regardless before it, and now exit 2 regardless. Filed as
+**Historical discrepancy, superseded by the implemented DD132 model.**
+At that baseline DD#55 said `-` suppresses a dynamic regcomp
+failure, and DD#70 (A) added that `if`/`||` catch it. This DD's 2026-05-24
+clarification said only that it aborts. DD#71 said it "aborts via the DD#55
+(A) channel" and named no lever, though that channel was the one DD#70 gave
+levers. No regex builtin honoured either lever. `match`, `matchall` and
+`[[ =~ ]]` exited 2 regardless, before F15 and after it; `sub` and
+`gsub` carried on regardless before it, and exited 2 regardless afterwards. Filed as
 `notes/tasks/q-dynamic-regcomp-levers.md`. The 2026-11-09 choice is instead
 validation before use, not blanket runtime abort or a failed-substitution
-fallback. `q-glob-semantics` owns that integrated branch trial and the
+fallback. `q-glob-semantics` records the completed trial, acceptance and
 DD revision inventory. These F15 observations have not been remeasured.
 
 Specs: 39.36–39.56 (regex.sh). Earlier pins: 39.5 (wordsplit.sh, the

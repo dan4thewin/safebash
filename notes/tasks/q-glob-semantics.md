@@ -1,5 +1,5 @@
-title: Prototype selectors, immutable scratch and validated regexes on a separate branch
-status: open
+title: Implement, evaluate and adopt selectors, immutable scratch and validated regexes
+status: done
 priority: P2
 kind: work
 depends: [bug-glob-directory-portion, bug-glob-multi-star, bug-regex-line-anchors, q-attest-retag-of-const]
@@ -24,11 +24,11 @@ gates:
   - "a failed operation publishes no partial collection update, including later-pattern and allocation failures; prior input/argument effects are not falsely rolled back"
   - "external capture failures preserve this attempt's partial stdout under DD88, not an earlier scratch instance; array publication is not a general capture transaction"
   - "r? tests the full candidate with the actual accepted regex rules; invalid data is quiet false, literal regex use remains statically validated, and allocation faults stay fatal"
-  - "every runtime regex consumer requires successful proof for its exact immutable pattern; cleanliness, constness, trusted copies and taint-disable switches cannot supply proof"
+  - "every runtime regex consumer requires successful proof for its exact immutable pattern; cleanliness, constness, copies through forced reads and taint-disable switches cannot supply proof"
   - "final composition and transformed patterns need their own checks; quoted whole values and proved present collection elements retain identity, while missing-cell defaults cannot borrow proof"
-  - "caught scratch attest permits normal reads only in its success arm; failure and post-construct data reads require explicit trust, including no-else fall-through"
+  - "caught scratch attest permits normal reads only in its success arm; failure and post-construct data reads require explicit forced reads, including no-else fall-through"
   - "negated and logical caught forms retain the same success-region rule; a failed arm that exits/continues does not export permission; standalone attest still permits subsequent use"
-  - "regex-pattern operands reject :! including combined dispositions, even inside success arms and with taint disabled; ordinary subject/replacement trust remains legal"
+  - "regex-pattern operands reject :! including combined dispositions, even inside success arms and with taint disabled; ordinary forced subject/replacement reads remain legal"
   - "calls, captures, globals, A-E forwarding and EXIT/ERR neither fabricate proof nor export caught-scratch permission; preserve adjacency, received-taint ownership and correct signal planning"
   - "sub/gsub produce text plus matched/no-match boolean; no-match text is the original subject and an identity replacement can still be true"
   - "existing regex value forms consume their boolean through capture-conditions or explicitly discard it for text-only use; no general assignment status or arbitrary intrinsic/function condition is introduced"
@@ -39,14 +39,28 @@ gates:
   - "focused real-CLI native/C specs have before/reversion controls; changed contracts use fresh ids and the predicted ordinary gate passes"
   - "the DD revision inventory exactly covers changed/new decision files, records per-contract trial evidence and DG dispositions, and reconciles every affected DD before landing or withdrawal"
 
-## Provisional decision and branch boundary
+## Acceptance and completed trial
+
+DG accepted the complete implemented package on 2026-11-18:
+
+> move the provisional work status to accepted, bring it to main
+
+DD131/DD132 are accepted. The implementation and evaluation gates are
+complete, including the subsequent append optimization. Main receives the
+trial through `10345a0d` plus the acceptance reconciliation recorded in
+[journal 661](../journal/661-accept-glob-scratch-regex.md). The trial branch
+is retained. Remaining
+[converter migration](convert-glob-scratch-regex-migration.md) has its own
+owner; language adoption does not claim that repair. The existing
+[regex allocation/reuse](dd39-precompile-literal-regex.md) work is also
+independent and remains open.
 
 DG adopted `glob`, `rglob` and scratch collections **provisionally** on
 2026-11-09, explicitly requiring a branch for implementation and an
 evaluation of utility and ramifications. Later that day he provisionally
 adopted fresh immutable scratch, required `r?` validation, boolean regex
 results and restricted caught-scratch attests (journal 604). DD131 and
-DD132 are the combined working model; DD39/DD69/DD73 supply the matching,
+DD132 are the combined model; DD39/DD69/DD73 supply the matching,
 composition and path contracts.
 Retain this P2 owner and slug rather than create competing owners for
 the same experiment. No implementation branch or compiler change was
@@ -57,7 +71,7 @@ DG authorized implementation on 2026-11-17. The trial branch is
 He accepted leading-underscore construction without extra `const`,
 rejection of initializer self-reads (including through helpers), and
 bare-literal-only glob sugar. These settle the previously deferred source
-choices; they do not adopt the package on main.
+choices; they did not yet adopt the package on main.
 
 The independently accepted const-validation prerequisite is implemented
 and gated on this branch (journal 644). Source-identity immutable scratch,
@@ -68,7 +82,7 @@ coarse `glob` and source-provenance-aware list sugar are now implemented and
 gated (journal 647), including the coupled private-batch allocation repair.
 The quiet actual-engine `r?` predicate is implemented and gated
 (journal 648), with trailing-escape and repetition-count overflow repairs.
-The independent structural refusal of trusted pattern reads is implemented
+The independent structural refusal of forced pattern reads is implemented
 and gated with SB5105 (journal 649), including with taint checking disabled.
 Mandatory immutable-value proofs now cover every existing consumer with
 SB5106 (journal 650), including collection presence, helper/process flow
@@ -92,19 +106,18 @@ The matched 4,000 two-cell append workload falls from about 328 ms to
 2.7-2.9 ms; its 1,000-iteration configured-heap passing endpoint falls from
 324 KiB to 164 KiB in both backends. Those are new matched measurements,
 not a revision of journal 654's historical results. Working hand adaptations
-still do not supply a converter repair. This owner stays open for DG's
-evaluation and adoption/revision/withdrawal decision; main is unchanged.
+still do not supply a converter repair. DG's subsequent acceptance closes
+this owner; the converter follow-up is separated above.
 
 This is the **single integrated implementation/evaluation owner**, including
 the regex work formerly posed by `q-dynamic-regcomp-levers`. That record
-is closed as a provisionally answered question, not as an implementation
-claim. Keep its historical evidence and this task's exact DD revision
+is closed as an answered policy question. Keep its historical evidence and this task's exact DD revision
 inventory rather than maintaining competing trial inventories.
 
-The branch is not permission to land the package automatically. Report
-what worked, compatibility and memory costs, awkward cases and any
-proposed changes to DG before adoption. Do not mark the independent
-directory/regex bugs fixed merely because a prototype exists.
+The original branch authorization did not permit automatic landing.
+Implementation, compatibility and resource evidence were reported before
+DG's acceptance. The independent directory-prefix and multi-star tasks now
+close on their verified delivery and adoption, not merely on a prototype.
 
 ## Matching and composition
 
@@ -167,7 +180,7 @@ Preserve source provenance instead of testing evaluated strings for `*`.
 
 ## Immutable scratch construction and existing fillers
 
-The trial applies DD131's destination model to the array-filling forms
+DD131's destination model applies to the array-filling forms
 of `read`, `argv`, `keys`, `match`, `matchall` and the new selectors.
 Normal destinations append, auto-declaring empty when needed.
 `_batch`-style destinations request a fresh immutable source binding; reject
@@ -205,7 +218,7 @@ do not acquire scratch exceptions. There is no adopted public `readonly`
 operation or general `const array` / `const map` syntax. DD135's implicit
 readonly ERR imports are separately accepted and owned by
 [err-readonly-inputs-and-nul-proofs](err-readonly-inputs-and-nul-proofs.md);
-they neither adopt general freezing nor belong to this provisional trial.
+they neither adopt general freezing nor belong to this package.
 
 Use ordinary mutable builders followed by independent immutable
 snapshots where staged construction is needed. Measure copying/memory
@@ -238,15 +251,15 @@ attest eligibility, predicate restrictions and body ownership.
 For **caught immutable-scratch** attests, cover successful and failed
 arms, negation, logical forms, no-else fall-through and code after the
 construct. Only the successful region permits normal reads and any
-proved regex use. Elsewhere require explicit trusted **data** reads.
+proved regex use. Elsewhere require explicit forced **data** reads.
 Even an exiting/continuing failed arm does not export permission;
 standalone attest does permit subsequent successful uses. DD121 already
 exempts non-fall-through paths for ordinary R2, so do not claim that
 allowing `continue` is itself this experiment's new permission.
 
-Reject trusted pattern reads, including combined modifiers and sugar,
-independently of taint switches. Preserve trusted subjects/replacements.
-A trusted copy requires its own successful check; calls and copies may
+Reject forced pattern reads, including combined modifiers and sugar,
+independently of taint switches. Preserve forced subject/replacement reads.
+A copy through a forced read requires its own successful check; calls and copies may
 not launder a caught proof out of its region. Test globals, functions,
 collection aliases, captures, children and independent EXIT/ERR roots.
 Do not treat the restricted failed instance as destroyed or clean, and
@@ -302,16 +315,16 @@ the array guarantee does not make every scalar producer transactional.
 their shared classification/interface ownership. Coordinate the
 affected operations with them rather than duplicate runtime or backend
 error policy; the trial need not wait for unrelated file-API work.
-DD132 now supplies the provisional regex-consumer policy. This owner
-implements it together with scratch, rather than letting an `rglob`
+DD132 supplies the accepted regex-consumer policy. This owner
+records its implementation together with scratch, rather than letting an `rglob`
 runtime change settle the old question accidentally. Coordinate with
 `cross-compile-and-setjmp-on-mac`, which owns DD129's now-selected
 regex-local jump support for x86_64 and AArch64 (journal 613), not an
 ordinary-return rewrite. Quiet invalid-candidate falsehood still rules
 out a blanket terminal `regerror9` path for validation; preserving the
 jump does not supply that reporting change. Resource faults stay fatal.
-This accepted native recovery choice is independent of the provisional
-trial and is not a trial-only DD revision to withdraw.
+This accepted native recovery choice is independent of the package;
+adopting DD131/DD132 does not claim cross-target delivery.
 
 Bindings and loops have no status. Do not invent `- array ...`/
 `- f+=(...)`, extend suppression into a body/operand, change result kinds
@@ -327,6 +340,11 @@ required commit sequence. They may be implemented with the trial;
 coordinate shared work and retain evidence for each owner.
 
 ## DD revision inventory
+
+The recording and delivery tables below preserve the trial's historical
+scope and baselines. Their original provisional boundaries are not current
+adoption restrictions; the per-contract disposition table records the
+2026-11-18 acceptance.
 
 DG requested this inventory so that an untenable part of the trial can
 be revised or withdrawn coherently. **Baseline for every modified file
@@ -396,7 +414,7 @@ The implementation-start clarification has baseline
 
 | Exact DD file | Changed section / contract | Disposition |
 |---|---|---|
-| [DD131-directory-selectors-scratch-collections.md](../decisions/DD131-directory-selectors-scratch-collections.md) | Opening rules, construction, initializer self-reads and list sugar. | DG accepted these trial details on 2026-11-17; implementation and measured evaluation are recorded in journals 644-654; adoption remains pending. |
+| [DD131-directory-selectors-scratch-collections.md](../decisions/DD131-directory-selectors-scratch-collections.md) | Opening rules, construction, initializer self-reads and list sugar. | DG accepted these trial details on 2026-11-17 and the package on 2026-11-18; implementation and measured evaluation are recorded in journals 644-654. |
 | [DD86-variable-scope.md](../decisions/DD86-variable-scope.md) | Provisional scratch notation, initializer restriction and unchanged capture-condition grammar. | Same trial ruling; ordinary const validation remains independently accepted. |
 | [DD35-type-keywords.md](../decisions/DD35-type-keywords.md) | Provisional scratch notation without extra const. | Same trial ruling. |
 | [DD98-discard-binder.md](../decisions/DD98-discard-binder.md) | Provisional prefix spelling, preserving bare discard. | Same trial ruling. |
@@ -454,29 +472,32 @@ the 29 current paths recorded here, including DD119: no missing or extra
 entry. Historical names are mapped by DD number, not silently counted as
 additional decisions.
 
-Before the implementation branch changes more DDs, add each file and its
-pre-change commit/section here. For each contract evaluated, record the
-trial commit, concrete evidence/cost, DG's retained/revised/withdrawn
-disposition and the reconciliation commit. DG's adoption dispositions
-remain **pending**. The following table records the current evidence and
-pending disposition by contract; it does not turn measurements into adoption.
+The adoption reconciliation starts from `10345a0d` and is the commit adding
+journal 661. It reconciles the inventoried contracts in place; DD119 already
+states the accepted guarded-index rule and needs no new edit. DD129's
+companion quiet-predicate delivery pointer is updated without changing its
+independently accepted cross-target architecture.
+DG's dispositions are recorded below rather than inferred from measurements.
 
 ### Per-contract evaluation, 2026-11-17
 
-All provisional rows below are evaluated at trial `76376c4e`, with the
+The native contracts below were evaluated at trial `76376c4e`, with the
 implementation commits identified where each shared mechanism landed.
 Journal 654 contains the exact practical/migration/resource observations;
 the delivery journals retain the source, failure and reversion evidence.
+DG accepted every package row on 2026-11-18; the reconciliation is the
+journal 661 commit identified above. Original evaluation costs remain
+historical; journal 655 records the subsequent append optimization.
 
 | Contract and affected DDs | Delivery and concrete evaluation | DG disposition / reconciliation |
 |---|---|---|
-| Fresh immutable construction and scope: DD35, DD68, DD86, DD98, DD131 | `67e99309`, journal 645: repeated/skipped sites, scalar/read/for/conversion constructors and helper-mediated self-read/mutation guards. Practical builders keep old snapshots independent; scalar/buffer/file-capture heap brackets match main. Mutable underscore names require migration. | Trial only; adoption/revision/withdrawal pending, no reconciliation commit yet. |
-| Accumulating fillers and alias capabilities: DD60, DD69, DD75, DD99, DD100 | `3a15ddce`, journal 646: complete private batches, sparse indices and read-only aliases. Multi-file records and helper-slot accumulation are useful; reused capture indices and sequential converted mapfile output change silently. Two-cell append at 4,000 iterations grows from about 2.5-2.7 ms to 328 ms, and the 1,000-iteration heap bracket roughly doubles. | Trial only; converter policy and any append optimization remain unselected. |
-| Directory selection and list composition: DD39, DD68, DD69, DD73, DD108, DD131 | `3ddaab55` and `76376c4e`, journals 647/653: bounded glob syntax, sorting, paths, ordered lists, empty-list effects and both selector backends. Practical manifests preserve order/duplicates and handle hidden names. Fresh explicit glob uses less configured heap than literal array sugar in the 32-file fixture. | Selector/scratch package remains provisional; independently chosen coarse matching/path rules are not automatically withdrawn with it. |
-| Regex validity and exact immutable proofs: DD39, DD63, DD71, DD93, DD100, DD132 | `516944b5`, `f5371e63`, `ebdf18bf`, journals 648-650: quiet actual-engine validity, trusted-pattern refusal and all-reaching-path proofs. Interactive invalid candidates stay quiet; mutable builders work via fresh validated candidates. Existing per-use compilation still exhausts 64 MiB before 4,000 repeated scalar matches on both main and trial. | Trial only; no retained cache, engine replacement or broader proof policy selected. |
-| Taint, caught-read scope and handlers: DD24, DD61, DD91, DD93, DD121, DD128, DD132 | `a4f29d65`, journal 651: success-region permissions, no-else/failure fall-through, trusted copies, actual handler inputs and finite signal deferral. Interactive validation selects only after success and reports invalid candidates; earlier native/C reversions pin trusted failed reads and the refusal/handler boundaries. | Trial only; ordinary adjacency, received-taint ownership and R2 remain independently authoritative. |
-| Text/Boolean results and projections: DD55, DD63, DD65, DD70, DD88, DD111, DD132 | `f61aecad`, journal 652: direct conditions, explicit discard, per-edit sugar projections and unchanged no-match text. Practical normalization observes text and truth; the real tour checker needed explicit gsub Boolean discard and retains all 56 rendered examples. | Trial only; ordinary assignments remain resultless and other intrinsic/body boundaries stay unchanged. |
-| Failure/publication state: DD55, DD69, DD73, DD128, DD130, DD131 | Journals 645-647/651/653 pin fresh-empty scratch, unchanged ordinary targets, late failures, ERR visibility and runtime ownership. Resource OOMs remain failures, not no-match or empty success. Repeated metadata scans/copies are measured costs of the present implementation, not required algorithms. | Trial publication rules pending adoption; DD130's recoverability criterion is independently accepted. |
+| Fresh immutable construction and scope: DD35, DD68, DD86, DD98, DD131 | `67e99309`, journal 645: repeated/skipped sites, scalar/read/for/conversion constructors and helper-mediated self-read/mutation guards. Practical builders keep old snapshots independent; scalar/buffer/file-capture heap brackets match original main. Mutable underscore names require migration. | Accepted; converter migration remains separately owned. |
+| Accumulating fillers and alias capabilities: DD60, DD69, DD75, DD99, DD100 | `3a15ddce`, journal 646: complete private batches, sparse indices and read-only aliases. Multi-file records and helper-slot accumulation are useful; reused capture indices and sequential converted mapfile output change silently. The original 4,000-iteration append cost was about 328 ms versus 2.5-2.7 ms. `b8a8ec06`, journal 655, reduces it to 2.7-2.9 ms and the 1,000-iteration configured-heap passing endpoint from 324 KiB to 164 KiB. | Accepted with the completed append optimization; converter policy remains separate. |
+| Directory selection and list composition: DD39, DD68, DD69, DD73, DD108, DD131 | `3ddaab55` and `76376c4e`, journals 647/653: bounded glob syntax, sorting, paths, ordered lists, empty-list effects and both selector backends. Practical manifests preserve order/duplicates and handle hidden names. Fresh explicit glob uses less configured heap than literal array sugar in the 32-file fixture. | Accepted; independently chosen coarse matching/path rules remain authoritative. |
+| Regex validity and exact immutable proofs: DD39, DD63, DD71, DD93, DD100, DD132 | `516944b5`, `f5371e63`, `ebdf18bf`, journals 648-650: quiet actual-engine validity, forced-pattern refusal and all-reaching-path proofs. Interactive invalid candidates stay quiet; mutable builders work via fresh validated candidates. Existing per-use compilation exhausts 64 MiB before 4,000 repeated scalar matches on original main and trial. | Accepted; regex allocation/reuse stays backlog, with no cache or engine replacement selected. |
+| Taint, caught-read scope and handlers: DD24, DD61, DD91, DD93, DD121, DD128, DD132 | `a4f29d65`, journal 651: success-region permissions, no-else/failure fall-through, copies through forced reads, actual handler inputs and finite signal deferral. Interactive validation selects only after success and reports invalid candidates; native/C reversions pin forced failed reads and refusal/handler boundaries. | Accepted; ordinary adjacency, received-taint ownership and R2 remain independently authoritative. |
+| Text/Boolean results and projections: DD55, DD63, DD65, DD70, DD88, DD111, DD132 | `f61aecad`, journal 652: direct conditions, explicit discard, per-edit sugar projections and unchanged no-match text. Practical normalization observes text and truth; the tour checker needed explicit gsub Boolean discard and retained all 56 then-current examples. | Accepted; ordinary assignments remain resultless and other intrinsic/body boundaries stay unchanged. |
+| Failure/publication state: DD55, DD69, DD73, DD128, DD130, DD131 | Journals 645-647/651/653 pin fresh-empty scratch, unchanged ordinary targets, late failures, ERR visibility and runtime ownership. Resource OOMs remain failures, not no-match or empty success. Journal 655 removes repeated metadata scans/clones without weakening publication. | Accepted; DD130's recoverability criterion remains independently authoritative. |
 | Guarded redirect-cell indices: DD119 | `f61aecad`, journal 652: shared executable index lowering, arguments-first order, stage ownership and whole-list FD-only exec completion, with before/reversion evidence. No new redirect work in the evaluation. | DG's guarded-index ruling is independent; do not restore the old ICE or reverse that ruling through whole-file rollback. |
 
 Ordinary const validation in DD24/DD35/DD86/DD93 is independently accepted
@@ -484,14 +505,18 @@ and delivered by `e053b852` (journal 644). Strict non-aliasing and the
 one-signature rule in DD100 also remain independent. These are not pending
 trial contracts to reverse if another part proves untenable.
 
-The AI recommends keeping the trial off main while reconciling converter
-compatibility, and addressing or explicitly accepting the append cost.
-Fresh-result hand adaptations demonstrate utility but do not select a
-general reset/replace/rename/annotation policy. No such change, cache,
-general reclamation scheme or new runtime optimization is authorized by
-this evaluation record.
+The original evaluation recommended keeping the trial off main while
+reconciling converter compatibility and addressing or accepting append cost.
+DG subsequently commissioned the append optimization, then accepted the
+package for main. Fresh-result hand adaptations still do not select a
+general reset/replace/rename/annotation policy: the converter follow-up
+retains that choice. No cache or general reclamation scheme is selected.
 
 ### Trial delivery evidence
+
+These are historical per-unit snapshots. References below to remaining work,
+pending adoption or unchanged main describe the named unit's boundary, not
+the current completed status above.
 
 The scratch unit follows `e053b852a96428dca076c30d9d036e3a91fb68e0`;
 [journal 645](../journal/645-immutable-scratch-construction.md) records its
@@ -694,11 +719,10 @@ In particular, the pre-revision scratch-retention text was an AI
 extrapolation; the old regex-consumer abort also did not implement
 DD55/DD70's promised handling levers.
 
-Check this inventory mechanically against actual changed/new
-`notes/decisions/*.md` paths at recording and at trial closeout. Coordinate
-GUIDE, status, this owner, companion tasks and journal 604 as well.
-Do not mark this task done merely because the policy was recorded or a
-prototype compiled: implementation evidence and DG's evaluation remain.
+Closeout reconciles this inventory against the actual changed/new
+`notes/decisions/*.md` paths and updates GUIDE, status and companion tasks.
+Journal 604 remains the original provisional record; journal 661 records
+the completed implementation/evaluation and DG's explicit acceptance.
 
 ## Pre-trial mechanism (historical source inspection)
 

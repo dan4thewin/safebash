@@ -154,21 +154,23 @@ not obviously a bug stays unchanged in the port:
     2026-10-26).
 - `bug-glob-multi-star` (P2): the historical matcher treated later stars
   literally. DG selected at-most-one-star refusal (2026-11-09,
-  DD39/DD131), not a general matcher; enforcement remains open.
+  DD39/DD131), not a general matcher. Delivered in journal 647 and adopted
+  on main in journal 661; task done.
 - `bug-glob-directory-portion` (P2): `sub/*`, `./*` and `/etc/*` match
-  nothing, where DD73 specifies them.
-- `q-glob-semantics` (P2, integrated implementation/evaluation work):
-  DD131/DD132 provisionally combine `glob`/`rglob`, fresh immutable
+  nothing in the old matcher, where DD73 specifies them. Delivered in
+  journal 647 and adopted on main in journal 661; task done.
+- `q-glob-semantics` (P2, done):
+  DD131/DD132 combine `glob`/`rglob`, fresh immutable
   scalar/collection scratch, required regex proof, restricted caught
-  attests and regex boolean/text results. Implement on a separate branch,
-  measure utility and consequences, and return to DG before adoption.
-  The task inventories every revised/new DD for coherent withdrawal or
-  revision. These contracts are recorded, not shipped.
-- `q-attest-retag-of-const` (P3, implementation work): DG separates
+  attests and regex boolean/text results. Implementation, evaluation and
+  append optimization are complete; DG accepted the package for main
+  (journal 661). The DD inventory and original evidence are retained.
+  Converter migration has its separate open owner.
+- `q-attest-retag-of-const` (P3, done): DG separates
   immutability from validation (2026-11-09, DD86). Allow value-preserving
   const attests, including conversion sources; real writes, conversion
   targets and failed-attest replacements remain forbidden. Enforcement
-  is pending; F13's retained SB4044 is still the compiler's behavior.
+  is delivered in journal 644 and included in the main adoption.
 - `q-empty-keyword-condition` (P3): `if then … fi` and `while do … done`
   compile and are false.
   - Answered in F1+F4 (journal 537; decide-and-report): SB4027 "this
@@ -301,11 +303,11 @@ not fix, and what does not block the rest of the port, goes to the backlog:
 - `bug-sed-expansion-extent` (P2; B62-B65, B67, B68): five scanners decide
   where a `${…:s/…}` payload ends; only the statement form's follows DD63
   and DD96. It also covers `$'…'` in a payload (DD63 vs DD65).
-- `q-dynamic-regcomp-levers` (P3, done as a provisionally answered
+- `q-dynamic-regcomp-levers` (P3, done as an answered
   question): DD132 selects validation before use rather than blanket
   consumer abort or failed-substitution fallbacks. Historical F15
-  evidence is retained; implementation/evaluation is still open in
-  the integrated `q-glob-semantics` trial.
+  evidence is retained; implementation/evaluation and acceptance are
+  recorded in the completed `q-glob-semantics` owner.
 - `bug-subscript-key-check-skips-positions` (P1): DD80's key-type check
   runs on a private walker. A word index ICEs natively and reads index 0 in
   C in twelve positions, and fourteen more programs compile.

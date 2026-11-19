@@ -23,7 +23,7 @@ default anchor semantics.
 
 This is not an engine-migration, Unicode, dot-all or length-aware/NUL-matching
 task. Literal validation and runtime matching must continue to agree on
-the selected dialect. DD132's provisional validity-proof interface and
+the selected dialect. DD132's accepted validity-proof interface and
 literal-regex caching retain their separate owners.
 
 See [DD39](../decisions/DD39-glob-regex.md),

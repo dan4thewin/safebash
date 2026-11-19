@@ -1,8 +1,7 @@
 title: DD#132 - Validated regex values, immutable scratch and boolean results
-status: provisional
+status: accepted
 
-1. **Trial only:** evaluate with DD131 on a separate branch before DG's
-   adoption decision. Freshness, immutability, cleanliness and regex validity
+1. Freshness, immutability, cleanliness and regex validity
    are independent properties.
 2. `r?` tests the complete candidate using the consumers' regex dialect.
    Invalid syntax, including literal candidates, gives quiet false;
@@ -29,19 +28,24 @@ status: provisional
 
 ---
 
-DG provisionally adopted this model on 2026-11-09 (journal 604), together
+DG accepted the complete implemented DD131/DD132 package and directed its
+landing on main on 2026-11-18
+([journal 661](../journal/661-accept-glob-scratch-regex.md)).
+
+DG originally adopted this model provisionally on 2026-11-09 (journal 604), together
 with the revisions to DD131 and the existing DDs:
 
 > let's provisionally adopt this along with the revisions to existing DD -
 > in the implementation task let's keep track of which DD were modified
 > should any part prove untenable
 
-`q-glob-semantics` owns the **integrated separate-branch trial** of
+`q-glob-semantics` records the completed **integrated separate-branch trial** of
 selectors, immutable scratch and these regex rules. Its DD revision
 inventory records the pre-revision commit, every affected DD and the
 contract to revisit. `q-dynamic-regcomp-levers` retains the historical
-question/evidence and points to that implementation owner. Nothing here
-authorizes starting implementation or landing a prototype on main.
+question/evidence and points to that implementation owner. The remaining
+[converter migration](../tasks/convert-glob-scratch-regex-migration.md)
+is separate from acceptance of the implemented language rules.
 
 ## Three independent properties
 
@@ -247,7 +251,7 @@ the operation, discarding its boolean by definition. Mutation sugar
 remains a resultless write and is forbidden on immutable scratch.
 Chains retain their order and project each step's text; no new combined
 chain verdict is invented. Every pattern in every sugar form still owes
-the same proof. This projection is an explicit provisional change to
+the same proof. This projection is an explicit change to
 DD63/DD65/DD70, not an implicit exception made by a backend.
 
 `glob` and `rglob` retain operational statuses: successful enumeration
@@ -256,25 +260,27 @@ can still encounter directory failures. Fatal faults and ordinary I/O or
 redirect failures do not become regex no-match or predicate-invalid
 answers.
 
-## Evaluation and implementation boundary
+## Evaluation and implementation
 
-The trial must measure the useful cases and the costs: scalar/read/for
+The trial evaluated the useful cases and the costs: scalar/read/for
 construction, captures and immutable collections, caught failure logging,
 no-else fall-through, skipped sites and zero-trip loops, helper/slot
 requirements, builders versus snapshots, text-only substitution callers,
-dynamic sugar and converter migration. Preserve meaningful zeros without
-inventing a regex proof for them.
+dynamic sugar and converter migration. Meaningful zeros do not invent
+a regex proof.
 
 Use the real CLI and both backends, before/reversion controls and measured
 gate predictions. Pattern validation must agree with actual consumers;
-syntax validity alone does not repair the separately owned regex-anchor
-bug. Ordinary const validation remains its existing prerequisite.
+syntax validity alone does not establish correct matching. Preserve the
+independent whole-subject anchor repair (journal 642) and const-validation
+prerequisite (journal 644).
 
-DG authorized implementation on 2026-11-17. On `glob-scratch-trial`,
+DG authorized implementation on 2026-11-17. The work on `glob-scratch-trial`
+was accepted for main on 2026-11-18:
 immutable scratch construction is implemented (journal 645), and the
 quiet actual-engine `r?` predicate is implemented (journal 648).
 Invalid candidates return false; candidate-copy and engine allocation
-failures remain fatal. These are trial deliveries, not adoption on main.
+failures remain fatal.
 
 The shared consumer-pattern validator now rejects actual `:!`-bearing reads
 with SB5105, including nested indices, arithmetic and capture bodies, even
@@ -300,8 +306,8 @@ their own boundaries. `--no-taint` disables ordinary-read enforcement;
 `--no-taint-cst` does not. Signal deferral protects acquisition through the
 caught predicate, then releases on failure without cleaning the instance.
 
-Scalar `match`, `sub` and `gsub` text/Boolean results are implemented on the
-trial (journal 652). Direct capture-conditions consume both results; other
+Scalar `match`, `sub` and `gsub` text/Boolean results are implemented
+(journal 652). Direct capture-conditions consume both results; other
 value uses require explicit Boolean discard under SB4018. Empty matches
 and identity replacements are true. Substitution sugar projects text per
 edit, as do the regex-backed `basename`/`dirname` intrinsics. Neither
@@ -314,7 +320,7 @@ storage when consuming the Boolean and null when discarding it. The predicate
 and consumers still compile separately: no compiled handle or retained cache
 was added.
 
-`rglob` is implemented on the trial (journal 653), sharing selector traversal,
+`rglob` is implemented (journal 653), sharing selector traversal,
 sorting and complete-batch publication with `glob`. Pattern-list splats retain
 boundaries and require proof for every actual regex, including selected
 defaults; a known-empty list needs no pattern proof or directory work.
@@ -323,5 +329,7 @@ validity. Each compiled selector regex is released after its pattern batch,
 including directory failures; execution-workspace exhaustion remains fatal
 rather than no-match. Journal 654 records the integrated utility/migration/cost evaluation,
 including working fresh-result idioms, required converter/helper adaptations,
-new append costs and pre-existing repeated-regex storage costs. DG's adoption
-decision remains pending. The construction spelling is settled in DD131.
+the original append costs and pre-existing repeated-regex storage costs.
+Journal 655 records the subsequent append optimization. Converter migration
+and regex allocation/reuse remain separately tracked work, not pending
+language-adoption decisions. The construction spelling is settled in DD131.

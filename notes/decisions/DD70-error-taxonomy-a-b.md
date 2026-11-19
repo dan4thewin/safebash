@@ -58,11 +58,11 @@ printing a diagnostic (below). Members:
   external command/pipeline. Nonzero is a failure (pipefail always on,
   DD#20). Explicit `wait` follows DD126's pid/result-latch contract;
   it does not implicitly abort on a nonzero child status.
-- **Dynamic `regcomp` in the shipped consumer interface** (a pattern not
-  known at compile time can fail to compile at run time). DD132's
-  provisional trial moves this invalid-data verdict to `r?` before use,
-  rather than treating invalid syntax as a later consumer failure.
-  Literal regex use retains compile-time validation.
+
+The former dynamic-`regcomp` member is superseded by DD132: invalid data
+gives quiet false at `r?` before consumer use, in channel (B), rather than
+a later recoverable consumer failure. Literal regex use retains compile-time
+validation; allocation faults remain fatal.
 
 Levers:
 - **`-` suppresses** the operation's recoverable result (DD#55/DD130);
@@ -86,8 +86,8 @@ Members:
   separate from the string value and taint. A literal default resolves absence
   and makes either lookup value-only. Implementation is pending in
   `require-getenv-status-handling`.
-- **Provisionally, `r?` and `sub`/`gsub`'s match boolean** (DD132), the
-  latter separate from their text. Implementation remains queued.
+- **`r?` and scalar `match`/`sub`/`gsub`'s match boolean** (DD132), the
+  latter separate from their text. These are implemented and accepted.
 
 **A boolean (or any (B) result) must be consumed or explicitly discarded**
 (DG, 2026-09-09, refining the original 2026-06-25 rule). Producing a
@@ -134,7 +134,7 @@ Levers:
   unused computation and an explicitly empty word-list `for`.
   Intentional `:` remains the deliberate no-op.
 
-### Provisional regex value-plus-boolean contract (DG, 2026-11-09)
+### Regex value-plus-boolean contract (accepted 2026-11-18)
 
 DD132 requires proof for runtime immutable regex patterns. An invalid
 candidate returns quiet false from `r?`; it is not a consumer-side
@@ -153,7 +153,7 @@ mutation remains resultless, with no new chain-wide result.
 `rglob` is not a match predicate: successful enumeration, even of zero
 matches, has an operational success status. All ordinary result-kind,
 no-reach, useful-statement and fatal-fault rules remain. The integrated
-trial and exact DD revision inventory live in `q-glob-semantics`.
+evaluation, acceptance and exact DD revision inventory live in `q-glob-semantics`.
 
 ## Original distinguishing principle (superseded)
 

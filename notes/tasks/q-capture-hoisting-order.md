@@ -61,14 +61,14 @@ that SB5012. Under left-to-right evaluation:
 
 ## Implementation boundaries
 
-The selector prerequisite on `glob-scratch-trial` repairs the shared
+The accepted selector prerequisite repairs the shared
 within-word `lift_concat` path and source ordering in explicit glob operands
 and glob-containing mixed lists (journal 647). It materializes earlier
 component values, including string conversion, before later lifted effects.
 `globsel.3`, `.31`, `globsugar.8`, `.16` and their independent reversions
 pin these routes. The ERR guard migration `errnul.39` and reverse-order
 control `.40` distinguish an earlier safe read from a later NUL-bearing one.
-This is trial delivery, not completion of general argument-list ordering,
+This is partial delivery, not completion of general argument-list ordering,
 the status rows above, or the independent redirect-timing task.
 
 `[[ && || ]]` operands and DD66 dispatch patterns are already lazy, since
