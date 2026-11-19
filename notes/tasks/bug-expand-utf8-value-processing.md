@@ -6,7 +6,7 @@ depends: []
 gates:
   - "real sash-expand CLI preserves UTF-8 literal and substituted values without byte-to-character corruption"
   - "all four prefix/suffix stripping operations handle UTF-8 values without slicing inside a character"
-  - "focused specs fail on the original binary and pass after the repair; ASCII expansion and pattern behavior remain unchanged"
+  - "focused specs fail on the original binary and pass after the repair; retained ASCII behavior is pinned separately from intentional quoting/output migrations"
   - "the predicted ordinary gate passes and the public command manual's UTF-8 bug warning is reconciled"
 
 ## Evidence
@@ -36,13 +36,20 @@ in the existing `spec/` harness, driving the real helper command.
 
 ## Boundaries
 
-Preserve the restricted expansion language, sequential assignment table,
-raw output format and no-execution contract. Do not silently add recursive
-expansion or full shell quoting. If fixing the byte-oriented pattern matcher
-requires selecting what `?` means for Unicode, settle that behavior against
-the expansion contract rather than inventing it as a side effect.
+The [Bash-compatible loader rework](sash-expand-bash-assignment-loader.md),
+recorded at DG's request on 2026-11-19, owns the broader quote-aware parser
+and evaluator change. This defect belongs in that work and stays open until
+both literal copying and all four stripping operations are proved fixed.
+The original narrow-repair instruction to retain the old quoting and
+nonrecursive operand behavior is superseded by that scope.
 
-The lone-quote crash has its own small input-boundary owner,
+Preserve raw key/value output and the no-execution boundary; distinguish
+retained ASCII behavior from the rework's intentional grammar/output changes.
+If fixing the byte-oriented pattern matcher requires selecting what `?`
+means for Unicode, state it against the expansion contract rather than
+inventing it as a slicing side effect.
+
+The lone-quote crash retains its own input-boundary evidence in
 [bug-expand-lone-quote](bug-expand-lone-quote.md).
 Stdout failure handling remains with
 [bug-stdout-write-failure-panics](bug-stdout-write-failure-panics.md).

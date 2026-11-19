@@ -66,6 +66,13 @@ limitation with its guard and the combined-attest guidance.
 
 ## Just completed
 
+- **Bash-compatible `sash-expand` rework backlogged.**
+  DG's assignment-file goal and tree-sitter suggestion are captured with
+  strict non-executing evaluation, conventional help/stdin handling and
+  final file-owned variable output. The UTF-8 and lone-quote bug records
+  are coordinated, not closed. No helper behavior has changed.
+  [Journal 662](journal/662-sash-expand-assignment-loader-backlog.md)
+  records the discussion.
 - **DD131/DD132 accepted and brought to main.**
   DG's adoption settles the former trial boundary. Current DD rules, GUIDE,
   tour and task pointers agree; existing journals and the evaluated trial
@@ -325,9 +332,11 @@ limitation with its guard and the combined-attest guidance.
 - [Tracking/enforcing both Cargo lockfiles](tasks/track-cargo-lockfiles.md)
   and the [native host/cross-target matrix](tasks/cross-compile-and-setjmp-on-mac.md)
   remain implementation work.
-- The companion review filed `sash-expand`
+- The [Bash-compatible `sash-expand` loader](tasks/sash-expand-bash-assignment-loader.md)
+  is queued, using stock tree-sitter-bash syntax and a restricted evaluator,
+  with `/etc/os-release` as the concrete use case. Its
   [UTF-8 processing](tasks/bug-expand-utf8-value-processing.md) and
-  [lone-quote](tasks/bug-expand-lone-quote.md) defects. Existing
+  [lone-quote](tasks/bug-expand-lone-quote.md) defects remain open. Existing
   [CLI stdout-error](tasks/bug-stdout-write-failure-panics.md) and
   [converter annotation](tasks/bug-convert-annotate-midline.md) work remains.
 - Accepted DDs are not necessarily implemented; task records carry delivery
