@@ -342,7 +342,8 @@ SASH_CFLAGS=--no-taint-cst run_sash 'argv 1 a; glob a "glob-data/a.sel"; echo "$
 [[ $rc != 0 && $err == *tainted* ]]; chk globsel.42
 
 run_sash "ERR { array a=(\$'a\\x00b'); glob a 'glob-data/a.sel'; - /bin/echo @{a:-empty} }; fail 7"
-[[ $rc != 0 && $err == *SB5101* && $err == *NUL* ]]; chk globsel.43
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.40
 
 touch pattern
 run_sash 'fn select { str pattern=read; glob batch pattern; echo "$pattern:$(join batch)" }; select'

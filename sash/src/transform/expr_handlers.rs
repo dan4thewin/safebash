@@ -1040,6 +1040,7 @@ pub(crate) fn reconstruct_intrinsic_command(name: &str, args: &[ArithExpr]) -> O
         });
     }
     Some(Command {
+        best_effort: false,
         name: Expr {
             kind: ExprKind::Literal(name.to_string()),
             span: Span::new(0, 0),
@@ -1157,6 +1158,7 @@ mod tests {
     #[test]
     fn join_non_literal_separator_is_a_loud_ice() {
         let c = Command {
+            best_effort: false,
             name: lit("join"),
             args: vec![
                 lit("a"),
@@ -1182,6 +1184,7 @@ mod tests {
     fn join_wrong_arity_is_a_loud_ice() {
         for count in [0, 3] {
             let c = Command {
+                best_effort: false,
                 name: lit("join"),
                 args: vec![lit("a"); count],
             };
@@ -1226,6 +1229,7 @@ mod tests {
             let arity = value_intrinsic_arity(name).unwrap();
             for count in [0, 4].into_iter().filter(|count| !arity.contains(count)) {
                 let c = Command {
+                    best_effort: false,
                     name: lit(name),
                     args: vec![lit("a"); count],
                 };
@@ -1268,6 +1272,7 @@ mod tests {
     #[test]
     fn a_nonliteral_capture_head_cannot_become_a_dynamic_argv() {
         let c = Command {
+            best_effort: false,
             name: Expr {
                 kind: ExprKind::SimpleExpansion("tool".to_string()),
                 span: Span::new(1, 1),

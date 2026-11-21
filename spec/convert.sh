@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=218
+plan=224
 echo "1..$plan" >&3
 
 set +e
@@ -1521,17 +1521,88 @@ run_sash "$converted"
 [[ $converted == *'(( n == 3 )) && (( n < 4 ))'* && $converted != *'"$n"'* \
    && $rc = 0 && $out = num && -z $err ]]; chk 57.191
 
-# 57.192 bash's parameter-assertion idiom passes through unchanged, and the
-# compiled program asserts as bash does, because `:` evaluates its arguments
-# (noop.1-noop.9). It used to print `after`: every converted guard was lost.
-run_convert '#!/bin/bash
-x=""
+# DD136: ordinary colon operands become write-only value sinks. Exercise
+# both annotation settings against the real compiler, not just converted text.
+discard_roundtrip() {
+    local source=$1 expected=$2 expected_rc=${3:-0} expected_error=${4:-}
+    local expect_sink=${5:-yes} annotated converted bad=0
+    for annotated in no yes; do
+        if [[ $annotated = yes ]]; then
+            run_convert_annotate "$source"
+        else
+            run_convert "$source"
+        fi
+        converted=$out
+        [[ $rc = 0 && -z $err && $converted != *'# MANUAL:'* &&
+           ( $expect_sink = no || $converted == *'array _='* ) ]] || ((bad++))
+        run_sash "$converted"
+        [[ $rc = "$expected_rc" && $out = "$expected" && -z $err &&
+           ( $expected_rc != 0 || -z $rerr ) &&
+           $rerr == *"$expected_error"* ]] || ((bad++))
+    done
+    [[ $bad = 0 ]]
+}
+
+discard_roundtrip 'x=""
 : "${x:?x must be set}"
-echo after'
-converted=$out
-run_sash "$converted"
-[[ $converted == *': "${x:?x must be set}"'* && $rc = 1 && -z $out \
-   && $rerr == *": x must be set"* ]]; chk 57.192
+echo after' '' 1 ': x must be set'; chk convdiscard.1
+
+discard_roundtrip 'declare -i n=0
+f() {
+  (( n+=1 ))
+  echo ignored
+}
+: "$(f)" $((n+2)) "literal" "$(f)"
+echo "$n"' 2; chk convdiscard.2
+
+discard_roundtrip 'a=()
+: "${a[@]}"
+a=("one two" three)
+: "${a[@]}" "${a[*]}"
+echo kept' kept; chk convdiscard.3
+
+discard_roundtrip 'consume() {
+  : "$@"
+  echo kept
+}
+consume
+consume one two' $'kept\nkept'; chk convdiscard.4
+
+discard_roundtrip 'trap : INT
+:
+: >empty
+echo ok' ok 0 '' no && [[ -f empty ]]; chk convdiscard.5
+
+bad=0
+for source in \
+    'if : literal; then echo yes; fi' \
+    ': literal && echo yes' \
+    ': literal >empty' \
+    ': literal &' \
+    'x=value : literal' \
+    ': literal | /bin/cat' \
+    'x=$(: literal)'; do
+    run_convert "$source"
+    code=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*#')
+    [[ $rc = 0 && -z $err && $out == *"MANUAL: ':' operands are value disposal"* &&
+       $code = "$source" ]] || ((bad++))
+    run_convert_annotate "$source"
+    code=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*#')
+    [[ $rc = 0 && -z $err && $out == *"MANUAL: ':' operands are value disposal"* &&
+       $code = "$source" ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk convdiscard.6
+
+# List-only intrinsics still need an explicit target rather than an array
+# initializer; their existing manual boundary must not disappear in a sink.
+bad=0
+for source in ': "$@"' $'declare -A a=([one]=two)\n: "${!a[@]}"'; do
+    run_convert "$source"
+    [[ $rc = 0 && -z $err && $out == *'# MANUAL:'* ]] || ((bad++))
+    run_convert_annotate "$source"
+    [[ $rc = 0 && -z $err && $out == *'# MANUAL:'* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk convdiscard.7
 
 run_convert '#!/bin/bash
 trap "echo cleanup" EXIT'

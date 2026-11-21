@@ -14,6 +14,7 @@
 use rustix::fd::{AsRawFd, BorrowedFd};
 use rustix::fs::{memfd_create, MemfdFlags};
 
+mod attempts;
 #[cfg(feature = "coverage")]
 mod coverage;
 mod directory;
@@ -691,12 +692,14 @@ fn discard_inherited_readers() {
     }
 }
 
-/// Fork. Returns child pid in parent, 0 in child, -1 on error.
+/// Fork. Returns the child pid, zero in the child, or -1 for caller cleanup
+/// before fatal dispatch. A failed fork must never become a command result.
 #[no_mangle]
 pub extern "C" fn sash_fork() -> i64 {
     match unsafe { linux_syscalls::fork() } {
         Ok(0) => {
             TERMINAL_STATE.store(TERMINAL_CHILD, core::sync::atomic::Ordering::Relaxed);
+            attempts::child();
             discard_inherited_readers();
             0
         }
@@ -960,15 +963,7 @@ pub extern "C" fn sash_run(argv: *const *const u8, envp: *const *const u8) -> i6
     } else if pid > 0 {
         sash_wait(pid)
     } else {
-        // fork(2) failed — the parent owns fork errors. Report
-        // `<argv0>: <cmd>: <errno>` (errno set by sash_fork); the caller's
-        // uncaught-abort check aborts the program unless it is caught.
-        let cmd = unsafe { *argv };
-        if !cmd.is_null() {
-            let cmd_len = unsafe { strlen(cmd) };
-            sash_emsg(cmd, cmd_len as i64, core::ptr::null(), 0);
-        }
-        127
+        fd_backup_abort(b"fork")
     }
 }
 
@@ -1378,6 +1373,7 @@ struct CaptureFrame {
     ptr: *mut u8,
     len: usize,
     cap: usize,
+    fd: i64,
 }
 
 // Separate heads keep handlers from overwriting a faulting append's borrowed frame.
@@ -1457,6 +1453,7 @@ pub extern "C" fn sash_capture_start_buf() {
         ptr,
         len: 0,
         cap: CAPTURE_BUF_INITIAL,
+        fd: -1,
     });
 }
 
@@ -1890,11 +1887,13 @@ fn save_fd(fd: i64, protected: &[i64]) -> i64 {
         set_last_errno_raw(-saved);
         fd_backup_abort(b"save fd");
     }
+    attempts::saved(fd, saved);
     saved
 }
 
 #[no_mangle]
 pub extern "C" fn sash_restore_fd(saved: i64, fd: i64) {
+    attempts::released(fd, saved);
     if saved < 0 {
         sash_close(fd);
         return;
@@ -1904,6 +1903,14 @@ pub extern "C" fn sash_restore_fd(saved: i64, fd: i64) {
         fd_backup_abort(b"restore fd");
     }
     sash_close(saved);
+}
+
+#[no_mangle]
+pub extern "C" fn sash_discard_fd_backup(saved: i64, fd: i64) {
+    attempts::released(fd, saved);
+    if saved >= 0 && sash_close(saved) < 0 {
+        fd_backup_abort(b"close fd backup");
+    }
 }
 
 fn fd_backup_abort(operation: &[u8]) -> ! {
@@ -3691,6 +3698,7 @@ pub extern "C" fn sash_capture_start() -> (i64, i64) {
         ptr: core::ptr::null_mut(),
         len: 0,
         cap: 0,
+        fd: cap,
     });
     (saved, cap)
 }

@@ -31,7 +31,7 @@ run_sash 'array a=(x); echo ${a[@]:-fallback}'
 run_sash 'map m=([k]=x); echo ${m[$(argv)]:!}'
 [[ $rc != 0 && -z $out && $err == *SB5025* && $err == *'is an array splat'* ]]; chk celop.7
 
-run_sash 'fn f { : @args; map m=([k]=x); echo ${m[$@]:!-fallback} }; f'
+run_sash 'fn f { array _=(@args); map m=([k]=x); echo ${m[$@]:!-fallback} }; f'
 [[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'$@'* ]]; chk celop.8
 
 # ── toupper / tolower builtins (DD#65 — irreducible case conversion) ──

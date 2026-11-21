@@ -1,12 +1,29 @@
-title: "Bug: a count-based strace fault (`when=N`, N ≥ 2) can land on an earlier fork, because strace counts a restarted syscall entry; pipeown.28 is exposed"
+title: "Bug: detect count-based strace faults shifted by restarted syscalls"
 status: open
 priority: P3
 kind: bug
 depends: []
 gates:
-  - "pipeown.28 cannot pass or fail on an off-target fault: under the natural-restart recipe below, its log shows no restarted clone before the injected entry, in both modes"
+  - "the replacement for pipeown.28, errmig.56, proves the outer producer reaped before the inner forks and no restarted clone before its third-entry injection, in both modes"
   - "`run_sash_under` fails a strace-prefixed spec whose log shows a restarted entry (`= ? ERESTART…`) of the faulted syscall before its `(INJECTED)` line, with a message saying the fault landed off target. It is proven on such a log, and every current injection spec passes it"
   - "the census below is re-run, and every count-based rule with N ≥ 2 on a restartable syscall is on target by construction or covered by the detector"
+
+## Trial progress, 2026-11-21
+
+`err-attempt-trial` replaces `pipeown.28` with `errmig.56`, matching DD130's
+fatal-fork contract. An authored `- wait` reaps the small outer producer
+before either inner fork. The assertion checks that actual reap before
+clone 2, exactly three clone entries, EAGAIN injected at entry 3, and no
+restarted clone. Both native/C cases pass; the matched original compiler
+fails the new fatality expectation.
+
+The natural-restart control below was repeated with a two-record producer
+and its delayed exit. Without the wait, clone 2 restarts in both backends;
+with it, the producer is reaped before entry 2 and no restart occurs.
+All four normal-output controls pass.
+[Journal 664](../journal/664-err-owned-call-attempts.md) records the actual
+syscall evidence. The general harness detector and a fresh global injection
+census remain open; fixing this fixture does not complete them.
 
 ## Found
 
@@ -30,7 +47,7 @@ This is not a sash bug. The fault lands on the wrong fork.
 
 ## Mechanism
 
-The spec injects `strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=3`.
+The original spec injects `strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=3`.
 There is no `-f`, so the count covers the main process only. The forks it
 intends are printf (1), sh (2) and cat (3, EAGAIN).
 
@@ -86,7 +103,7 @@ program. Probes are in `files/port-f1f4-probes.tar.gz`, directory `p28/`.
    `sash --emit-c` and `gcc -nostartfiles -static -fno-stack-protector …
    libsash_rt.a -lpthread`.
 
-## Exposure
+## Historical exposure, 2026-10-27
 
 There are 39 count-based injection rules, on 38 spec lines: commands.sh 14
 lines, optional_args.sh 2, pipe_functions.sh 12 and signals.sh 10. Line 533
@@ -99,7 +116,7 @@ of pipe_functions.sh carries two rules.
 | clone `when=2`: p518.18 (pf:523), p518.20 (pf:533), p518.24 (pf:551), capext.18 (cmd:1465) | on target: entry 1 is the first fork, so no child exists to exit during it |
 | clone `when=3`: pipeown.28 (pf:853) | **exposed** |
 
-## Options
+## Original remedy options
 
 - **(a) A detector in `run_sash_under`** (`spec/common.sh:116-120`).
   - When the prefix is strace with `-o LOG` and `inject=SC:…:when=N`, scan
@@ -116,10 +133,11 @@ of pipe_functions.sh carries two rules.
 - **(c) Block SIGCHLD in the traced program.** Rejected: the mask is inherited
   across fork and exec, so every stage would run with it.
 
-## Recommendation
+## Remaining work
 
-(b) plus (a), with no retry. (b) removes the one exposure, and (a) keeps the
-next N ≥ 2 rule honest.
+The explicit reap supersedes option (b)'s polling producer. Complete (a)
+and rerun the census, without automatic retries: the detector must make a
+mistargeted fault visible rather than masking it.
 
-It is in the backlog because the spec predates F1+F4 (coverage 527), F1+F4
-did not touch it, and it blocks nothing. That is DG's 2026-10-25 rule.
+The original deferral followed DG's 2026-10-25 port rule: the spec predated
+F1+F4 (coverage 527), that port did not touch it, and it blocked nothing.

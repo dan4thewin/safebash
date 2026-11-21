@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 / DD#128 — signals and terminal handlers
 . common.sh
-plan=128
+plan=127
 setup signals
 
 set +e
@@ -673,12 +673,14 @@ done
 bad=0
 for predicate in '0? ${data:!}' '! -d ${data:!}' '! p? ${data:!}' \
                  '${data:!} != other'; do
+    expected=
+    [[ $predicate = '${data:!} != other' ]] && expected=/tmp
     run_sash 'str data=$(/bin/echo /tmp)
 ERR { if [[ '"$predicate"' ]] { if /bin/echo ${data:!} { : } } }
 fail'
-    [[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]] || ((bad++))
+    [[ $rc = 1 && $out = "$expected" && -z $err && -z $rerr ]] || ((bad++))
 done
-[[ $bad = 0 ]]; chk errnul.6
+[[ $bad = 0 ]]; chk errmig.19
 
 run_sash 'str data=$(/bin/echo /tmp)
 ERR { if [[ 0? ${data:!} ]] { : } else { if /bin/echo ${data:!} { : } } }
@@ -697,9 +699,9 @@ fail'
 run_sash 'str a=$(/bin/echo one); str b=$(/bin/echo two)
 ERR { if [[ ! 0? ${a:!} || ! 0? ${b:!} ]] { if /bin/echo ${a:!} { : } } }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.9
+[[ $rc = 1 && $out = one && -z $err && -z $rerr ]]; chk errmig.20
 
-# Neither a prior mention, another binding nor a main-path proof suffices.
+# Unknown argv bytes no longer require an ERR-local NUL proof.
 bad=0
 for body in \
     'if [[ ! 0? ${a:!} ]] { : }; if /bin/echo ${a:!} { : }' \
@@ -708,9 +710,9 @@ for body in \
 ERR { '"$body"' }
 if [[ ! 0? ${a:!} && ! 0? ${b:!} ]] { fail }
 fail'
-    [[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]] || ((bad++))
+    [[ $rc = 1 && $out = one && -z $err && -z $rerr ]] || ((bad++))
 done
-[[ $bad = 0 ]]; chk errnul.10
+[[ $bad = 0 ]]; chk errmig.21
 
 run_sash 'str data=$(/bin/echo good)
 ERR {
@@ -733,7 +735,8 @@ ERR {
   }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.12
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.22
 
 run_sash 'str data=$(/bin/echo good)
 ERR {
@@ -743,7 +746,7 @@ ERR {
   if [[ ! 0? $work ]] { if /bin/echo $before { : } }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.13
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errmig.23
 
 run_sash 'array a=(good $'\''bad\x00value'\'')
 ERR {
@@ -766,7 +769,8 @@ ERR {
   }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.15
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.24
 
 run_sash 'array a=(good $'\''bad\x00value'\'')
 fn cleanup {
@@ -786,7 +790,8 @@ run_sash 'ERR {
   }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.17
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.25
 
 run_sash 'str data=$(/bin/echo good)
 ERR {
@@ -819,7 +824,8 @@ ERR {
   }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.20
+[[ $rc = 1 && $out = good && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.26
 
 # Content checks do not declassify, and handled argv does not catch other faults.
 run_sash 'str data=$(/bin/echo good)
@@ -830,10 +836,9 @@ fail'
 run_sash 'str data=$(/bin/echo good)
 ERR { if [[ ! 0? ${data:!} ]] { /bin/echo ${data:!} } }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'uncaught command failure'* &&
-   $err != *'NUL-byte argv guard'* ]]; chk errnul.22
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errmig.27
 
-# Both reaching definitions must be safe, not just the version printed at use.
+# Branches select the bytes checked at the eventual exec boundary.
 run_sash 'str data=$(/bin/echo good)
 ERR {
   if [[ 0? ${data:!} ]] { work=fallback } else { work=${data:!} }
@@ -848,7 +853,7 @@ ERR {
   if /bin/echo $work { : }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.24
+[[ $rc = 1 && $out = safe && -z $err && -z $rerr ]]; chk errmig.28
 
 # A returned predicate preserves the actual branch evidence through inlining.
 run_sash 'str data=$(/bin/echo good)
@@ -865,7 +870,7 @@ fn invalid {
 }
 ERR { if invalid { if /bin/echo ${data:!} { : } } }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.26
+[[ $rc = 1 && -z $out && -z $err && -z $rerr ]]; chk errmig.29
 
 run_sash 'str a=$(/bin/echo one); str b=$(/bin/echo two)
 ERR {
@@ -874,33 +879,22 @@ ERR {
 fail'
 [[ $rc = 1 && $out = one:two && -z $err && -z $rerr ]]; chk errnul.27
 
-# Later value calls can overwrite an earlier operand's physical slot.
-run_sash 'fn change -> int { work=$'\''bad\x00value'\''; return 1 }
-str data=$(/bin/echo good)
-ERR {
-  str work=${data:!}
-  if [[ ! 0? $work ]] {
-    if /bin/echo $work "$(( (change) + 1 ))" { : }
-  }
-}
-fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.28
-
 run_sash 'str data=$(/bin/echo good)
 ERR {
   if [[ ! 0? ${data:!} ]] { if /bin/echo "${data:!}"$'\''\x00'\'' { : } }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.29
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.30
 
-# A fresh lookup result cannot borrow a previous test's truth.
+# Presence handling does not require an unrelated NUL-freedom proof.
 run_sash 'str data=$(/bin/echo good)
 ERR {
   - [[ ! 0? ${data:!} ]]
   if env=$(getenv PATH) { if /bin/echo "${env:!}:${data:!}" { : } }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.30
+[[ $rc = 1 && $out = "$PATH:good" && -z $err && -z $rerr ]]; chk errmig.31
 
 run_sash 'ERR {
   str env=$(- getenv PATH)
@@ -948,7 +942,8 @@ run_sash 'ERR {
   if /bin/echo @{k:-} { : }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.35
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.32
 
 run_sash 'ERR {
   map m=([old]=value)
@@ -958,7 +953,8 @@ run_sash 'ERR {
   if /bin/echo @{k:-} { : }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.36
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.33
 
 run_sash 'ERR {
   array captures=(old)
@@ -981,7 +977,8 @@ ERR {
   if /bin/echo "$(change)$work" { : }
 }
 fail'
-[[ $rc = 1 && $err == *SB5101* && $err == *'NUL-byte argv guard'* ]]; chk errnul.40
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.34
 
 # Failed caught scratch releases the signal guard without cleaning the value.
 run_sash_under 'signal 15 EXIT

@@ -219,7 +219,7 @@ greet'
 
 # 67.2 `name()` sugar passes positionals like fn. DD#81: a fixed-arity function
 # must read `args` contiguously — `: $1` acknowledges the unused first param.
-run_sash 'pick() { : $1; echo $2; }
+run_sash 'pick() { _=$1; echo $2; }
 pick a b'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 67.2
 
@@ -494,18 +494,18 @@ n'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk 81.21
 
 # 81.22 DD#81's no-op idiom declares the variadic intent and restores the count
-run_sash 'fn n { : @args; echo "$#" }
+run_sash 'fn n { array _=(@args); echo "$#" }
 n a b'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 81.22
 
 # 81.23 the same for `$(len args)`
-run_sash 'fn n { : @args; echo "n=$(len args)" }
+run_sash 'fn n { array _=(@args); echo "n=$(len args)" }
 n a b c'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk 81.23
 
 # 81.24 and for the branch form
 run_sash 'fn n {
-  : @args
+  array _=(@args)
   if (( $# < 2 )); then echo few; else echo many; fi
 }
 n a
@@ -674,7 +674,7 @@ L" && -z $err ]]; chk ice.6
 
 # sp.1 a function receives one argument per ELEMENT
 run_sash 'array a=(x y z)
-fn f { : @args; echo "n=$(len args)" }
+fn f { array _=(@args); echo "n=$(len args)" }
 f @a'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.1
 
@@ -689,7 +689,7 @@ f @a'
 # DD#84 (2026-09-28): a bare `@two` can be empty, so an index read must be
 # optional (`:-`) for the callee's floor to admit it — see 84.53-84.66.
 run_sash 'array two=("a b" "c")
-fn f { : @args; echo "n=$(len args) first=[${args[0]:-}]" }
+fn f { array _=(@args); echo "n=$(len args) first=[${args[0]:-}]" }
 f @two'
 [[ $rc = 0 && $out = "n=2 first=[a b]" && -z $err ]]; chk sp.3
 
@@ -717,7 +717,7 @@ run_sash 'array a=(x y z)
 [[ $rc = 0 && $out = "<x><y><z>" && -z $err ]]; chk sp.7
 
 # sp.8 an explicit argument list is unchanged (control)
-run_sash 'fn f { : @args; echo "n=$(len args)" }
+run_sash 'fn f { array _=(@args); echo "n=$(len args)" }
 f x y z'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.8
 
@@ -728,13 +728,13 @@ f x y z'
 
 # sp.9 a pipelined function receives one argument per ELEMENT
 run_sash 'array a=(x y z)
-fn f { : @args; echo "n=$(len args)" }
+fn f { array _=(@args); echo "n=$(len args)" }
 f @a | /bin/cat'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.9
 
 # sp.10 …and element boundaries survive there too (the lossy half)
 run_sash 'array two=("a b" "c")
-fn f { : @args; echo "n=$(len args) first=[${args[0]:-}]" }
+fn f { array _=(@args); echo "n=$(len args) first=[${args[0]:-}]" }
 f @two | /bin/cat'
 [[ $rc = 0 && $out = "n=2 first=[a b]" && -z $err ]]; chk sp.10
 
@@ -1813,7 +1813,7 @@ f skip'
 run_sash 'fn f {
   if [[ $1 == set ]] {
     argv 1 a
-    for v in one { : "$v" }
+    for v in one { _="$v" }
   }
   echo "${a[0]:!}:$v"
 }

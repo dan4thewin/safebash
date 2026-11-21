@@ -303,20 +303,20 @@ show hello'
 # compiled to a binary that SEGFAULTED.
 
 # 100.38 a pipeline stage binds the slot (was: len A = 0, argc = 1)
-run_sash 'fn f { : @args; echo "len=$(len A) n=$(len args)" }
+run_sash 'fn f { array _=(@args); echo "len=$(len A) n=$(len args)" }
 array q=(x y z)
 f =q | /bin/cat'
 [[ $rc = 0 && $out = "len=3 n=0" && -z $err ]]; chk 100.38
 
 # 100.39 a declaration capture binds the slot
-run_sash 'fn f { : @args; echo "$(join A ,)" }
+run_sash 'fn f { array _=(@args); echo "$(join A ,)" }
 array q=(3 1 4)
 str t=$(f =q)
 echo "t=$t"'
 [[ $rc = 0 && $out = "t=3,1,4" && -z $err ]]; chk 100.39
 
 # 100.40 a re-assignment capture binds the slot (a distinct lowering path)
-run_sash 'fn f { : @args; echo "$(join A ,)" }
+run_sash 'fn f { array _=(@args); echo "$(join A ,)" }
 array q=(3 1 4)
 str t=x
 t=$(f =q)
@@ -324,7 +324,7 @@ echo "t=$t"'
 [[ $rc = 0 && $out = "t=3,1,4" && -z $err ]]; chk 100.40
 
 # 100.41 an argument-position capture binds the slot (was: SEGFAULT)
-run_sash 'fn f { : @args; echo "$(join A ,)" }
+run_sash 'fn f { array _=(@args); echo "$(join A ,)" }
 array q=(3 1 4)
 echo "[$(f =q)]"'
 [[ $rc = 0 && $out = "[3,1,4]" && -z $err ]]; chk 100.41
@@ -338,7 +338,7 @@ echo "t=$t"'
 
 # 100.43 Part C (scalars first) is enforced inside `$( )` too — this was
 # silently ACCEPTED, because the checks never descended into a capture
-run_sash 'fn f { : @args; echo "$(join A ,)${args[0]:-}" }
+run_sash 'fn f { array _=(@args); echo "$(join A ,)${args[0]:-}" }
 array q=(3 1 4)
 str t=$(f =q "x")
 echo "t=$t"'
@@ -346,7 +346,7 @@ echo "t=$t"'
 
 # 100.44 …and `=scalar` inside `$( )` reports SB5066, not a misleading arity
 # error about an argument the author never passed
-run_sash 'fn f { : @args; echo "$(join A ,)" }
+run_sash 'fn f { array _=(@args); echo "$(join A ,)" }
 str sc=z
 echo "s=$sc"
 str t=$(f =sc)
@@ -355,7 +355,7 @@ echo "t=$t"'
 
 # 100.45 `=foo` in capture position counts as a READ of foo (DD#100 Part F) —
 # the dead-variable gate must not fire on it
-run_sash 'fn f { : @args; echo "$(join A ,)" }
+run_sash 'fn f { array _=(@args); echo "$(join A ,)" }
 array q=(3 1 4)
 str t=$(f =q)
 echo "t=$t"'
@@ -600,7 +600,7 @@ str text=$(array items=(inner); echo $(len items))
 echo $text $(len items)'
 [[ $rc != 0 && -z $out && $err == *SB5049* && $err == *'already declared in this scope'* ]]; chk slotty.39
 
-run_sash 'fn counts { : @args; echo "$1:$(len args):$(len A)" }
+run_sash 'fn counts { array _=(@args); echo "$1:$(len args):$(len A)" }
 array a=(word)
 counts first =a
 counts second extra =a'
@@ -713,7 +713,7 @@ first
 second'
 [[ $rc = 0 && $out = $'14\nword' && -z $err ]]; chk bindscope.18
 
-run_sash 'fn first { str item=key; : $item; map entries=([item]=word); echo ${entries[item]}; unset entries[item]; echo $(len entries) }
+run_sash 'fn first { str item=key; _=$item; map entries=([item]=word); echo ${entries[item]}; unset entries[item]; echo $(len entries) }
 first'
 [[ $rc = 0 && $out = $'word\n0' && -z $err ]]; chk bindscope.19
 
@@ -922,7 +922,7 @@ f =a
 }'
 [[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk h128.noalias.17
 
-run_sash 'fn key { : "$(len A)" "$(len B)"; echo k }
+run_sash 'fn key { _="$(len A)"; _="$(len B)"; echo k }
 map m=([k]=yes)
 str value="${m[$(key =m =m)]}"
 echo "$value"'
@@ -1037,7 +1037,7 @@ echo "$(len a) $(len b)"' x
    && $err == *'`fill` is shared'* ]]; chk sflow.9
 
 # Received taint survives a shared metadata-only call without becoming its own.
-run_sash 'fn size { : "$(len A)" }
+run_sash 'fn size { _="$(len A)" }
 argv 1 a
 size =a
 size =a
@@ -1045,7 +1045,7 @@ echo "${a[0]}"' dirty
 [[ $rc != 0 && $err == *SB5020* && $err != *SB5067* ]] \
    && grep -qE ':5: *6: error \[SB5020\]' <<< "$err"; chk sflow.10
 
-run_sash 'fn size { : "$(len A)" }
+run_sash 'fn size { _="$(len A)" }
 argv 1 a
 size =a
 attest v in a [[ -n $v ]]
@@ -1053,7 +1053,7 @@ echo "${a[0]}"' dirty
 [[ $rc != 0 && $err == *SB5088* ]] \
    && grep -qE ':4: *1: error \[SB5088\]' <<< "$err"; chk sflow.11
 
-run_sash 'fn count -> int { : "${A[0]}"; return 7 }
+run_sash 'fn count -> int { _="${A[0]}"; return 7 }
 argv 1 a
 int n=$(count =a)
 echo "$n"' dirty

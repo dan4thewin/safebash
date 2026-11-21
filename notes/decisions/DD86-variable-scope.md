@@ -22,6 +22,8 @@ status: accepted
    declarations are not legal in loop bodies.
 5. Apply DD#62's unbound-read checks in every scope. Every assigned name
    must be read; consts, reader targets and loop variables are not exempt.
+   DD98's write-only `_` disposes of values; independent discard sites
+   have independent identities and may have different types.
 6. Each function has exactly one hoisted, global source definition,
    directly in the main statement list, and one result kind and inferred
    signature. Names use DD#125's ASCII identifier grammar and exclusions,
@@ -44,6 +46,9 @@ status: accepted
     redirect sequentially, stopping at failure, before entering the command
     body. Stage arguments stay in the child after pipe plumbing. Completed
     operand effects are not rolled back by later redirect failure.
+11. Provisional DD136 attempts preserve completed effects and restore only
+    their abandoned execution scopes. Recovery creates no new source scope,
+    rollback, inherited-taint clearance or writable ERR import.
 
 ---
 
@@ -291,8 +296,9 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    shared `ReadSink`: Flag mode = SB5031, Collect mode = dead-var) so the two
    never disagree on what a read is; value-fn bare operands (`len`/`join`/
    `keys`) added on top. DG rulings (2026-09-02): (a) more-specific error wins
-   — dead-var runs LAST, after taint/type/transform; (b) `read`/~~`mapfile`~~ targets and `for` variables ARE checked; (c) `: $v` is the
-   acknowledgment escape hatch (a real read, per DD#81 arity). Filed
+   — dead-var runs LAST, after taint/type/transform; (b) `read`/~~`mapfile`~~ targets and `for` variables ARE checked; (c) ~~`: $v` is the
+   acknowledgment escape hatch~~ — the DD136 trial uses `_=$v` instead,
+   still a real checked read (DD98). Filed
    `bare-collection-name-operand-asymmetry` (builtin bare-name vs user-fn
    splat).**
 5. Retire `local fn`; converter; specs; GUIDE/SUBSET. **— shipped (journal
@@ -657,7 +663,9 @@ before that command's attached redirects. Do not move them to the parent.
 DD122's parent-process readers and lexical pipe ownership are unchanged.
 
 Failure during argument evaluation follows its own checks and no-reach
-rules, before any attached redirect runs. A later redirect failure does
+rules, before any attached redirect runs. The provisional DD136 exception
+is an ERR-owned attempted invocation, which includes its argument evaluation.
+A later redirect failure does
 not undo completed argument effects; DD130 still governs recovery and
 ordered partial setup.
 
@@ -709,12 +717,19 @@ forbid status returns inside a named function called by that body.
 
 Use a named status function and explicit handling/discard when that result
 is needed. DD88 now includes `if text=$(status_f)` (accepted 2026-11-12,
-implementation pending in `predicate-capture-conditions`). That consumes
+implemented on the DD136 trial branch, tracked in `predicate-capture-conditions`).
+That consumes
 the named callee's result, not an anonymous body's return. It changes neither
 lexical scope nor enclosing-binding access: global effects persist on false
 as on true, and the callee starts with its ordinary fresh execution context.
 Enforcement is pending in `reject-anonymous-capture-status-returns`;
 journal 584 records the decision.
+
+An eligible ERR-owned named capture-condition also establishes DD136's
+provisional call attempt. Its enclosing capture survives abandonment and
+binds the bytes already emitted; incomplete captures inside the attempted
+chain do not. Global effects remain visible, private locals remain private,
+and each later body entry still initializes its newly owned bindings.
 
 ### No process-replacing exec in a capture (DG, 2026-11-08)
 

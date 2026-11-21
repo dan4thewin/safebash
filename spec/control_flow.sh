@@ -165,7 +165,7 @@ run_sash 'fn each { for x in @args; do echo "$x"; done }; each a b c'
 [[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk cf.f12
 
 # cf.f13 $# inside a function is the caller's arg count
-run_sash 'fn n { : @args; echo "$#"; }; n a b'
+run_sash 'fn n { array _=(@args); echo "$#"; }; n a b'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk cf.f13
 
 # cf.f14 $1 inside a function is the caller's first arg
@@ -642,25 +642,25 @@ run_sash 'for k in $(/bin/echo a 2>/dev/null) { attest k [[ -n $k ]]; echo "[$k]
 # The small heap leaves ample room for the table, but not 20000 counter strings.
 SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'array a=(red blue)
 int n=0
-while (( n<10000 )) { for x in @a { : $x }; (( n++ )) }
+while (( n<10000 )) { for x in @a { _=$x }; (( n++ )) }
 echo $n'
 [[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.1
 
 SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'map m=([k]=red [j]=blue)
 int n=0
-while (( n<10000 )) { for x in @m { : $x }; (( n++ )) }
+while (( n<10000 )) { for x in @m { _=$x }; (( n++ )) }
 echo $n'
 [[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.2
 
 SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'map m=([k]=red [j]=blue)
 int n=0
-while (( n<10000 )) { for k in $(keys m) { : $k }; (( n++ )) }
+while (( n<10000 )) { for k in $(keys m) { _=$k }; (( n++ )) }
 echo $n'
 [[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.3
 
 SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'int n=0
 while (( n<10000 )) {
-    for x in $(argv 1) { attest x [[ -n $x ]]; : $x }
+    for x in $(argv 1) { attest x [[ -n $x ]]; _=$x }
     (( n++ ))
 }
 echo $n' red blue
@@ -669,7 +669,7 @@ echo $n' red blue
 # Even an empty collection rechecks its bound once per enclosing iteration.
 SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'array a
 int n=0
-while (( n<10000 )) { for x in @a { : $x }; (( n++ )) }
+while (( n<10000 )) { for x in @a { _=$x }; (( n++ )) }
 echo $n'
 [[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.5
 

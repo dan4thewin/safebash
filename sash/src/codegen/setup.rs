@@ -52,6 +52,16 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let abort = module
         .declare_function("sash_abort", Linkage::Import, &exit_sig)
         .expect("declare sash_abort");
+    let attempt_sig = Signature::new(CallConv::SystemV);
+    let attempt_begin = module
+        .declare_function("sash_attempt_begin", Linkage::Import, &attempt_sig)
+        .expect("declare attempt begin");
+    let attempt_end = module
+        .declare_function("sash_attempt_end", Linkage::Import, &attempt_sig)
+        .expect("declare attempt end");
+    let attempt_abandon = module
+        .declare_function("sash_attempt_abandon", Linkage::Import, &attempt_sig)
+        .expect("declare attempt abandon");
     let shutdown = module
         .declare_function("sash_shutdown", Linkage::Import, &exit_sig)
         .expect("declare sash_shutdown");
@@ -332,6 +342,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let restore_fd_func = module
         .declare_function("sash_restore_fd", Linkage::Import, &restore_sig)
         .expect("declare sash_restore_fd");
+    let discard_fd_backup = module
+        .declare_function("sash_discard_fd_backup", Linkage::Import, &restore_sig)
+        .expect("declare discard fd backup");
 
     // sash_redirect(fd, path, flags) -> 0 ok, -1 err
     let mut redirect_sig = Signature::new(CallConv::SystemV);
@@ -881,6 +894,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         exit: exit_func,
         finish,
         abort,
+        attempt_begin,
+        attempt_end,
+        attempt_abandon,
         shutdown,
         signal_checkpoint,
         reader_start,
@@ -909,6 +925,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         dup2: dup2_func,
         save_fd: save_fd_func,
         restore_fd: restore_fd_func,
+        discard_fd_backup,
         redirect: redirect_func,
         redirect_s: redirect_s_func,
         read: read_func,
@@ -1252,7 +1269,10 @@ impl<'a> Interner<'a> {
                 ..
             } => ("loop", *body_block, *exit_block),
             Terminator::Fork { parent, child } => ("branch", *parent, *child),
-            Terminator::Goto(_) | Terminator::Return | Terminator::ChildExit => return,
+            Terminator::Goto(_)
+            | Terminator::Checked { .. }
+            | Terminator::Return
+            | Terminator::ChildExit => return,
         };
         for target in [first, second] {
             let label = program.block(target).label.as_str();
@@ -1535,6 +1555,7 @@ fn map_inst_versioned(
 ) {
     match inst {
         SsaInst::Assign { target, .. }
+        | SsaInst::RecoverGlobal { target, .. }
         | SsaInst::LifetimeStart { target, .. }
         | SsaInst::CollectionPublish { target, .. }
         | SsaInst::ReadLine { target, .. }

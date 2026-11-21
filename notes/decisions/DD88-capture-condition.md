@@ -15,7 +15,9 @@ status: accepted
    value-only captures, arbitrary expressions and multi-statement bodies gain
    no condition result; literal-default lookups are value-only (DD101).
 5. Ordinary handling-position, negation, taint and no-reach rules apply;
-   discarded statuses cannot also be consumed.
+   discarded statuses cannot also be consumed. In the provisional DD136
+   trial, ERR-owned named predicate captures establish narrow call attempts:
+   abnormal completion is false before authored negation, even for `fail 0`.
 6. Stdout captures must retain a possible connected writer after redirects;
    direct value intrinsics and integer captures do not capture stdout and
    are outside that writer test.
@@ -28,7 +30,7 @@ DG accepted direct file-read capture-conditions on 2026-11-10:
 **"yes to capture-condition"** (journal 610). That extension is not yet
 implemented; `recoverable-file-failures` owns it.
 DG accepted named predicate-function capture-conditions on 2026-11-12
-(journal 628). That extension is also **unimplemented**;
+(journal 628). That extension is implemented on the DD136 trial branch;
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
 owns it.
 DD101's symmetric lookup decision (DG, 2026-11-13; journal 631) admits bare
@@ -63,7 +65,8 @@ a direct `$(<file)` read, and DD135's `$(mkdtemp)`:
 
 - the **condition consumes the producer's actual status**
   (`test = status == 0`); a recoverable nonzero result does **not** abort
-  (the status is consumed — DD#55's "binding the status" rule);
+  (the status is consumed — DD#55's "binding the status" rule).
+  DD136's abnormal attempt outcome is separately false, even with status 0;
 - the producer's **text is bound to the target**. External output,
   environment/program-argument data and file input retain their taint;
   handling acquisition failure is not validation of the acquired data;
@@ -138,11 +141,20 @@ existing handling-position `$?`; negation retains its existing 0/1 rule.
 A false return still binds this attempt's stdout, possibly empty or partial,
 not the target's previous value. Existing capture byte/newline handling stays.
 
-The condition handles the function's returned result, **not failures inside
+Ordinarily the condition handles the function's returned result, **not failures inside
 its body or operands**. An unchecked command inside `f` still aborts;
 `return command` explicitly forwards that command's result. Attached
 redirects retain DD130's failure rules. Fatal faults and `exit`/`fail`
-remain terminal, not false returns.
+remain terminal outside DD136's explicit exception.
+
+In the provisional [DD136 trial](DD136-err-call-attempts.md), an ERR-owned
+named predicate capture establishes a call attempt. Explicit `fail` and
+existing unchecked operational results abandon its full helper chain and
+produce a false verdict, retaining the numeric status until authored
+negation. The caller-owned capture then binds output already emitted;
+unfinished inner captures are abandoned. Runtime guards, fatal faults and
+`exit` remain terminal. A capture or condition inside a helper does not
+establish another attempt.
 
 Execution stays in the existing same-process model (DD86). Global and
 collection effects persist on either returned result; capture introduces
@@ -160,10 +172,11 @@ handling or discard of bare lookup status too. Conversely, `if text=$(- f)`,
 `if text=$(- arg N)` and `if text=$(- getenv NAME)` cannot consume the status
 that source `-` discards.
 
-**Implementation pending:** `predicate-capture-conditions` owns eligibility,
-result plumbing and native/C behavior. Preserve the existing shared
-result-kind and body-boundary rules rather than merely deleting the
-function-name rejection.
+**Trial delivery:** `predicate-capture-conditions` tracks the implemented
+eligibility and native/C result plumbing. The shared result classifier
+preserves the distinction from integer-value captures and anonymous bodies.
+DD136 remains provisional; direct file-read capture-conditions remain
+separately pending.
 
 ### Direct file-read capture-conditions (DG, 2026-11-10)
 

@@ -298,7 +298,7 @@ echo ""'
 
 # 84.50 a user function call is a command argument list: argc really drops
 run_sash 'fn f {
-  : @args
+  array _=(@args)
   int n=$(len args)
   echo "argc=$n"
 }
@@ -308,7 +308,7 @@ f A ${p:~} B'
 
 # 84.51 …and does not drop when the value is non-empty
 run_sash 'fn f {
-  : @args
+  array _=(@args)
   int n=$(len args)
   echo "argc=$n"
 }
@@ -356,31 +356,31 @@ f @q'
 [[ $rc != 0 && $err == *SB5087* ]]; chk 84.56
 
 # 84.57 an empty bare splat cannot satisfy a variadic callee's floor
-run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+run_sash 'fn f { array _=(@args); str a=${args[0]}; echo "a=[$a]" }
 array q=()
 f @{q:~}'
 [[ $rc != 0 && $err == *SB5087* ]]; chk 84.57
 
 # 84.58 …nor can a `:~` elide
-run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+run_sash 'fn f { array _=(@args); str a=${args[0]}; echo "a=[$a]" }
 str x=""
 f ${x:~}'
 [[ $rc != 0 && $err == *SB5087* ]]; chk 84.58
 
 # 84.59 `@{a:-}` guarantees one element (2026-09-04 addendum), so it satisfies
-run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+run_sash 'fn f { array _=(@args); str a=${args[0]}; echo "a=[$a]" }
 array q=()
 f @{q:-}'
 [[ $rc = 0 && $out = "a=[]" && -z $err ]]; chk 84.59
 
 # 84.60 `@{a:?}` aborts on empty, so any path that continues delivers one
-run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+run_sash 'fn f { array _=(@args); str a=${args[0]}; echo "a=[$a]" }
 array q=(z)
 f @{q:?empty}'
 [[ $rc = 0 && $out = "a=[z]" && -z $err ]]; chk 84.60
 
 # 84.61 a fixed argument ahead of the splat satisfies the floor on its own
-run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+run_sash 'fn f { array _=(@args); str a=${args[0]}; echo "a=[$a]" }
 array q=(z)
 f one @{q:~}'
 [[ $rc = 0 && $out = "a=[one]" && -z $err ]]; chk 84.61
@@ -410,12 +410,12 @@ echo "n=$(len b)"'
 
 # 84.66 `: @args` must not promote a DD#84 optional index back to required —
 # the same body without it accepts a zero-argument call, so this must too
-run_sash 'fn f { : @args; echo "[${args[0]:-}]" }
+run_sash 'fn f { array _=(@args); echo "[${args[0]:-}]" }
 f'
 [[ $rc = 0 && $out = "[]" && -z $err ]]; chk 84.66
 
 # 84.67 …and the optional index still reads when it IS supplied
-run_sash 'fn f { : @args; echo "[${args[0]:-}]" }
+run_sash 'fn f { array _=(@args); echo "[${args[0]:-}]" }
 f hi'
 [[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk 84.67
 
@@ -429,33 +429,33 @@ f hi'
 
 # 84.68 a splat BEFORE a fixed position is rejected, however many elements it
 # has — nothing after a run-time length lands at a position you can count on
-run_sash 'fn f { : @args; echo "first=[${args[0]}]" }
+run_sash 'fn f { array _=(@args); echo "first=[${args[0]}]" }
 array e=(q r)
 f @e x'
 [[ $rc != 0 && $err == *SB5087* ]]; chk 84.68
 
 # 84.69 …and a `:~` elide before one, for the same reason
-run_sash 'fn f { : @args; echo "first=[${args[0]}]" }
+run_sash 'fn f { array _=(@args); echo "first=[${args[0]}]" }
 str m=""
 f ${m:~} x'
 [[ $rc != 0 && $err == *SB5087* ]]; chk 84.69
 
 # 84.70 a guaranteed splat covers only the positions its MINIMUM guarantees:
 # `@{e:-W}` fixes position 0, so a floor of 2 is still unmet
-run_sash 'fn f { : @args; echo "[${args[0]}][${args[1]}]" }
+run_sash 'fn f { array _=(@args); echo "[${args[0]}][${args[1]}]" }
 array e=()
 f @{e:-fallback} y'
 [[ $rc != 0 && $err == *SB5087* ]]; chk 84.70
 
 # 84.71 …and discrete arguments ahead of the splat satisfy the whole fixed
 # portion, which then reads correctly whatever the array holds
-run_sash 'fn f { : @args; echo "[${args[0]}][${args[1]}] n=$(len args)" }
+run_sash 'fn f { array _=(@args); echo "[${args[0]}][${args[1]}] n=$(len args)" }
 array e=(q r)
 f a b @e'
 [[ $rc = 0 && $out = "[a][b] n=4" && -z $err ]]; chk 84.71
 
 # 84.72 a floor of 0 reads no fixed position, so order is irrelevant
-run_sash 'fn f { : @args; for v in @args; do echo "<$v>"; done }
+run_sash 'fn f { array _=(@args); for v in @args; do echo "<$v>"; done }
 array e=(q)
 f @e x'
 [[ $rc = 0 && $out = $'<q>\n<x>' && -z $err ]]; chk 84.72

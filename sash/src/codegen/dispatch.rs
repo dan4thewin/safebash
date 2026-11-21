@@ -35,7 +35,24 @@ impl SsaInst {
         let exit_status_var = ctx.exit_status_var;
         let capture_slots = ctx.capture_slots;
         match self {
-            SsaInst::SourceOrigin(..) => {}
+            SsaInst::SourceOrigin(..) | SsaInst::RecoverGlobal { .. } => {}
+            SsaInst::AttemptStart { .. } => {
+                let begin = module.declare_func_in_func(externs.attempt_begin, builder.func);
+                builder.ins().call(begin, &[]);
+            }
+            SsaInst::AttemptEnd { failed } => {
+                let function = if *failed {
+                    externs.attempt_abandon
+                } else {
+                    externs.attempt_end
+                };
+                let end = module.declare_func_in_func(function, builder.func);
+                builder.ins().call(end, &[]);
+                if *failed {
+                    let zero = builder.ins().iconst(I64, 0);
+                    builder.def_var(test_result_var, zero);
+                }
+            }
             SsaInst::LifetimeStart { target, collection } => {
                 super::inst_handlers::handle_lifetime_start(
                     target,
@@ -322,9 +339,7 @@ impl SsaInst {
                 builder.def_var(ctx.test_result_var, ready);
             }
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
-            BuiltinCmd::StoreBgPid => {
-                return self.emit_store_bg_pid(args, *checked, builder, module, ctx)
-            }
+            BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
             BuiltinCmd::SignalCheckpoint => {
@@ -387,12 +402,8 @@ impl SsaInst {
         let one = builder.ins().iconst(I64, 1);
         let flipped = builder.ins().isub(one, cur);
         builder.def_var(test_result_var, flipped);
-        // Also flip exit status so $? reflects the negation
-        let cur_es = builder.use_var(exit_status_var);
-        let zero = builder.ins().iconst(I64, 0);
-        let is_zero = builder.ins().icmp(IntCC::Equal, cur_es, zero);
-        let new_es = builder.ins().select(is_zero, one, zero);
-        builder.def_var(exit_status_var, new_es);
+        // A recovered fail 0 is false despite its numeric status.
+        builder.def_var(exit_status_var, cur);
     }
 
     /// `test_result = (exit_status == 0)` — sync the branch truth value from
@@ -599,40 +610,47 @@ impl SsaInst {
 
         builder.switch_to_block(fail_block);
         builder.seal_block(fail_block);
-        // attest failed: `<argv0>: attest: <name> = '<val>' failed the gate`,
-        // exit(1). Name + value tell the user which gate failed and why.
-        let name = ctx.program.source_names.original(&source.name);
-        let name_id = literals[name];
-        let name_gv = module.declare_data_in_func(name_id, builder.func);
-        let name_ptr = builder.ins().global_value(I64, name_gv);
-        let name_len = builder.ins().iconst(I64, name.len() as i64);
-        // The source value, for `= '<val>'`. An int slot is rendered with
-        // `sash_itoa` rather than dropped: the C backend already names the
-        // value for an int (`emit_var_value` → `emit_itoa_temp`), so passing
-        // zeros here made the two backends print different diagnostics for
-        // the same program.
-        //
-        // One lookup serves both the fail block (the message) and the pass
-        // block (the retagged copy). They ask the identical question, so they
-        // must not be able to answer it differently — they used to, and the
-        // pass block's answer was to skip the copy in silence. A miss is a
-        // compiler fault; `types::var_slot` owns that claim.
         let src_key = format!("{}_{}", source.name, source.version);
         let src_slot = super::types::var_slot(vars, &src_key);
-        let (val_ptr, val_len) = match src_slot {
-            VarSlot::Str { ptr, len } => (ptr.load(builder), len.load(builder)),
-            VarSlot::Int(v) => {
-                let val = v.load(builder);
-                super::types::emit_int_to_str(builder, module, externs, val)
-            }
-        };
-        let attest_fail_ref = module.declare_func_in_func(externs.attest_fail, builder.func);
-        builder
-            .ins()
-            .call(attest_fail_ref, &[name_ptr, name_len, val_ptr, val_len]);
-        builder
-            .ins()
-            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+        if let Some(target) = ctx.recovery {
+            let one = builder.ins().iconst(I64, 1);
+            builder.def_var(exit_status_var, one);
+            builder.def_var(ctx.test_result_var, zero);
+            builder.ins().jump(target, &[]);
+        } else {
+            // attest failed: `<argv0>: attest: <name> = '<val>' failed the gate`,
+            // exit(1). Name + value tell the user which gate failed and why.
+            let name = ctx.program.source_names.original(&source.name);
+            let name_id = literals[name];
+            let name_gv = module.declare_data_in_func(name_id, builder.func);
+            let name_ptr = builder.ins().global_value(I64, name_gv);
+            let name_len = builder.ins().iconst(I64, name.len() as i64);
+            // The source value, for `= '<val>'`. An int slot is rendered with
+            // `sash_itoa` rather than dropped: the C backend already names the
+            // value for an int (`emit_var_value` → `emit_itoa_temp`), so passing
+            // zeros here made the two backends print different diagnostics for
+            // the same program.
+            //
+            // One lookup serves both the fail block (the message) and the pass
+            // block (the retagged copy). They ask the identical question, so they
+            // must not be able to answer it differently — they used to, and the
+            // pass block's answer was to skip the copy in silence. A miss is a
+            // compiler fault; `types::var_slot` owns that claim.
+            let (val_ptr, val_len) = match src_slot {
+                VarSlot::Str { ptr, len } => (ptr.load(builder), len.load(builder)),
+                VarSlot::Int(v) => {
+                    let val = v.load(builder);
+                    super::types::emit_int_to_str(builder, module, externs, val)
+                }
+            };
+            let attest_fail_ref = module.declare_func_in_func(externs.attest_fail, builder.func);
+            builder
+                .ins()
+                .call(attest_fail_ref, &[name_ptr, name_len, val_ptr, val_len]);
+            builder
+                .ins()
+                .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+        }
 
         builder.switch_to_block(pass_block);
         builder.seal_block(pass_block);
@@ -760,22 +778,29 @@ impl SsaInst {
         builder.ins().brif(result, cont, &[], fail, &[]);
         builder.switch_to_block(fail);
         builder.seal_block(fail);
-        if if_form {
-            // DD#61: the first failing cell decides the ∀, as it does for the
-            // statement form; a later cell's predicate must not run (it can
-            // abort: `${y:?}`).
-            let failed = builder.ins().iconst(I64, 0);
-            builder.def_var(all_passed, failed);
-            builder.ins().jump(after, &[]);
-        } else {
-            // "attest: NAME failed the gate" → stderr, exit(1)
-            self.emit_attest_fail(
-                ctx.program.source_names.original(&source.name),
-                builder,
-                module,
-                ctx.literals,
-                externs,
-            );
+        match (if_form, ctx.recovery) {
+            (true, _) => {
+                // Stop at the first failing cell, before any later predicate.
+                let failed = builder.ins().iconst(I64, 0);
+                builder.def_var(all_passed, failed);
+                builder.ins().jump(after, &[]);
+            }
+            (false, Some(target)) => {
+                let one = builder.ins().iconst(I64, 1);
+                let zero = builder.ins().iconst(I64, 0);
+                builder.def_var(ctx.exit_status_var, one);
+                builder.def_var(ctx.test_result_var, zero);
+                builder.ins().jump(target, &[]);
+            }
+            (false, None) => {
+                self.emit_attest_fail(
+                    ctx.program.source_names.original(&source.name),
+                    builder,
+                    module,
+                    ctx.literals,
+                    externs,
+                );
+            }
         }
         // cont: counter++ ; loop
         builder.switch_to_block(cont);
@@ -975,17 +1000,12 @@ impl SsaInst {
         false
     }
 
-    /// `$!` after `cmd &`: the [`Terminator::Fork`] left the child's pid in
-    /// `test_result`, and `$!` takes it either way. A negative pid (`-1`) is a
-    /// fork that never started the job: `$!` reads `-1` rather than naming an
-    /// earlier job (DD#126: a knowable `-1` over a stale answer), and the
-    /// statement fails the way a pipeline's fork does (`guard_pipeline_setup`):
-    /// status 1, and where checked the DD#55 diagnostic and abort. A started
-    /// job leaves `$?` as it was.
+    /// Publish a started job's pid without changing `$?`.
+    /// A failed fork is fatal before allocation or publication, regardless
+    /// of ordinary result handling or an enclosing ERR attempt.
     fn emit_store_bg_pid(
         &self,
         args: &[SsaValue],
-        checked: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -994,10 +1014,6 @@ impl SsaInst {
         let [target] = kind.expect_ssa_args(args);
         let vr = kind.expect_var_arg(target);
         let pid = builder.use_var(ctx.test_result_var);
-        let (str_ptr, str_len) = emit_int_to_str(builder, module, ctx.externs, pid);
-        let sv = super::types::var_slot(ctx.vars, &vr.display());
-        sv.str_ptr().store(builder, str_ptr);
-        sv.str_len().store(builder, str_len);
         let failed = builder.ins().icmp_imm(IntCC::SignedLessThan, pid, 0);
         let failure = builder.create_block();
         let done = builder.create_block();
@@ -1012,12 +1028,11 @@ impl SsaInst {
         let (seg1_ptr, seg1_len) =
             super::inst_handlers::diag_static_seg("fork", ctx.literals, module, builder);
         let (seg2_ptr, seg2_len) = super::inst_handlers::diag_empty_seg(builder);
-        super::inst_handlers::emit_status_abort_check(
+        super::inst_handlers::emit_abort_diagnostic(
             builder,
             module,
             ctx.externs,
-            ctx.exit_status_var,
-            checked,
+            one,
             super::inst_handlers::AbortMsg::Errno {
                 seg1_ptr,
                 seg1_len,
@@ -1025,10 +1040,12 @@ impl SsaInst {
                 seg2_len,
             },
         );
-        builder.ins().jump(done, &[]);
-
         builder.switch_to_block(done);
         builder.seal_block(done);
+        let (str_ptr, str_len) = emit_int_to_str(builder, module, ctx.externs, pid);
+        let sv = super::types::var_slot(ctx.vars, &vr.display());
+        sv.str_ptr().store(builder, str_ptr);
+        sv.str_len().store(builder, str_len);
         false
     }
 
@@ -1415,14 +1432,7 @@ fn emit_echo_body(
         seg2_ptr: s2p,
         seg2_len: s2l,
     };
-    super::inst_handlers::emit_status_abort_check(
-        builder,
-        module,
-        ctx.externs,
-        ctx.exit_status_var,
-        checked,
-        msg,
-    );
+    super::inst_handlers::emit_status_abort_check(builder, module, ctx, checked, msg);
 }
 
 /// The `read ARR` body proper: slurp the fd and split into the array. Split

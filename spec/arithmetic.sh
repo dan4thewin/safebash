@@ -111,7 +111,7 @@ run_sash 'int x=0; if (( x=1, x > 0 )); then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 31.11
 
 # 31.13 statement (( )) exit status always 0
-run_sash 'int x=0; (( x = 0 )); : $x; echo $?'
+run_sash 'int x=0; (( x = 0 )); _=$x; echo $?'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk 31.13
 
 # 31.14 bare (( x > 0 )) as statement is compile error
@@ -370,7 +370,7 @@ run_sash '(( 0 )); echo $(( $? + 7 ))'
 run_sash '(( 1 )); echo $(( $? + 7 ))'
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk 31.23
 # 31.24 $# (arg count) as a compound operand (already worked — pin it)
-run_sash 'f() { : @args; echo $(( $# * 2 )); }; f a b c'
+run_sash 'f() { array _=(@args); echo $(( $# * 2 )); }; f a b c'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.24
 
 # ── DD#58/Option C — sash-native intrinsics in an arithmetic sexpr $(( (f) )) ──
@@ -426,7 +426,7 @@ run_sash 'int x=5; echo $(( (x) ))'
 run_sash 'int x=5; echo $(( (x) + 1 ))'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk sx.10
 # sx.11 Q3: random is int-typed — int n=$(random) captures (was SB4030)
-run_sash 'int n=$(random); : $n; echo ok'
+run_sash 'int n=$(random); _=$n; echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk sx.11
 
 # Category B — a STRING producer in a sexpr is a type error (SB4030), not silent

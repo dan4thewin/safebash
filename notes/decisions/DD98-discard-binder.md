@@ -5,6 +5,8 @@ status: accepted
    legal binder position, including conversion targets and attest-all binders.
 2. Every read of `_` is an error. Because its value cannot be observed,
    discarding needs neither an unused-variable acknowledgment nor validation.
+   RHS reads, effects and guards still execute and obey their ordinary rules;
+   `_=$value` cannot bypass a tainted read or catch a failure.
 3. Leading-underscore construction introduces fresh immutable readable
    scratch (DD131), not discard. These bindings remain subject to the usual
    unused-variable, scope and taint rules, including DD132's caught-read
@@ -18,12 +20,13 @@ a 'don't care' variable like `_` might have value."*
 
 ## The problem it solves
 
-Discarding a value required satisfying **two independent rules that collide**:
+Historically, discarding a value through `: $v` required satisfying
+**two independent rules that collide**:
 
 - **DD#86** dead-variable (SB5050) — every variable must be read.
 - **DD#24** taint — a `read` target is tainted, so any *use* needs `attest`.
 
-`: $v`, the documented DD#86 escape hatch, is itself a use. On a **standalone
+The former `: $v` escape hatch was itself a use. On a **standalone
 `read`** that use is a tainted read, so it hit the SSA taint backstop:
 
 ```sh
@@ -61,6 +64,18 @@ It is **write-only**:
 
 DD99's readers have one target; the multi-target examples are historical.
 
+Use `_=$value` to evaluate and discard a scalar, or `array _=(@items)` for
+an otherwise-legal list. Each sink is independent, so repeated assignments
+and declarations may discard different scalar or collection types. `_+=`
+is not disposal: it would read an earlier discarded value and is rejected.
+An initializer's captures, arithmetic and `:?` guards still run; the sink
+does not make those operations unchecked or waive taint on their inputs.
+
+In the provisional [DD136 trial](DD136-err-call-attempts.md), this replaces
+colon's arbitrary operand-disposal role. Bare `:` stays a successful noop;
+`: function` instead attempts a void call owned by ERR. `_=` establishes
+neither an attempt boundary nor a status result.
+
 <del>
 
 ```sh
@@ -96,10 +111,13 @@ variable that is exempt from SB5050".
 ## Not a new sigil
 
 `_` is an ordinary identifier the language now reserves a meaning for. No
-lexer or parser change was needed — `is_plain_identifier` already accepted it,
-and ~~`read _ b _` (a repeated target) was already tolerated~~. The whole feature is
-three checks: an exemption in `report_dead`, an exemption in the attest-all
-both-binders rule, and the new SB5056 read reject.
+lexer or parser change was needed for the original binder — `is_plain_identifier`
+already accepted it, and ~~`read _ b _` (a repeated target) was already
+tolerated~~. The original implementation used three checks: an exemption in `report_dead`, an
+exemption in the attest-all both-binders rule, and the new SB5056 read reject.
+The DD136 implementation also gives every sink a fresh collision-safe lexical
+identity before typing and lowering. Otherwise repeated mixed-type sinks
+would incorrectly share a binding. Source diagnostics retain the spelling `_`.
 
 Names *prefixed* with `_` (`_n`, `_args`) remain readable and subject to
 SB5050; only the bare name `_` has this discard meaning. Nothing in
@@ -145,3 +163,5 @@ DD#65 pruned-operator reject before it.
 every read spelling rejected (including both arithmetic forms), `for` variable,
 tainted-capture assignment, attest-all binder, the SB5056 message, and two
 controls proving `_`-prefixed names are unaffected.
+`spec/discard.sh` additionally pins repeatable mixed kinds, RHS effects and
+guards, and the source-level read prohibition across scalar/collection uses.

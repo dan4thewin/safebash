@@ -129,6 +129,9 @@ pub(super) struct ExternFuncs {
     pub(super) exit: cranelift_module::FuncId,
     pub(super) finish: cranelift_module::FuncId,
     pub(super) abort: cranelift_module::FuncId,
+    pub(super) attempt_begin: cranelift_module::FuncId,
+    pub(super) attempt_end: cranelift_module::FuncId,
+    pub(super) attempt_abandon: cranelift_module::FuncId,
     pub(super) shutdown: cranelift_module::FuncId,
     pub(super) signal_checkpoint: cranelift_module::FuncId,
     pub(super) reader_start: cranelift_module::FuncId,
@@ -159,6 +162,7 @@ pub(super) struct ExternFuncs {
     pub(super) dup2: cranelift_module::FuncId,
     pub(super) save_fd: cranelift_module::FuncId,
     pub(super) restore_fd: cranelift_module::FuncId,
+    pub(super) discard_fd_backup: cranelift_module::FuncId,
     pub(super) redirect: cranelift_module::FuncId,
     pub(super) redirect_s: cranelift_module::FuncId,
     pub(super) read: cranelift_module::FuncId,
@@ -263,6 +267,7 @@ pub(super) struct InstCtx<'a> {
     /// so a redirect open(2) setup-failure is caught by `if`/`||` but
     /// still aborts under bare/`-`.
     pub(super) in_condition: bool,
+    pub(super) recovery: Option<cranelift_codegen::ir::Block>,
     pub(super) signal_deferred: bool,
 }
 

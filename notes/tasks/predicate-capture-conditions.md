@@ -1,5 +1,5 @@
 title: Allow named predicate-function capture conditions
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
@@ -20,6 +20,14 @@ conditions, then directed: **"record this, update rules accordingly, add
 implementation to backlog"** (2026-11-12; journal 628).
 [DD88](../decisions/DD88-capture-condition.md) is authoritative.
 
+Delivered on the provisional `err-attempt-trial` branch (DD136), with
+focused original/reversion controls and the corrected ordinary gate passing.
+[Journal 664](../journal/664-err-owned-call-attempts.md) records the 12853-check
+gate at rowids 7334622-7347474. This implementation owner closes on the trial
+branch; [the integrated owner](err-call-attempt-trial.md) retains DG's
+evaluation and adoption decision. This does not deliver the separate
+file-read capture-condition or integer-redirect repairs, or change main.
+
 A call legal as `if f`, whose stdout is legally capturable, can supply both:
 bind its output and consume its explicit returned status. Apply this to
 `if`/`elif`, `while`/`until`, negation and logical-list consumers, not just
@@ -31,10 +39,16 @@ false too, including empty or partial text, rather than retaining old target
 data. Existing capture byte/newline handling stays.
 
 No subshell, rollback, output validation or new function kind is introduced.
-The condition does not handle failures inside operands or the function body.
+Ordinarily the condition does not handle failures inside operands or the function body.
 `return command` explicitly forwards a status; a bare unchecked failing
 command still aborts. `exit`/`fail` and fatal faults are not false returns.
 Attached redirects keep DD130's operation/failure contract.
+
+DD136 provisionally adds ERR-owned call attempts: recoverable abnormal
+completion abandons the entire attempted chain, yielding false before
+authored negation even for `fail 0`. Preserve partial caller-capture output
+and numeric status separately; helpers' conditions do not create nested
+attempts. Fatal faults, unconditional guards and explicit exit stay terminal.
 
 Outside a handling context, capture alone does not consume a predicate's
 status: `text=$(- f)` remains the explicit stdout-only form. Conversely,
@@ -96,8 +110,9 @@ redirect restoration and capture cleanup independently of simple acceptance.
 Exercise loop and logical-list consumers, outer negation, and the existing
 first-expression status-read rule. Keep integer/void, declaration,
 concatenation and multi-statement refusals. A failure inside a body or nested
-operand must still abort; an explicitly forwarded result may be handled.
-Preserve actual handler routing rather than exempting calls from SB5101.
+operand must still abort outside DD136's ERR-owned attempt boundary; an
+explicitly forwarded result may be handled. Preserve actual handler routing,
+not just an earlier static refusal.
 
 Use normal taint checking for the main positive cases. Separately pin a
 kernel-backed result's required resolution on both outcomes, clean-buffer

@@ -31,6 +31,7 @@
     5. First binding fixes type; no redeclaration or shadowing.
     6. Meaningful scalar zeros: `""`, `0`; known but unwritten paths receive them. Unknown names reject.
     7. Every named binding needs a read. `_` is a repeatable, unreadable discard target.
+        1. Each discard site is independent; scalar/list sinks may have different types, and RHS checks/effects still run.
     8. `NAME=VALUE` assigns; assignment replaces, string `+=` concatenates and integer mutation calculates.
         1. Declaration cannot append; append requires an existing mutable target.
         2. Binding values absorb metacharacters as word text.
@@ -50,7 +51,8 @@
 5. Commands and output
     1. A command has a fixed head followed by argument words; arguments retain connector/redirection syntax.
     2. `echo` joins arguments with spaces and adds newline; `write` omits newline. Neither takes flags.
-    3. `:` deliberately evaluates/discards its operands.
+    3. Bare or redirect-only `:` is a successful noop; use `_=` or `array _=(...)` for value/list disposal.
+        1. Provisional ERR-owned `: VOID_FUNCTION ARG...` attempts one call; it is a resultless statement, not operand disposal.
     4. `cd DIRECTORY` takes exactly one directory.
     5. External command heads resolve to absolute executable regular-file paths at compilation.
         1. Bare names use compile-time `PATH`, skipping relative entries; relative command paths and runtime head expansion reject.
@@ -73,7 +75,7 @@
     8. `$?` is available only in the first evaluated handling expression, not later statements.
     9. Recoverability follows cause and available recovery state, not setup position or missing handling syntax.
         1. Ordinary path-specific I/O failures are recoverable; fork, heap and arithmetic faults are fatal.
-        2. Handling one operation never handles unrelated operand/body failures.
+        2. Ordinary result handling does not reach operand/body failures; provisional ERR-owned attempts have the explicit boundary below.
 7. Tests and control flow
     1. Boolean `[[...]]`: explicit tests, lazy conjunction/disjunction and negation.
         1. String `==`/`!=` are exact; `<`/`>` use unsigned-byte ordering; quotes do not change comparison semantics.
@@ -394,6 +396,7 @@
         1. Handled `mkdtemp` creation failure binds empty text, never a previous pathname.
     3. Consume the producer's actual result; no assignment status or automatic taint clearance.
     4. A named predicate's same-process effects persist on either outcome; completed empty file reads succeed.
+        1. An ERR-owned named predicate capture also establishes a provisional attempt; abandonment binds already-emitted caller-capture output, not unfinished inner values.
     5. Value-bearing regex captures may consume both text and boolean here.
 21. Termination and signals
     1. `exit [N]` requests orderly termination; `fail [N]` requests failure termination.
@@ -406,18 +409,26 @@
     4. Handler fall-through preserves incoming status; explicit termination replaces it.
         1. Full integer status survives until final low-eight-bit process-status conversion.
         2. Incoming `status` is readable in the first evaluated handler expression.
-    5. EXIT failure may enter ERR; exit inside either handler terminates directly; fail inside ERR terminates directly.
-        1. No resumption or re-entry; ERR never transfers to EXIT.
+    5. EXIT failure may enter ERR; exit inside either handler terminates directly; fail inside ERR terminates unless an eligible provisional attempt catches it.
+        1. No resumption of interrupted main execution or handler re-entry; ERR never transfers to EXIT.
         2. First fatal fault attempts ERR once, including heap exhaustion; another fatal fault terminates. Cleanup is not guaranteed.
     6. Handlers observe actual completed global writes.
         1. EXIT reads must be valid at every reaching orderly entry.
         2. Inherited ERR bindings are readonly, including through same-process helpers, captures and collection aliases; ERR-only working state keeps ordinary mutability.
         3. ERR requires explicit forced reads of potentially tainted incoming globals; fresh acquisitions into writable ERR-owned state may be attested locally.
         4. Partial refresh does not justify attesting inherited input; readonly itself neither validates nor establishes NUL-freedom.
-        5. Every recoverable failure reachable during ERR must be explicitly handled where it occurs, including helpers/operands.
-        6. Known NUL-free argv values need no new check; otherwise false `0?` or true `i?`/`p?`/`g?`/filename predicates must justify the exact value on every reaching path.
+        5. ERR remains checked; an unchecked failure outside an eligible attempt terminates cleanup.
+        6. Runtime NUL guards remain terminal; authored `0?` and NUL-excluding predicates need no separate static ERR proof.
         7. Restore invoker stdin/stdout/stderr before entry, not interrupted temporary redirects.
-    7. `signal N IGN|DFL|FLAG|EXIT`: literal signal 1 through 64 except 9/19.
+    7. Provisional ERR-owned attempts enclose one colon-prefixed void call or caught status-function call, including its arguments and attached redirects.
+        1. Explicit `fail` and existing unchecked operational results abandon the full helper chain; locally handled results do not.
+        2. Normal returns retain their result; abnormal completion is false even for `fail 0`, before authored negation.
+        3. Integer calls cannot establish attempts; no unfinished value is fabricated.
+        4. Helpers' conditions, bare void calls and source `-` establish no attempt; children inherit no recovery destination.
+        5. Restore attempt-owned scopes and close abandoned readers before waiting; preserve enclosing resources and completed effects, without rollback.
+        6. `:?`, argv-NUL/invalid-index guards, unconditional slurp/read failures, fatal faults, explicit exit and failed restoration remain terminal.
+        7. Recovery grants no taint clearance or fresh status-read permission to a resultless call; ERR fall-through retains its original entry status.
+    8. `signal N IGN|DFL|FLAG|EXIT`: literal signal 1 through 64 except 9/19.
         1. IGN ignores; DFL restores kernel behavior; FLAG records delivery; EXIT records an orderly-exit request.
         2. `$(signum)` starts at zero and records the latest FLAG/EXIT delivery; disposition at delivery governs the request.
         3. EXIT dispatch occurs at safe command/function/loop/reader checkpoints, normally with status `128 + signum`.

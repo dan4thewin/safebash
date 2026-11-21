@@ -2843,6 +2843,7 @@ mod tests {
         ] {
             let stmt = Statement {
                 kind: StmtKind::Command(Command {
+                    best_effort: false,
                     name: Expr::literal("echo", Span::new(1, 1)),
                     args: vec![Expr::param(
                         "s",

@@ -378,12 +378,16 @@ impl Checker<'_> {
         let mut flow = self.inputs[&id].clone();
         let mut origin = block.origin;
         flow.map(|facts| facts.at_origin(self.program, origin));
+        let mut failure = None;
         for (index, inst) in live_insts(block).iter().enumerate() {
+            if block.checked_failure_at(index).is_some() {
+                failure = Some(flow.clone());
+            }
             self.instruction_at(block, index, inst, &mut origin, &mut flow, propagate);
         }
         if propagate {
             self.block_completion(block, &flow.facts);
-            self.successors(block, &flow);
+            self.successors(block, &flow, failure);
         }
     }
 
@@ -482,16 +486,39 @@ impl Checker<'_> {
         }
     }
 
-    fn successors(&mut self, block: &BasicBlock, flow: &Flow) {
+    fn successors(&mut self, block: &BasicBlock, flow: &Flow, failure: Option<Flow>) {
+        if self.checked_successors(block, flow, failure) {
+            return;
+        }
         let successors = live_successors(block);
         for next in successors.iter().copied().collect::<BTreeSet<_>>() {
             self.successor(block, next, flow);
         }
-        if !successors.is_empty() {
-            if let Some(child) = block.terminator.forked_child() {
-                self.enqueue(child, Flow::new(flow.facts.clone()));
-            }
+        if successors.is_empty() {
+            return;
         }
+        if let Some(child) = block.terminator.forked_child() {
+            self.enqueue(child, Flow::new(flow.facts.clone()));
+        }
+    }
+
+    fn checked_successors(
+        &mut self,
+        block: &BasicBlock,
+        flow: &Flow,
+        failure: Option<Flow>,
+    ) -> bool {
+        let Terminator::Checked { normal, failed, .. } = block.terminator else {
+            return false;
+        };
+        self.enqueue(
+            failed,
+            failure.expect("checked block has a failure operation"),
+        );
+        if let Some(normal) = normal {
+            self.enqueue(normal, flow.clone());
+        }
+        true
     }
 
     fn successor(&mut self, block: &BasicBlock, next: BlockId, flow: &Flow) {
@@ -542,6 +569,7 @@ impl Checker<'_> {
     fn ordinary_instruction(&self, inst: &SsaInst, flow: &mut Flow) {
         flow.map(|facts| self.write(inst, facts));
         match inst {
+            SsaInst::AttemptEnd { failed: true } => flow.reset(Some(false)),
             SsaInst::Assign { target, value } if target.name == "?" => flow.reset(
                 value
                     .literal_text()

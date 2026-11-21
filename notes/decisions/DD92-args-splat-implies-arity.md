@@ -12,7 +12,7 @@ status: accepted
 4. `args` is the function's immutable, clean argument collection.
    Attest-all cannot target `args`. Passing scalar arguments reads them
    at the call site and therefore requires legal clean or explicitly
-   trusted values.
+   forced reads.
 
 ---
 
@@ -29,6 +29,10 @@ DG: "we have arity checking for functions. we should be able to forego the SB503
 or `@args:?` modifier for args in a command within a function when the arity check
 knows there's always at least one argument. … treat `fn f { tool @args }` as if
 it were `fn f { : $1; tool @args }`."
+
+The provisional DD136 trial spells that explicit fixed-position read
+`_=$1`, not `: $1`. `array _=(@args)` reads the whole array and makes the
+signature variadic without itself adding a required position.
 
 DD#69 requires a bare `@a` splat into an external command to carry an
 empty-disposition (`@{a:-WORD}` / `@{a:?WORD}` — SB5032), because an empty array

@@ -15,6 +15,8 @@ status: accepted
    taint or its owners. A fresh acquisition has fresh provenance and adjacency.
 6. Check each function through one independent summary, mapping actual global
    and collection identities at calls. Report inherited-use obligations there.
+   In the provisional DD136 trial, distinguish normal and abandoned outcomes;
+   a failure path cannot borrow a later write, attest or fresh acquisition.
 7. Isolate child-process effects; parent readers retain their own effects.
    EXIT and ERR are independent roots with DD128's incoming-data contracts;
    DD135's readonly ERR imports do not gain taint clearance.
@@ -110,7 +112,7 @@ single-use `$(f)` or `f | reader`:
 
 - after `y=$(f)`: the next statement;
 - `if y=$(f) {`: the first statement of each branch (named predicate,
-  accepted in DD88; implementation pending);
+  accepted in DD88; implemented on the DD136 trial branch);
 - ~~`for x in $(f) {`: the first statement of the body;~~
 - `f | while readline x {`: the first statement of the body;
 - after `f | readline x`: the next statement.
@@ -613,6 +615,27 @@ EXIT, even if a normal path later attests it. Requirements include helper
 and slot uses and incoming-origin attest obligations. A partial fresh
 acquisition cannot excuse an inherited-input attest on the other path.
 DD#128's source analysis and SSA backstop enforce these contracts separately.
+
+### Abandoned call outcomes (provisional DD136)
+
+An ERR-owned attempt can expose a function's completed prefix rather than
+its normal return state. Keep independent normal and possible-abort effects
+in each function's summary, including origin flows; an absent abort outcome
+means no such path, not a clean state. Map both through the same global/slot
+identities. Do not re-walk the function in its caller's taint context.
+
+Apply the abort effects to the state before normal completion. A failed
+attest supplies no clearance, unreachable later statements supply no
+effects, and recovery does not grant replacement permission. A new
+acquisition reached on only some paths cannot make inherited input on the
+others fresh. Preserve shared ownership on abandoned own taint: an ERR
+attempt cannot provide a new exit through a shared body's firewall.
+
+The SSA backstop independently follows exceptional edges and retains
+distinct true/false outcomes through negation and joins. Recovering actual
+global storage or publishing an append is not a new acquisition. Earlier
+completed effects persist; only the abandoned execution scopes are cleaned
+up. DD128 adjacency and DD135 readonly imports are unchanged.
 
 ### Captures, value calls and child processes
 

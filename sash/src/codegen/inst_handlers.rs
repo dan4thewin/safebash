@@ -256,20 +256,18 @@ fn guard_pipeline_setup(
     update_pipeline_status(builder, one, ctx);
     let (ptr, len) = diag_static_seg(operation, ctx.literals, module, builder);
     let (empty, zero) = diag_empty_seg(builder);
-    emit_status_abort_check(
-        builder,
-        module,
-        ctx.externs,
-        ctx.exit_status_var,
-        setup.checked,
-        AbortMsg::Errno {
-            seg1_ptr: ptr,
-            seg1_len: len,
-            seg2_ptr: empty,
-            seg2_len: zero,
-        },
-    );
-    builder.ins().jump(setup.done, &[]);
+    let msg = AbortMsg::Errno {
+        seg1_ptr: ptr,
+        seg1_len: len,
+        seg2_ptr: empty,
+        seg2_len: zero,
+    };
+    if operation == "fork" {
+        emit_abort_diagnostic(builder, module, ctx.externs, one, msg);
+    } else {
+        emit_status_abort_check(builder, module, ctx, setup.checked, msg);
+        builder.ins().jump(setup.done, &[]);
+    }
     builder.switch_to_block(success);
     builder.seal_block(success);
 }
@@ -308,6 +306,7 @@ fn lower_pipeline_stage(
     // Child block
     builder.switch_to_block(child_block);
     builder.seal_block(child_block);
+    let parent_recovery = ctx.recovery.take();
 
     let failed = wire_child_pipes(builder, i, n, capture_read_fd, pipe_slots, pe);
     let (path_ptr, path_len) = diag_static_seg("dup2", ctx.literals, module, builder);
@@ -334,6 +333,7 @@ fn lower_pipeline_stage(
     } else {
         lower_exec_stage(name, args, builder, module, ctx, pe, setup.argv[i]);
     }
+    ctx.recovery = parent_recovery;
 
     // Parent block
     builder.switch_to_block(parent_block);
@@ -751,6 +751,12 @@ fn emit_pipeline_abort_check(
 
     builder.switch_to_block(abort_block);
     builder.seal_block(abort_block);
+    if let Some(target) = ctx.recovery {
+        builder.ins().jump(target, &[]);
+        builder.switch_to_block(cont_block);
+        builder.seal_block(cont_block);
+        return;
+    }
     // DD#55 diagnostic: `<argv0>: <failing-stage>: command failed (exit N)`.
     let emsg_status_ref = module.declare_func_in_func(ctx.externs.emsg_status, builder.func);
     builder.ins().call(
@@ -968,8 +974,7 @@ pub(super) fn handle_general_command(
         emit_status_abort_check(
             b,
             m,
-            c.externs,
-            c.exit_status_var,
+            c,
             checked,
             AbortMsg::Status {
                 name_ptr: np,
@@ -1156,14 +1161,19 @@ pub(super) fn emit_redirect_guarded(
     // (55.25/55.50) and no abort. Otherwise report it on the invoker's scope
     // fd (DD#120 — the redirect belongs to the command, which never ran),
     // then put the fds back before transferring to ERR.
-    if !in_condition {
-        emit_open_failure_msg(&rf, builder, module, ctx);
-    }
-    emit_restore(saved.clone(), builder, module, ctx.externs);
-    if in_condition {
-        builder.ins().jump(merge_block, &[]);
-    } else {
-        emit_open_failure_terminate(builder, module, ctx);
+    match (in_condition, ctx.recovery) {
+        (true, _) => {
+            emit_restore(saved.clone(), builder, module, ctx.externs);
+            builder.ins().jump(merge_block, &[]);
+        }
+        (false, Some(target)) => {
+            builder.ins().jump(target, &[]);
+        }
+        (false, None) => {
+            emit_open_failure_msg(&rf, builder, module, ctx);
+            emit_restore(saved.clone(), builder, module, ctx.externs);
+            emit_open_failure_terminate(builder, module, ctx);
+        }
     }
 
     // Ok path: open succeeded — run the command body normally.
@@ -1251,6 +1261,10 @@ fn emit_scope_open_failure(
     if !checked {
         return false;
     }
+    if let Some(target) = ctx.recovery {
+        builder.ins().jump(target, &[]);
+        return true;
+    }
     emit_open_failure_msg(failure, builder, module, ctx);
     emit_restore(saved, builder, module, ctx.externs);
     emit_open_failure_terminate(builder, module, ctx);
@@ -1313,15 +1327,14 @@ pub(super) fn emit_redirect_pop(
 pub(super) fn emit_status_abort_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
-    externs: &ExternFuncs,
-    exit_status_var: cranelift_frontend::Variable,
+    ctx: &mut InstCtx,
     abort: bool,
     msg: AbortMsg,
 ) {
     if !abort {
         return;
     }
-    let status = builder.use_var(exit_status_var);
+    let status = builder.use_var(ctx.exit_status_var);
     let zero = builder.ins().iconst(I64, 0);
     let failed = builder.ins().icmp(IntCC::NotEqual, status, zero);
 
@@ -1333,6 +1346,22 @@ pub(super) fn emit_status_abort_check(
 
     builder.switch_to_block(abort_block);
     builder.seal_block(abort_block);
+    if let Some(target) = ctx.recovery {
+        builder.ins().jump(target, &[]);
+    } else {
+        emit_abort_diagnostic(builder, module, ctx.externs, status, msg);
+    }
+    builder.switch_to_block(cont_block);
+    builder.seal_block(cont_block);
+}
+
+pub(super) fn emit_abort_diagnostic(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    status: cranelift_codegen::ir::Value,
+    msg: AbortMsg,
+) {
     // DD#55: descriptive diagnostic to stderr, only on the actual abort.
     match msg {
         AbortMsg::Errno {
@@ -1356,9 +1385,6 @@ pub(super) fn emit_status_abort_check(
     let abort = module.declare_func_in_func(externs.abort, builder.func);
     builder.ins().call(abort, &[status]);
     builder.ins().trap(TrapCode::unwrap_user(1));
-
-    builder.switch_to_block(cont_block);
-    builder.seal_block(cont_block);
 }
 
 /// Handle `cd` builtin. Per DD#53, $PWD/$OLDPWD/$HOME are plain sash
@@ -1410,14 +1436,7 @@ pub(super) fn handle_cd(
         seg2_ptr: ptr,
         seg2_len: len,
     };
-    emit_status_abort_check(
-        builder,
-        module,
-        ctx.externs,
-        ctx.exit_status_var,
-        checked,
-        msg,
-    );
+    emit_status_abort_check(builder, module, ctx, checked, msg);
     false
 }
 
@@ -1458,14 +1477,7 @@ pub(super) fn handle_close(
         seg2_ptr: s2p,
         seg2_len: s2l,
     };
-    emit_status_abort_check(
-        builder,
-        module,
-        ctx.externs,
-        ctx.exit_status_var,
-        checked,
-        msg,
-    );
+    emit_status_abort_check(builder, module, ctx, checked, msg);
     false
 }
 

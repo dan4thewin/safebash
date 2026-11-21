@@ -519,9 +519,11 @@ run_sash_under 'if /bin/touch marker | /bin/cat | /bin/cat { echo bad } else { e
     strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=2
 [[ $rc = 0 && $out = 1 && ! -e marker && -z $rerr ]]; chk p518.17
 
+rm -f finished
 run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat { echo bad } else { /bin/cat finished }' \
     strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2
-[[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.18
+[[ $rc = 1 && -z $out && -z $err && $(<finished) = done \
+   && $rerr = './test_bin: fork: error 11' ]]; chk errmig.52
 
 run_sash_under 'ERR { - echo $(status) }
 echo data | /bin/cat
@@ -531,16 +533,21 @@ echo bad' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=1
 rm -f finished
 run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat { echo bad } else { /bin/cat finished }' \
     strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2 -e inject=wait4:error=EINTR:when=1
-[[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.20
+[[ $rc = 1 && -z $out && -z $err && $(<finished) = done \
+   && $rerr = './test_bin: fork: error 11' ]] \
+   && grep -q '^wait4(.*EINTR.*INJECTED' fault.log \
+   && grep -qE '^wait4\(.* = [1-9][0-9]*$' fault.log; chk errmig.53
 
 run_sash_under 'if echo data | readline x { echo ${x:!} } else { echo $(status) }' \
     strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=1
 [[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.21
 
 run_sash_under 'array a=(old)
+ERR { - echo "${a[0]:!}" }
 - { echo data | read a }
 echo ${a[0]:!}' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=1
-[[ $rc = 0 && $out = old && -z $rerr ]]; chk p518.22
+[[ $rc = 1 && $out = old && -z $err \
+   && $rerr = './test_bin: fork: error 11' ]]; chk errmig.54
 
 run_sash_under '- { echo data | while readline x { attest x [[ -n $x ]]; echo $x } }
 echo continued' strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=1
@@ -549,7 +556,8 @@ echo continued' strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=1
 rm -f finished
 run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat | readline x { attest x [[ -n $x ]]; echo $x } else { /bin/cat finished }' \
     strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2
-[[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.24
+[[ $rc = 1 && -z $out && -z $err && $(<finished) = done \
+   && $rerr = './test_bin: fork: error 11' ]]; chk errmig.55
 
 run_sash 'array a=(old)
 - echo data | read a
@@ -843,15 +851,29 @@ run_sash_under '/usr/bin/printf "one\ntwo\n" | while readline a {
 }' strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=2
 [[ $rc = 0 && $out = $'one:failed\ntwo:inner' && -z $rerr ]]; chk pipeown.27
 
+# Reap the outer producer before the inner forks, so its SIGCHLD cannot
+# restart the second clone and move the third-entry injection off target.
 rm -f finished
 run_sash_under '/usr/bin/printf "one\ntwo\n" | while readline a {
   attest a [[ -n $a ]]
+  - wait
   if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat | readline b {
     attest b [[ -n $b ]]
     echo bad $b
   } else { /bin/cat finished; echo $a }
 }' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=3
-[[ $rc = 0 && $out = $'done\none\ndone\ntwo' && -z $rerr ]]; chk pipeown.28
+[[ $rc = 1 && -z $out && -z $err && $(<finished) = done \
+   && $rerr = './test_bin: fork: error 11' ]] \
+   && awk '
+     /^clone\(/ {
+       if (++clones == 1) producer = $NF
+       if (clones == 2 && !reaped) bad = 1
+       if (clones == 3 && $0 !~ /EAGAIN.*INJECTED/) bad = 1
+       if ($0 ~ /ERESTART/) bad = 1
+     }
+     /^wait4\(/ && clones == 1 && $NF == producer { reaped = 1 }
+     END { exit bad || clones != 3 || !reaped }
+   ' fault.log; chk errmig.56
 
 run_sash_under 'echo record | readline v
 attest v [[ -n $v ]]
@@ -1219,23 +1241,21 @@ SASH_CFLAGS=--no-taint run_sash 'echo hi | /bin/echo "got=$(/bin/cat)"
 echo done'
 [[ $rc = 0 && $out = $'got=hi\ndone' && -z $rerr ]]; chk stgarg.27
 
-# A `:` stage runs its argument captures, as the statement `:` does. Their
-# output is discarded but their stderr is not, and an uncaught failure inside
-# one aborts the stage: the child reports the failure, the parent the stage
-# (DD#55's two lines, as for any failed stage).
+# A function stage can discard a captured value with `_=`. Stderr and
+# failures survive disposal; DD55 names the inner command and failed stage.
 
-# stgarg.28 the capture runs: its stderr is seen
 SASH_CFLAGS=--no-taint run_sash 'fn g { /bin/echo side >&2; echo x }
-: "$(g)" | /bin/cat
+fn sink { _=$(g) }
+sink | /bin/cat
 echo done'
-[[ $rc = 0 && $out = done && $rerr = side ]]; chk stgarg.28
+[[ $rc = 0 && $out = done && -z $err && $rerr = side ]]; chk errmig.57
 
-# stgarg.29 an uncaught failure inside it aborts the stage
 SASH_CFLAGS=--no-taint run_sash 'fn g { /bin/false; echo x }
-: "$(g)" | /bin/cat
+fn sink { _=$(g) }
+sink | /bin/cat
 echo done'
-[[ $rc = 1 && -z $out \
-   && $rerr = $'./test_bin: /bin/false: command failed (exit 1)\n./test_bin: :: command failed (exit 1)' ]]; chk stgarg.29
+[[ $rc = 1 && -z $out && -z $err \
+   && $rerr = $'./test_bin: /bin/false: command failed (exit 1)\n./test_bin: sink: command failed (exit 1)' ]]; chk errmig.58
 
 # stgarg.30 the same failure in an external stage's argument: the child aborts
 # before its exec, and the parent names the stage's command

@@ -6,14 +6,24 @@ use crate::ssa::*;
 pub(super) fn update_loop_phi_sources(
     ssa: &mut SsaProgram,
     header: BlockId,
+    back_edge: BlockId,
     body: &std::collections::HashMap<String, u32>,
+    jumps: &[LoopJump],
 ) {
     for phi in &mut ssa.block_mut(header).phis {
         let name = &phi.target.name;
         let Some(version) = body.get(name) else {
             unreachable!("the second loop pass must retain every header phi variable")
         };
-        phi.sources[1].1 = VarRef::new(name, *version);
+        phi.sources[1] = (back_edge, VarRef::new(name, *version));
+        for jump in jumps {
+            let version = jump
+                .versions
+                .get(name)
+                .expect("a loop jump must retain every header phi variable");
+            phi.sources
+                .push((jump.predecessor, VarRef::new(name, *version)));
+        }
     }
 }
 
@@ -26,21 +36,53 @@ pub(super) fn insert_phis_two_branch(
     block_b: BlockId,
     state_b: &std::collections::HashMap<String, u32>,
 ) {
+    insert_phis(state, ssa, merge, &[(block_a, state_a), (block_b, state_b)]);
+}
+
+pub(super) fn merge_loop_jumps(
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    merge: BlockId,
+    normal: BlockId,
+    versions: &std::collections::HashMap<String, u32>,
+) {
+    state.restore(versions);
+    let Some(mut jumps) = state.loop_jumps.remove(&merge) else {
+        return;
+    };
+    jumps.push(LoopJump {
+        predecessor: normal,
+        versions: versions.clone(),
+    });
+    let sources: Vec<_> = jumps
+        .iter()
+        .map(|jump| (jump.predecessor, &jump.versions))
+        .collect();
+    insert_phis(state, ssa, merge, &sources);
+}
+
+fn insert_phis(
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    merge: BlockId,
+    incoming: &[(BlockId, &std::collections::HashMap<String, u32>)],
+) {
     let all_vars: std::collections::HashSet<&String> =
-        state_a.keys().chain(state_b.keys()).collect();
+        incoming.iter().flat_map(|(_, vars)| vars.keys()).collect();
 
     for var in all_vars {
-        let ver_a = state_a.get(var).copied().unwrap_or(0);
-        let ver_b = state_b.get(var).copied().unwrap_or(0);
-        if ver_a != ver_b {
+        let sources: Vec<_> = incoming
+            .iter()
+            .map(|(block, vars)| {
+                (
+                    *block,
+                    VarRef::new(var, vars.get(var).copied().unwrap_or(0)),
+                )
+            })
+            .collect();
+        if sources.iter().any(|(_, value)| value != &sources[0].1) {
             let target = state.define_merge(var);
-            ssa.block_mut(merge).phis.push(PhiNode {
-                target,
-                sources: vec![
-                    (block_a, VarRef::new(var, ver_a)),
-                    (block_b, VarRef::new(var, ver_b)),
-                ],
-            });
+            ssa.block_mut(merge).phis.push(PhiNode { target, sources });
         }
     }
 }
@@ -63,6 +105,12 @@ mod invariant_tests {
                 (latch, VarRef::new("value", 2)),
             ],
         });
-        update_loop_phi_sources(&mut ssa, header, &std::collections::HashMap::new());
+        update_loop_phi_sources(
+            &mut ssa,
+            header,
+            latch,
+            &std::collections::HashMap::new(),
+            &[],
+        );
     }
 }

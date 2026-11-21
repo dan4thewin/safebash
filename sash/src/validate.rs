@@ -58,7 +58,7 @@ fn validate_block(
 }
 
 pub fn validate(program: &Program) -> Vec<Diagnostic> {
-    let mut diags = Vec::new();
+    let mut diags = crate::transform::AttemptSites::new(program).diagnostics;
 
     // Only `statements` admits definitions.
     let blocks: Vec<&[Statement]> = program.bodies().collect();
@@ -604,7 +604,7 @@ fn note_binding(
     seen: &HashMap<String, Span>,
     bound: &mut HashMap<String, Span>,
 ) {
-    if seen.contains_key(name) || bound.contains_key(name) {
+    if is_discard_binder(name) || seen.contains_key(name) || bound.contains_key(name) {
         return;
     }
     bound.insert(name.to_string(), span);
@@ -685,16 +685,14 @@ fn flag_redecl(
     bound: &mut HashMap<String, Span>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    for a in &d.assignments {
-        if let Some(prev) = seen.get(&a.name) {
-            diags.push(redecl_diag(span, &a.name, prev.line));
-            continue;
+    for a in d.assignments.iter().filter(|a| !is_discard_binder(&a.name)) {
+        match (seen.get(&a.name), bound.get(&a.name)) {
+            (Some(prev), _) => diags.push(redecl_diag(span, &a.name, prev.line)),
+            (None, Some(prev)) => diags.push(late_decl_diag(span, &a.name, prev.line)),
+            (None, None) => {
+                seen.insert(a.name.clone(), span);
+            }
         }
-        if let Some(prev) = bound.get(&a.name) {
-            diags.push(late_decl_diag(span, &a.name, prev.line));
-            continue;
-        }
-        seen.insert(a.name.clone(), span);
     }
 }
 
@@ -797,7 +795,7 @@ fn flag_shadow_decl(
     diags: &mut Vec<Diagnostic>,
 ) {
     for a in &d.assignments {
-        if globals.contains(&a.name) {
+        if !is_discard_binder(&a.name) && globals.contains(&a.name) {
             diags.push(shadow_diag(span, &a.name));
         }
     }
@@ -4303,41 +4301,61 @@ pub(crate) fn body_always_returns(stmts: &[Statement]) -> bool {
 }
 
 pub(crate) fn stmt_always_returns(stmt: &Statement) -> bool {
+    stmt_always_ends(stmt, &|_| false)
+}
+
+fn body_always_ends(stmts: &[Statement], call_ends: &impl Fn(&Command) -> bool) -> bool {
+    stmts.iter().any(|stmt| stmt_always_ends(stmt, call_ends))
+}
+
+fn stmt_always_ends(stmt: &Statement, call_ends: &impl Fn(&Command) -> bool) -> bool {
     match &stmt.kind {
         StmtKind::ReturnProducer(_) => true,
-        StmtKind::Command(c) => matches!(expr_literal_str(&c.name), "return" | "exit" | "fail"),
-        StmtKind::If(i) => if_always_returns(i),
-        StmtKind::While(w) => body_always_returns(&w.condition),
-        StmtKind::Group(g) => body_always_returns(&g.body),
-        StmtKind::Redirected(r) => stmt_always_returns(&r.body),
-        StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => stmt_always_returns(inner),
-        StmtKind::Case(c) => case_always_returns(c),
+        StmtKind::Command(c) => {
+            matches!(expr_literal_str(&c.name), "return" | "exit" | "fail") || call_ends(c)
+        }
+        StmtKind::If(i) => if_always_returns(i, call_ends),
+        StmtKind::While(w) => body_always_ends(&w.condition, call_ends),
+        StmtKind::Group(g) => body_always_ends(&g.body, call_ends),
+        StmtKind::Redirected(r) => stmt_always_ends(&r.body, call_ends),
+        StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => {
+            stmt_always_ends(inner, call_ends)
+        }
+        StmtKind::Case(c) => case_always_returns(c, call_ends),
         StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
-            stmt_always_returns(&l.left)
+            stmt_always_ends(&l.left, call_ends)
         }
         _ => false,
     }
 }
 
-fn if_always_returns(i: &If) -> bool {
+fn if_always_returns(i: &If, call_ends: &impl Fn(&Command) -> bool) -> bool {
     let otherwise = i
         .else_body
         .as_ref()
-        .is_some_and(|eb| body_always_returns(eb));
+        .is_some_and(|eb| body_always_ends(eb, call_ends));
     let otherwise = i.elif_clauses.iter().rev().fold(otherwise, |rest, e| {
-        conditional_paths_return(&e.condition, &e.body, rest)
+        conditional_paths_return(&e.condition, &e.body, rest, call_ends)
     });
-    conditional_paths_return(&i.condition, &i.then_body, otherwise)
+    conditional_paths_return(&i.condition, &i.then_body, otherwise, call_ends)
 }
 
-fn conditional_paths_return(condition: &[Statement], body: &[Statement], otherwise: bool) -> bool {
-    body_always_returns(condition) || (body_always_returns(body) && otherwise)
+fn conditional_paths_return(
+    condition: &[Statement],
+    body: &[Statement],
+    otherwise: bool,
+    call_ends: &impl Fn(&Command) -> bool,
+) -> bool {
+    body_always_ends(condition, call_ends) || (body_always_ends(body, call_ends) && otherwise)
 }
 
 /// A dispatch (`case`) definite-returns iff it has a default arm and
 /// every arm body definite-returns.
-fn case_always_returns(c: &Case) -> bool {
-    c.items.iter().any(|it| it.is_default) && c.items.iter().all(|it| body_always_returns(&it.body))
+fn case_always_returns(c: &Case, call_ends: &impl Fn(&Command) -> bool) -> bool {
+    c.items.iter().any(|it| it.is_default)
+        && c.items
+            .iter()
+            .all(|it| body_always_ends(&it.body, call_ends))
 }
 
 fn check_commands(stmts: &[Statement], funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
@@ -4899,6 +4917,7 @@ pub(crate) fn check_taint(
     let input = Origins::new();
     let scratch = BodyCx::default();
     let signal_pairs = RefCell::new(HashSet::new());
+    let attempts = crate::transform::AttemptSites::new(program);
     let base = SlotCx {
         scratch: scratch_bindings,
         probing: false,
@@ -4915,6 +4934,11 @@ pub(crate) fn check_taint(
         failed_attests: &[],
         terminal_live: program.handlers().next().is_some(),
         signal_pairs: &signal_pairs,
+        attempts: &attempts,
+        attempting: false,
+        handled: false,
+        flow_live: true,
+        condition_abort: None,
     };
     let summaries = build_summaries(program, &census, &base);
     let cx = SlotCx {
@@ -5122,11 +5146,19 @@ impl JustTainted {
             self.sites.entry(name).or_default().extend(sites);
         }
     }
+
+    fn retain_fresh(&mut self, state: &Tainted) {
+        self.names
+            .retain(|name| !state.origins(name).contains(&TaintOrigin::Unrefreshed));
+        self.sites.retain(|name, _| self.names.contains(name));
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum TaintOrigin {
     Shared(String),
+    AbandonedShared(String),
+    Unrefreshed,
     Incoming,
     Stdin,
 }
@@ -5213,7 +5245,8 @@ fn taint_step(
     if cx.probing {
         return JustTainted::new();
     }
-    let taints = stmt_taints(stmt, cx);
+    let mut taints = stmt_taints(stmt, cx);
+    taints.retain_fresh(tainted);
     if cx.terminal_live {
         record_terminal_sources(stmt.span, &taints, cx);
     }
@@ -5251,6 +5284,7 @@ fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
         probing: true,
         log: None,
         body: &scratch,
+        condition_abort: None,
         ..*cx
     };
     let mut probe = Tainted::default();
@@ -5278,17 +5312,25 @@ fn taint_block(
     initial_just: &JustTainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
-) {
+) -> JustTainted {
     let mut just = initial_just.clone();
     let mut terminal_live = cx.terminal_live;
-    for stmt in stmts {
+    let mut flow_live = cx.flow_live;
+    for (index, stmt) in stmts.iter().enumerate() {
+        let last = index + 1 == stmts.len();
         let inner = SlotCx {
             terminal_live,
+            flow_live,
+            handled: cx.handled && last,
+            condition_abort: cx.condition_abort.filter(|_| last),
             ..*cx
         };
         just = taint_step(stmt, tainted, &just, &inner, diags);
-        terminal_live &= block_falls_through(std::slice::from_ref(stmt));
+        let continues = taint_falls_through(std::slice::from_ref(stmt), &inner);
+        terminal_live &= continues;
+        flow_live &= continues;
     }
+    just
 }
 
 /// DD#121: a loop body runs 0..n times, so a name tainted late in the body is
@@ -5401,10 +5443,8 @@ fn command_arg_elidable(name: &str, index: usize) -> bool {
         // neither, so both arrive as `Other`.
         B::Other => true,
 
-        // (2) The varargs builtins. `echo ${x:~}` is the DD's own worked
-        // example; `write` IS `echo` minus the newline (DD#99); `exec CMD …`
-        // builds an external command's argv, which is (1) wearing a builtin's
-        // name; `:` discards a list it never evaluates.
+        // (2) Varargs output builtins and command-bearing exec.
+        // DD136 rejects source noop operands separately.
         B::Echo | B::Write | B::Exec | B::Noop => true,
         B::Glob => index >= 1,
         B::Rglob => index >= 2,
@@ -6611,6 +6651,87 @@ fn taint_stmt(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
+    if sx.attempting || !sx.attempts.contains(stmt) {
+        taint_stmt_inner(stmt, tainted, just, sx, diags);
+        return;
+    }
+    if let Some(failed) = taint_attempt(stmt, tainted, just, sx, diags) {
+        merge_condition_failure(tainted, failed, sx);
+    }
+}
+
+fn merge_condition_failure(tainted: &mut Tainted, failed: Tainted, sx: &SlotCx) {
+    match sx.condition_abort {
+        Some(out) => merge_abort(&mut out.borrow_mut(), failed),
+        None => tainted.extend(failed),
+    }
+}
+
+fn taint_attempt(
+    stmt: &Statement,
+    tainted: &mut Tainted,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Tainted> {
+    for name in tainted.names.clone() {
+        tainted.add_origins(&name, Origins::from([TaintOrigin::Unrefreshed]));
+    }
+    let frame = BodyCx::default();
+    let inner = SlotCx {
+        body: &frame,
+        attempting: true,
+        condition_abort: None,
+        ..*sx
+    };
+    taint_stmt_inner(stmt, tainted, just, &inner, diags);
+    sx.body
+        .ownership
+        .borrow_mut()
+        .extend(frame.ownership.take());
+    sx.body.terminals.borrow_mut().merge(frame.terminals.take());
+    let mut failed = frame.aborts.take()?;
+    if let StmtKind::Assignment(a) = &stmt.kind {
+        taint_assignment(a, &mut failed, sx, diags);
+    }
+    if !sx.probing {
+        report_abandoned_ownership(stmt.span, &failed, sx, diags);
+    }
+    Some(failed)
+}
+
+fn report_abandoned_ownership(
+    span: Span,
+    failed: &Tainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let names: BTreeSet<_> = failed.intersection(sx.interface).collect();
+    for name in names {
+        for origin in failed.origins(name) {
+            let TaintOrigin::AbandonedShared(owner) = origin else {
+                continue;
+            };
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5067",
+                format!(
+                    "ERR attempt can expose unresolved taint in '{name}' from shared \
+                     function '{owner}'; it must attest its own acquisition before \
+                     a recoverable abort"
+                ),
+            ));
+        }
+    }
+}
+
+fn taint_stmt_inner(
+    stmt: &Statement,
+    tainted: &mut Tainted,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
     taint_statement_inputs(stmt, tainted, sx, diags);
     match &stmt.kind {
         StmtKind::Assignment(a) => taint_assignment(a, tainted, sx, diags),
@@ -6634,6 +6755,13 @@ fn taint_stmt(
         // instead of a located SB5020. Same omission as the `$(( … ))` rvalue.
         StmtKind::ArithTest(a) => check_arith_taint(a, tainted, sx.output, diags),
         StmtKind::ReturnProducer(inner) => taint_return_producer(inner, tainted, just, sx, diags),
+        StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => {
+            let inner_cx = SlotCx {
+                handled: true,
+                ..*sx
+            };
+            taint_stmt(inner, tainted, just, &inner_cx, diags);
+        }
         _ => taint_child_bodies(stmt, tainted, just, sx, diags),
     }
 }
@@ -6673,7 +6801,14 @@ fn taint_cmdsub_bodies(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    taint_capture_bodies(stmt.cmdsub_bodies(), tainted, sx, diags);
+    let handled = sx.handled
+        && matches!(&stmt.kind, StmtKind::Assignment(a) if is_capture_condition_rhs(&a.value));
+    let inner = SlotCx {
+        handled,
+        condition_abort: sx.condition_abort.filter(|_| handled),
+        ..*sx
+    };
+    taint_capture_bodies(stmt.cmdsub_bodies(), tainted, &inner, diags);
 }
 
 /// A capture is single-use (DD#127) and inlined (DD#86), so its taint can
@@ -6686,23 +6821,37 @@ fn taint_capture_bodies(
     diags: &mut Vec<Diagnostic>,
 ) {
     for body in bodies {
-        let frame = BodyCx::default();
-        let inner = SlotCx {
-            fname: "",
-            body: &frame,
-            pipe_reader: None,
-            failed_attests: &[],
-            ..*sx
-        };
-        let mut body_tainted = tainted.clone();
-        taint_block(body, &mut body_tainted, &JustTainted::new(), &inner, diags);
+        taint_capture_body(body, tainted, sx, diags);
+    }
+}
+
+fn taint_capture_body(
+    body: &[Statement],
+    tainted: &mut Tainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let frame = BodyCx::default();
+    let inner = SlotCx {
+        fname: "",
+        body: &frame,
+        pipe_reader: None,
+        failed_attests: &[],
+        ..*sx
+    };
+    let mut body_tainted = tainted.clone();
+    taint_block(body, &mut body_tainted, &JustTainted::new(), &inner, diags);
+    if taint_falls_through(body, &inner) {
         tainted.extend(body_tainted);
-        tainted.extend(frame.returns.take());
-        sx.body
-            .ownership
-            .borrow_mut()
-            .extend(frame.ownership.take());
-        sx.body.terminals.borrow_mut().merge(frame.terminals.take());
+    }
+    tainted.extend(frame.returns.take());
+    sx.body
+        .ownership
+        .borrow_mut()
+        .extend(frame.ownership.take());
+    sx.body.terminals.borrow_mut().merge(frame.terminals.take());
+    if let Some(aborted) = frame.aborts.take() {
+        sx.record_abort(&aborted);
     }
 }
 
@@ -6724,6 +6873,103 @@ fn taint_child_bodies(
     // straight through rather than resetting.
     for body in stmt.structural_bodies() {
         taint_block(body, tainted, just, sx, diags);
+    }
+}
+
+fn taint_condition_block(
+    stmts: &[Statement],
+    entry: &Tainted,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> (Tainted, Tainted) {
+    let (last, prefix) = stmts
+        .split_last()
+        .expect("a validated condition has a final producer");
+    let mut state = entry.clone();
+    let prefix_cx = SlotCx {
+        handled: false,
+        condition_abort: None,
+        ..*sx
+    };
+    let lead = taint_block(prefix, &mut state, just, &prefix_cx, diags);
+    let last_cx = SlotCx {
+        flow_live: sx.flow_live && taint_falls_through(prefix, sx),
+        ..*sx
+    };
+    taint_condition(last, &state, &lead, &last_cx, diags)
+}
+
+fn taint_condition(
+    stmt: &Statement,
+    entry: &Tainted,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> (Tainted, Tainted) {
+    match &stmt.kind {
+        StmtKind::Pipeline(p) if p.commands.len() == 1 => {
+            let (yes, no) = taint_condition(&p.commands[0], entry, just, sx, diags);
+            if p.negated {
+                (no, yes)
+            } else {
+                (yes, no)
+            }
+        }
+        StmtKind::Negated(inner) => {
+            let (yes, no) = taint_condition(inner, entry, just, sx, diags);
+            (no, yes)
+        }
+        StmtKind::List(l) if l.op != ListOp::Background => {
+            taint_condition_list(l, entry, just, sx, diags)
+        }
+        _ => taint_condition_step(stmt, entry, just, sx, diags),
+    }
+}
+
+fn taint_condition_step(
+    stmt: &Statement,
+    entry: &Tainted,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> (Tainted, Tainted) {
+    let aborted = RefCell::new(None);
+    let inner = SlotCx {
+        handled: true,
+        condition_abort: Some(&aborted),
+        ..*sx
+    };
+    let mut yes = entry.clone();
+    taint_step(stmt, &mut yes, just, &inner, diags);
+    let mut no = yes.clone();
+    if !sx.attempts.contains(stmt) {
+        no.extend(entry.clone());
+    }
+    if let Some(failed) = aborted.into_inner() {
+        no.extend(failed);
+    }
+    (yes, no)
+}
+
+fn taint_condition_list(
+    list: &List,
+    entry: &Tainted,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> (Tainted, Tainted) {
+    let (mut yes, mut no) = taint_condition(&list.left, entry, just, sx, diags);
+    if list.op == ListOp::And {
+        let (right_yes, right_no) =
+            taint_condition(&list.right, &yes, &JustTainted::new(), sx, diags);
+        no.extend(right_no);
+        (right_yes, no)
+    } else {
+        let (right_yes, right_no) =
+            taint_condition(&list.right, &no, &JustTainted::new(), sx, diags);
+        yes.extend(right_yes);
+        (yes, right_no)
     }
 }
 
@@ -6749,6 +6995,7 @@ fn taint_if(
     // (out-state, does this path reach the merge?)
     let mut paths: Vec<(Tainted, bool)> = Vec::new();
     let mut lead = just.clone();
+    let mut else_lead = JustTainted::new();
     let mut failed_attests = sx.failed_attests.to_vec();
 
     let arms = std::iter::once((&i.condition, &i.then_body))
@@ -6758,18 +7005,16 @@ fn taint_if(
             failed_attests: &failed_attests,
             ..*sx
         };
-        let mut cond_out = fall.clone();
-        taint_block(cond, &mut cond_out, &lead, &arm_cx, diags);
-        let mut body_out = cond_out.clone();
-        // DD#88 `if x=$(cmd) { attest x … }`: the condition taints `x` and the
-        // body's first statement is immediately below it.
-        let body_lead = block_taints(cond, &arm_cx);
+        let (mut body_out, failed) = taint_condition_block(cond, &fall, &lead, &arm_cx, diags);
+        // Both branches follow their condition's acquisition, but an abandoned
+        // path must not borrow adjacency from a source it never reached.
+        else_lead = block_taints(cond, &arm_cx);
+        let mut body_lead = else_lead.clone();
+        body_lead.retain_fresh(&body_out);
         taint_block(body, &mut body_out, &body_lead, &arm_cx, diags);
-        paths.push((body_out, block_falls_through(body)));
-        // The failing path keeps everything tainted before the condition plus
-        // anything the condition itself tainted — a gate that did not pass
-        // vouched for nothing.
-        fall.extend(cond_out);
+        paths.push((body_out, taint_falls_through(body, sx)));
+        fall = failed;
+        else_lead.retain_fresh(&fall);
         failed_attests.extend(
             condition_attest(cond)
                 .and_then(attest_subject)
@@ -6786,8 +7031,8 @@ fn taint_if(
                 failed_attests: &failed_attests,
                 ..*sx
             };
-            taint_block(eb, &mut else_out, &JustTainted::new(), &failure_cx, diags);
-            paths.push((else_out, block_falls_through(eb)));
+            taint_block(eb, &mut else_out, &else_lead, &failure_cx, diags);
+            paths.push((else_out, taint_falls_through(eb, sx)));
         }
         None => paths.push((fall, true)),
     }
@@ -6845,6 +7090,9 @@ fn merge_paths(paths: &[(Tainted, bool)], tainted: &mut Tainted) {
 /// reads as falling through. Widening it means deciding divergence for
 /// arbitrary control flow, which is a different question.
 pub(crate) fn block_falls_through(stmts: &[Statement]) -> bool {
+    if body_always_returns(stmts) {
+        return false;
+    }
     match stmts.last().map(|s| &s.kind) {
         Some(StmtKind::Command(c)) => !matches!(
             expr_literal_str(&c.name),
@@ -6853,6 +7101,19 @@ pub(crate) fn block_falls_through(stmts: &[Statement]) -> bool {
         Some(StmtKind::Group(g)) => block_falls_through(&g.body),
         _ => true,
     }
+}
+
+fn taint_falls_through(stmts: &[Statement], cx: &SlotCx) -> bool {
+    block_falls_through(stmts)
+        && !body_always_ends(stmts, &|command| {
+            cx.summaries
+                .get(expr_literal_str(&command.name))
+                .is_some_and(|summary| {
+                    !summary.returns
+                        && !(cx.attempts.calls.contains(&command.name.span)
+                            && summary.aborted.is_some())
+                })
+        })
 }
 
 /// DD#121: the caught attest at the head of an `if` condition, if the condition
@@ -6941,9 +7202,7 @@ fn unresolved_msg(n: &str) -> String {
     )
 }
 
-/// DD#121: a `while` condition and body both run 0..n times, so the entry state
-/// is driven to a fixpoint and the merge unions the pre-loop set back in (the
-/// zero-trip path).
+/// The body may run zero times, but the condition still runs on that path.
 fn taint_while(w: &While, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
     // `while readline v { attest v … }`: the condition is the statement
     // immediately above the body, so what it taints is adjacent to the body's
@@ -6962,20 +7221,20 @@ fn while_pass(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) -> (Tainted, Tainted) {
-    let ((cond, body), exits) = sx.body.in_loop(|| {
-        let mut cond = head.clone();
-        taint_block(&w.condition, &mut cond, &JustTainted::new(), sx, diags);
-        let mut body = cond.clone();
-        taint_block(&w.body, &mut body, lead, sx, diags);
-        (cond, body)
+    let ((failed, body), exits) = sx.body.in_loop(|| {
+        let (yes, no) = taint_condition_block(&w.condition, head, &JustTainted::new(), sx, diags);
+        let (mut body, failed) = if w.until { (no, yes) } else { (yes, no) };
+        let mut body_lead = lead.clone();
+        body_lead.retain_fresh(&body);
+        taint_block(&w.body, &mut body, &body_lead, sx, diags);
+        (failed, body)
     });
     let mut next = exits.continues;
-    if block_falls_through(&w.body) {
+    if taint_falls_through(&w.body, sx) {
         next.extend(body);
     }
     let mut exit = exits.breaks;
-    exit.extend(head.clone());
-    exit.extend(cond);
+    exit.extend(failed);
     (next, exit)
 }
 
@@ -7027,21 +7286,13 @@ fn taint_uncaught_list(
         );
         return;
     }
-    let before = tainted.clone();
-    taint_block(
-        std::slice::from_ref(l.left.as_ref()),
-        tainted,
-        just,
-        sx,
-        diags,
-    );
-    let mut right = if matches!(l.op, ListOp::Or) {
-        let mut s = before;
-        s.extend(tainted.clone());
-        s
+    let (yes, no) = taint_condition(&l.left, tainted, just, sx, diags);
+    let (untaken, mut right) = if matches!(l.op, ListOp::Or) {
+        (yes, no)
     } else {
-        tainted.clone()
+        (no, yes)
     };
+    *tainted = untaken;
     taint_block(
         std::slice::from_ref(l.right.as_ref()),
         &mut right,
@@ -7052,7 +7303,7 @@ fn taint_uncaught_list(
     // DD#121 R2: the right operand is a branch like any other, so if it diverts
     // (`exit` / `return` / `break` / `continue`) its out-state never arrives at
     // the merge — the same rule `merge_paths` applies to a diverting `else`.
-    if block_falls_through(std::slice::from_ref(l.right.as_ref())) {
+    if taint_falls_through(std::slice::from_ref(l.right.as_ref()), sx) {
         tainted.extend(right);
     }
 }
@@ -7103,7 +7354,7 @@ fn for_pass(
         .body
         .in_loop(|| taint_block(&f.body, &mut body, &lead, sx, diags));
     let mut next = exits.continues;
-    if block_falls_through(&f.body) {
+    if taint_falls_through(&f.body, sx) {
         next.extend(body);
     }
     let mut exit = exits.breaks;
@@ -7123,10 +7374,17 @@ fn taint_for_words(
     for w in words {
         taint_capture_bodies(w.cmdsub_bodies(), tainted, sx, diags);
         taint_expr_arith_calls(w, w.span, tainted, sx, diags);
+        record_glob_abort(std::slice::from_ref(w), tainted, sx);
         reject_tainted_array_iter(w, tainted, diags);
         if let ExprKind::CommandSubstitution(stmts) = &w.kind {
             check_bare_cmdsub_taint(stmts, w.span, sx.output, diags);
         }
+    }
+}
+
+fn record_glob_abort(words: &[Expr], tainted: &Tainted, sx: &SlotCx) {
+    if words.iter().any(|word| word.literal_glob().is_some()) {
+        sx.record_abort(tainted);
     }
 }
 
@@ -7366,6 +7624,7 @@ fn taint_array_literal_assignment(
 ) -> bool {
     match &a.value.kind {
         ExprKind::Array(elems) => {
+            record_glob_abort(elems, tainted, sx);
             let is_map = sx.is_map(&a.name);
             reject_tainted_elements(elems.iter(), &a.name, is_map, tainted, sx.output, diags);
         }
@@ -7458,9 +7717,42 @@ fn taint_pipeline(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
+    if let [stmt] = p.commands.as_slice() {
+        let inner = SlotCx {
+            handled: sx.handled || p.negated,
+            ..*sx
+        };
+        taint_stmt(stmt, tainted, &JustTainted::new(), &inner, diags);
+        return;
+    }
+    taint_multi_stage_pipeline(p, tainted, sx, diags);
+}
+
+fn taint_multi_stage_pipeline(
+    p: &crate::ir::Pipeline,
+    tainted: &mut Tainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let checked = !sx.handled && p.commands.iter().any(|s| !s.stage_marks().1);
+    if checked {
+        sx.record_abort(tainted);
+    }
+    taint_pipeline_stages(&p.commands, tainted, sx, diags);
+    if checked {
+        sx.record_abort(tainted);
+    }
+}
+
+fn taint_pipeline_stages(
+    stages: &[Statement],
+    tainted: &mut Tainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
     let mut upstream = Origins::new();
-    for (i, s) in p.commands.iter().enumerate() {
-        let in_parent = i + 1 == p.commands.len() && stage_runs_in_parent(s);
+    for (i, s) in stages.iter().enumerate() {
+        let in_parent = i + 1 == stages.len() && stage_runs_in_parent(s);
         let stage = pipe_stage_context(sx, &upstream, i, in_parent);
         taint_stage(s, in_parent, tainted, &stage, diags);
         let output = output_origins(std::slice::from_ref(s), &stage);
@@ -7504,6 +7796,7 @@ fn taint_discarded(stmt: &Statement, tainted: &Tainted, sx: &SlotCx, diags: &mut
         pipe_reader: None,
         failed_attests: &[],
         terminal_live: false,
+        condition_abort: None,
         ..*sx
     };
     taint_stmt(
@@ -7528,9 +7821,6 @@ fn taint_redirected(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    for rd in &r.redirects {
-        check_expr_taint(&rd.target, tainted, sx.output, diags);
-    }
     let input = Origins::new();
     let inner = SlotCx {
         stdin: if redirect_reads_new_input(r) {
@@ -7541,7 +7831,80 @@ fn taint_redirected(
         pipe_reader: None,
         ..*sx
     };
+    if taint_redirected_call(&r.body, &r.redirects, tainted, just, sx, &inner, diags) {
+        return;
+    }
+    taint_redirect_inputs(&r.redirects, tainted, !sx.handled, sx, diags);
     taint_stmt(&r.body, tainted, just, &inner, diags);
+}
+
+fn taint_redirected_call(
+    stmt: &Statement,
+    redirects: &[Redirect],
+    tainted: &mut Tainted,
+    just: &JustTainted,
+    before: &SlotCx,
+    after: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> bool {
+    let (body, suppressed, negated) = stmt.stage_marks();
+    let call_cx = SlotCx {
+        handled: after.handled || suppressed || negated,
+        ..*after
+    };
+    if taint_redirected_command(body, redirects, tainted, just, before, &call_cx, diags) {
+        return true;
+    }
+    let StmtKind::ReturnProducer(inner) = &body.kind else {
+        return false;
+    };
+    let handled = SlotCx {
+        handled: true,
+        ..call_cx
+    };
+    if !taint_redirected_call(inner, redirects, tainted, just, before, &handled, diags) {
+        return false;
+    }
+    record_exit(tainted, is_self_tail_producer(inner, after.fname), after);
+    true
+}
+
+fn taint_redirected_command(
+    body: &Statement,
+    redirects: &[Redirect],
+    tainted: &mut Tainted,
+    just: &JustTainted,
+    before: &SlotCx,
+    after: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> bool {
+    let StmtKind::Command(c) = &body.kind else {
+        return false;
+    };
+    taint_statement_inputs(body, tainted, before, diags);
+    let recoverable = !after.handled || (after.attempting && after.attempts.contains(body));
+    taint_redirect_inputs(redirects, tainted, recoverable, after, diags);
+    let skipped = tainted.clone();
+    taint_command(c, body.span, tainted, just, after, diags);
+    if !recoverable {
+        merge_condition_failure(tainted, skipped, after);
+    }
+    true
+}
+
+fn taint_redirect_inputs(
+    redirects: &[Redirect],
+    tainted: &Tainted,
+    recoverable: bool,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for redirect in redirects {
+        check_expr_taint(&redirect.target, tainted, sx.output, diags);
+    }
+    if recoverable {
+        sx.record_abort(tainted);
+    }
 }
 
 /// Taint a dispatch's subject, its patterns and each arm body. A pattern is
@@ -7567,7 +7930,7 @@ fn taint_case_arms(
     for item in &c.items {
         let mut out = tainted.clone();
         taint_block(&item.body, &mut out, &JustTainted::new(), sx, diags);
-        paths.push((out, block_falls_through(&item.body)));
+        paths.push((out, taint_falls_through(&item.body, sx)));
     }
     merge_paths(&paths, tainted);
 }
@@ -7582,6 +7945,9 @@ fn taint_command(
     diags: &mut Vec<Diagnostic>,
 ) {
     let name = expr_literal_str(&c.name);
+    if command_can_abort(name, sx.handled) {
+        sx.record_abort(tainted);
+    }
     if name == "attest" {
         taint_attest(c, span, tainted, just, sx, diags);
         return; // Don't check args of attest for taint
@@ -7596,6 +7962,57 @@ fn taint_command(
     taint_call(c, name, span, tainted, sx, diags);
     if let Some(target) = tainted_read_target(c) {
         taint_reader_target(name, target, tainted, sx);
+    }
+}
+
+/// Source-level failure inventory, independent of the checked SSA inventory.
+fn command_can_abort(name: &str, handled: bool) -> bool {
+    use crate::ssa::BuiltinCmd;
+    match BuiltinCmd::from_name(name) {
+        BuiltinCmd::Fail => true,
+        BuiltinCmd::Other => !handled && (name.starts_with('/') || name == "mkdtemp"),
+        BuiltinCmd::Echo
+        | BuiltinCmd::Write
+        | BuiltinCmd::Cd
+        | BuiltinCmd::Close
+        | BuiltinCmd::Attest
+        | BuiltinCmd::Glob
+        | BuiltinCmd::Rglob => !handled,
+        BuiltinCmd::NegateTestResult
+        | BuiltinCmd::SetTestFromStatus
+        | BuiltinCmd::SetTestFromPipe
+        | BuiltinCmd::LetExit
+        | BuiltinCmd::StoreBgPid
+        | BuiltinCmd::TrapSignal
+        | BuiltinCmd::SignalFlag
+        | BuiltinCmd::SignalCheckpoint
+        | BuiltinCmd::TableDelete
+        | BuiltinCmd::TableDeleteIdx
+        | BuiltinCmd::Test
+        | BuiltinCmd::Noop
+        | BuiltinCmd::Exit
+        | BuiltinCmd::Exec
+        | BuiltinCmd::Wait
+        | BuiltinCmd::Read
+        | BuiltinCmd::Mapfile
+        | BuiltinCmd::Argv
+        | BuiltinCmd::Break
+        | BuiltinCmd::Continue
+        | BuiltinCmd::Return
+        | BuiltinCmd::Signal
+        | BuiltinCmd::Unset
+        | BuiltinCmd::Len
+        | BuiltinCmd::Strlen
+        | BuiltinCmd::Keys
+        | BuiltinCmd::Join
+        | BuiltinCmd::Sub
+        | BuiltinCmd::Gsub
+        | BuiltinCmd::Match
+        | BuiltinCmd::MatchAll
+        | BuiltinCmd::Toupper
+        | BuiltinCmd::Tolower
+        | BuiltinCmd::Basename
+        | BuiltinCmd::Dirname => false,
     }
 }
 
@@ -8072,7 +8489,10 @@ fn report_output_ownership(
                 );
                 diags.push(diag);
             }
-            TaintOrigin::Incoming | TaintOrigin::Stdin => {
+            TaintOrigin::Incoming
+            | TaintOrigin::Stdin
+            | TaintOrigin::AbandonedShared(_)
+            | TaintOrigin::Unrefreshed => {
                 cx.body.defer_ownership(origin, site);
             }
         }
@@ -8924,11 +9344,14 @@ fn fold_forwarded_slots(c: &Command, map: &HashMap<String, SlotUse>, u: &mut Slo
 // read it with `: $v` (an established acknowledgment, DD#81 arity).
 
 /// SB5050 (DD#86): reject an assigned-but-never-read variable.
-pub fn check_dead_variables(program: &Program) -> Vec<Diagnostic> {
+pub(crate) fn check_dead_variables(
+    program: &Program,
+    names: &crate::bindings::SourceNames,
+) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let usage = slot_usage_map(program);
-    check_dead_globals(program, &usage, &mut diags);
-    check_dead_locals(program, &usage, &mut diags);
+    check_dead_globals(program, &usage, names, &mut diags);
+    check_dead_locals(program, &usage, names, &mut diags);
     diags
 }
 
@@ -8973,6 +9396,7 @@ fn push_slot_arg_reads(c: &Command, usage: &HashMap<String, SlotUse>, reads: &mu
 fn check_dead_globals(
     program: &Program,
     usage: &HashMap<String, SlotUse>,
+    names: &crate::bindings::SourceNames,
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut reads = HashSet::new();
@@ -8982,7 +9406,7 @@ fn check_dead_globals(
         collect_slot_arg_reads(block, usage, &mut reads);
         collect_writes(block, &mut writes);
     }
-    report_dead(&writes, |n| !reads.contains(n), diags);
+    report_dead(&writes, |n| !reads.contains(n), names, diags);
 }
 
 /// Each function-local write (a name that is not a top-level global) is dead
@@ -8990,6 +9414,7 @@ fn check_dead_globals(
 fn check_dead_locals(
     program: &Program,
     usage: &HashMap<String, SlotUse>,
+    names: &crate::bindings::SourceNames,
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut globals = HashSet::new();
@@ -8997,7 +9422,7 @@ fn check_dead_locals(
         collect_scope_names(block, &mut globals);
     }
     for block in program_blocks(program) {
-        check_dead_in_functions(block, &globals, usage, diags);
+        check_dead_in_functions(block, &globals, usage, names, diags);
     }
 }
 
@@ -9009,14 +9434,15 @@ fn program_blocks(program: &Program) -> Vec<&[Statement]> {
 fn report_dead(
     writes: &[(String, Span)],
     is_dead: impl Fn(&str) -> bool,
+    names: &crate::bindings::SourceNames,
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut reported: HashSet<String> = HashSet::new();
     for (name, span) in writes {
-        if exempt_from_dead_check(name) {
-            continue;
-        }
-        if is_dead(name) && reported.insert(name.clone()) {
+        if !exempt_from_dead_check(names.original(name))
+            && is_dead(name)
+            && reported.insert(name.clone())
+        {
             diags.push(dead_var_diag(*span, name));
         }
     }
@@ -9044,16 +9470,14 @@ fn check_dead_in_functions(
     stmts: &[Statement],
     globals: &HashSet<String>,
     usage: &HashMap<String, SlotUse>,
+    names: &crate::bindings::SourceNames,
     diags: &mut Vec<Diagnostic>,
 ) {
-    for stmt in stmts {
+    walk_stmt_tree(stmts, &mut |stmt| {
         if let StmtKind::Function(f) = &stmt.kind {
-            check_fn_dead(&f.body, globals, usage, diags);
+            check_fn_dead(&f.body, globals, usage, names, diags);
         }
-        for body in stmt.child_bodies() {
-            check_dead_in_functions(body, globals, usage, diags);
-        }
-    }
+    });
 }
 
 /// A write in a function to a non-global name is dead iff it is read nowhere in
@@ -9062,6 +9486,7 @@ fn check_fn_dead(
     body: &[Statement],
     globals: &HashSet<String>,
     usage: &HashMap<String, SlotUse>,
+    names: &crate::bindings::SourceNames,
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut fn_reads = HashSet::new();
@@ -9072,6 +9497,7 @@ fn check_fn_dead(
     report_dead(
         &writes,
         |n| !globals.contains(n) && !fn_reads.contains(n),
+        names,
         diags,
     );
 }
@@ -10116,6 +10542,11 @@ struct SlotCx<'a> {
     failed_attests: &'a [String],
     terminal_live: bool,
     signal_pairs: &'a RefCell<HashSet<(Span, Span)>>,
+    attempts: &'a crate::transform::AttemptSites,
+    attempting: bool,
+    handled: bool,
+    flow_live: bool,
+    condition_abort: Option<&'a RefCell<Option<Tainted>>>,
     /// Set while `stmt_taints` is measuring one statement's taint effect. It
     /// suppresses the nested measurement, which would otherwise double the
     /// walk at every level of nesting.
@@ -10123,6 +10554,12 @@ struct SlotCx<'a> {
 }
 
 impl SlotCx<'_> {
+    fn record_abort(&self, tainted: &Tainted) {
+        if self.flow_live {
+            merge_abort(&mut self.body.aborts.borrow_mut(), tainted.clone());
+        }
+    }
+
     fn restart_scratch(&self, name: &str, tainted: &mut Tainted) {
         if self.scratch.contains(name) {
             tainted.remove(name);
@@ -10228,11 +10665,64 @@ fn is_int_fn(name: &str, fns: &HashMap<String, CallSites>) -> bool {
 }
 
 #[derive(Default)]
-struct FnSummary {
+struct TaintEffects {
     gens: Tainted,
     flows: HashMap<String, HashSet<String>>,
-    reads: HashMap<String, Vec<Diagnostic>>,
     origin_flows: HashMap<String, HashSet<String>>,
+}
+
+impl TaintEffects {
+    fn new(mut gens: Tainted, interface: &HashSet<String>) -> Self {
+        gens.retain(|name| interface.contains(name));
+        Self {
+            gens,
+            ..Self::default()
+        }
+    }
+
+    fn record_input(&mut self, name: &str, state: &Tainted, interface: &HashSet<String>) {
+        self.flows.insert(
+            name.to_string(),
+            state
+                .intersection(interface)
+                .filter(|out| out.as_str() == name || !self.gens.contains(*out))
+                .cloned()
+                .collect(),
+        );
+        self.origin_flows.insert(
+            name.to_string(),
+            state
+                .intersection(interface)
+                .filter(|out| state.origins(out).contains(&TaintOrigin::Incoming))
+                .cloned()
+                .collect(),
+        );
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.gens.extend(other.gens);
+        for (name, flow) in other.flows {
+            self.flows.entry(name).or_default().extend(flow);
+        }
+        for (name, flow) in other.origin_flows {
+            self.origin_flows.entry(name).or_default().extend(flow);
+        }
+    }
+}
+
+fn merge_abort(target: &mut Option<Tainted>, state: Tainted) {
+    match target {
+        Some(old) => old.extend(state),
+        None => *target = Some(state),
+    }
+}
+
+#[derive(Default)]
+struct FnSummary {
+    returns: bool,
+    normal: TaintEffects,
+    aborted: Option<TaintEffects>,
+    reads: HashMap<String, Vec<Diagnostic>>,
     origin_reads: HashMap<String, Vec<Diagnostic>>,
     stdin_reads: Vec<Diagnostic>,
     stdout: OutputPaths,
@@ -10242,14 +10732,19 @@ struct FnSummary {
 
 impl FnSummary {
     fn merge(&mut self, other: Self) {
-        self.gens.extend(other.gens);
-        for (name, flow) in other.flows {
-            self.flows.entry(name).or_default().extend(flow);
+        self.returns |= other.returns;
+        self.normal.merge(other.normal);
+        match (&mut self.aborted, other.aborted) {
+            (Some(old), Some(aborted)) => old.merge(aborted),
+            (target @ None, Some(aborted)) => *target = Some(aborted),
+            (_, None) => {}
         }
         for (name, reads) in other.reads {
             self.reads.entry(name).or_default().extend(reads);
         }
-        self.merge_origins(other.origin_flows, other.origin_reads);
+        for (name, reads) in other.origin_reads {
+            self.origin_reads.entry(name).or_default().extend(reads);
+        }
         self.stdin_reads.extend(other.stdin_reads);
         self.stdout.extend(other.stdout);
         self.terminals.merge(other.terminals);
@@ -10258,16 +10753,15 @@ impl FnSummary {
         }
     }
 
-    fn merge_origins(
-        &mut self,
-        flows: HashMap<String, HashSet<String>>,
-        reads: HashMap<String, Vec<Diagnostic>>,
-    ) {
-        for (name, flow) in flows {
-            self.origin_flows.entry(name).or_default().extend(flow);
-        }
-        for (name, reads) in reads {
-            self.origin_reads.entry(name).or_default().extend(reads);
+    fn own_abandoned_taint(&mut self, owner: &str) {
+        let Some(aborted) = &mut self.aborted else {
+            return;
+        };
+        for name in aborted.gens.names.clone() {
+            aborted.gens.add_origins(
+                &name,
+                Origins::from([TaintOrigin::AbandonedShared(owner.to_string())]),
+            );
         }
     }
 }
@@ -10275,6 +10769,8 @@ impl FnSummary {
 #[derive(Default)]
 struct BodyCx {
     returns: RefCell<Tainted>,
+    returned: Cell<bool>,
+    aborts: RefCell<Option<Tainted>>,
     back_edges: RefCell<Tainted>,
     loops: RefCell<Vec<LoopExits>>,
     ownership: RefCell<Vec<(TaintOrigin, Diagnostic)>>,
@@ -10375,6 +10871,8 @@ impl SiteLog {
 
 struct BodyWalk {
     exit: Tainted,
+    returns: bool,
+    aborted: Option<Tainted>,
     diags: Vec<Diagnostic>,
     log: SiteLog,
     ownership: Vec<(TaintOrigin, Diagnostic)>,
@@ -10450,8 +10948,6 @@ fn build_summaries(
 
 fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
     let base = walk_body(f, Tainted::default(), cx);
-    let mut gens = base.exit.clone();
-    gens.retain(|name| cx.interface.contains(name));
     let mut stdout = cx.output.paths(&f.body, &|name| {
         cx.summaries.get(name).map(|summary| summary.stdout.clone())
     });
@@ -10459,7 +10955,12 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
         stdout.owned_by(&f.name);
     }
     let mut summary = FnSummary {
-        gens,
+        returns: base.returns,
+        normal: TaintEffects::new(base.exit.clone(), cx.interface),
+        aborted: base
+            .aborted
+            .clone()
+            .map(|state| TaintEffects::new(state, cx.interface)),
         stdin_reads: base.ownership_reads(&TaintOrigin::Stdin),
         stdout,
         ..FnSummary::default()
@@ -10467,35 +10968,44 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
     summary.terminals = base.terminals;
     let names: BTreeSet<_> = cx.interface.iter().collect();
     for name in names {
-        let mut entry = Tainted::default();
-        entry.replace(name, Origins::from([TaintOrigin::Incoming]));
-        let walk = walk_body(f, entry, cx);
-        let flow = walk
-            .exit
-            .intersection(cx.interface)
-            .filter(|out| *out == name || !summary.gens.contains(*out))
-            .cloned()
-            .collect();
-        summary.flows.insert(name.clone(), flow);
-        summary.origin_flows.insert(
-            name.clone(),
-            walk.exit
-                .intersection(cx.interface)
-                .filter(|out| walk.exit.origins(out).contains(&TaintOrigin::Incoming))
-                .cloned()
-                .collect(),
-        );
-        summary
-            .origin_reads
-            .insert(name.clone(), walk.ownership_reads(&TaintOrigin::Incoming));
-        let mut reads = inherited_attest_requirements(&walk, name, "body");
-        reads.extend(diag_difference(walk.diags, &base.diags));
-        summary.reads.insert(name.clone(), reads);
-        summary
-            .exit_flows
-            .insert(name.clone(), walk.terminals.exits);
+        summarise_input(f, cx, name, &base.diags, &mut summary);
+    }
+    if !cx.fns[&f.name].single_use() {
+        summary.own_abandoned_taint(&f.name);
     }
     summary
+}
+
+fn summarise_input(
+    f: &Function,
+    cx: &SlotCx,
+    name: &str,
+    base_diags: &[Diagnostic],
+    summary: &mut FnSummary,
+) {
+    let mut entry = Tainted::default();
+    entry.replace(name, Origins::from([TaintOrigin::Incoming]));
+    let walk = walk_body(f, entry, cx);
+    summary.normal.record_input(name, &walk.exit, cx.interface);
+    if let Some(aborted) = &mut summary.aborted {
+        aborted.record_input(
+            name,
+            walk.aborted
+                .as_ref()
+                .expect("taint inputs cannot remove an abnormal control-flow path"),
+            cx.interface,
+        );
+    }
+    summary.origin_reads.insert(
+        name.to_string(),
+        walk.ownership_reads(&TaintOrigin::Incoming),
+    );
+    let mut reads = inherited_attest_requirements(&walk, name, "body");
+    reads.extend(diag_difference(walk.diags, base_diags));
+    summary.reads.insert(name.to_string(), reads);
+    summary
+        .exit_flows
+        .insert(name.to_string(), walk.terminals.exits);
 }
 
 fn walk_body(f: &Function, mut entry: Tainted, cx: &SlotCx) -> BodyWalk {
@@ -10525,18 +11035,25 @@ fn walk_scope(
         stdin: &input,
         pipe_reader: None,
         failed_attests: &[],
+        handled: false,
+        attempting: false,
+        condition_abort: None,
+        flow_live: true,
         ..*cx
     };
     let mut tainted = entry.clone();
     let mut diags = Vec::new();
     taint_block(stmts, &mut tainted, &JustTainted::new(), &inner, &mut diags);
     let mut exit = body.returns.take();
-    if block_falls_through(stmts) {
+    let falls_through = taint_falls_through(stmts, &inner);
+    if falls_through {
         exit.extend(tainted);
     }
     (
         BodyWalk {
             exit,
+            returns: falls_through || body.returned.get(),
+            aborted: body.aborts.take(),
             diags,
             log,
             ownership: body.ownership.take(),
@@ -10693,9 +11210,13 @@ fn arith_calls_self(mut arith: &ArithExpr, name: &str) -> bool {
 }
 
 fn record_exit(tainted: &Tainted, self_tail: bool, cx: &SlotCx) {
+    if !cx.flow_live {
+        return;
+    }
     let target = if self_tail {
         &cx.body.back_edges
     } else {
+        cx.body.returned.set(true);
         &cx.body.returns
     };
     target.borrow_mut().extend(tainted.clone());
@@ -10726,8 +11247,14 @@ fn taint_return_producer(
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    taint_block(std::slice::from_ref(inner), tainted, just, cx, diags);
-    record_exit(tainted, is_self_tail_producer(inner, cx.fname), cx);
+    let handled = SlotCx {
+        handled: true,
+        ..*cx
+    };
+    taint_block(std::slice::from_ref(inner), tainted, just, &handled, diags);
+    if taint_falls_through(std::slice::from_ref(inner), cx) {
+        record_exit(tainted, is_self_tail_producer(inner, cx.fname), cx);
+    }
 }
 
 fn is_self_tail_producer(inner: &Statement, fname: &str) -> bool {
@@ -10745,10 +11272,7 @@ fn apply_call(
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if name == cx.fname {
-        return;
-    }
-    let Some(summary) = cx.summaries.get(name) else {
+    let Some(summary) = cx.summaries.get(name).filter(|_| name != cx.fname) else {
         return;
     };
     let bindings = summary_bindings(summary, passed);
@@ -10764,8 +11288,13 @@ fn apply_call(
             apply_terminal_effects(name, span, summary, &bindings, &arrived, cx);
         }
     }
+    if let Some(aborted) = &summary.aborted {
+        let mut prefix = tainted.clone();
+        apply_summary_effects(aborted, &bindings, &arrived, true, cx.stdin, &mut prefix);
+        cx.record_abort(&prefix);
+    }
     apply_summary_effects(
-        summary,
+        &summary.normal,
         &bindings,
         &arrived,
         cx.fns[name].single_use(),
@@ -10813,6 +11342,7 @@ type SummaryBindings<'a> = HashMap<&'a str, &'a str>;
 /// Command-call arity is checked separately; tolerate missing arguments here.
 fn summary_bindings<'a>(summary: &'a FnSummary, passed: &'a [String]) -> SummaryBindings<'a> {
     summary
+        .normal
         .flows
         .keys()
         .filter_map(|name| {
@@ -10826,7 +11356,7 @@ fn summary_bindings<'a>(summary: &'a FnSummary, passed: &'a [String]) -> Summary
 }
 
 fn apply_summary_effects(
-    summary: &FnSummary,
+    summary: &TaintEffects,
     bindings: &SummaryBindings,
     arrived: &BTreeSet<String>,
     single_use: bool,
@@ -10859,7 +11389,7 @@ fn extend_mapped_taint(tainted: &mut Tainted, names: &HashSet<String>, bindings:
 
 fn extend_generator_origins(
     tainted: &mut Tainted,
-    summary: &FnSummary,
+    summary: &TaintEffects,
     bindings: &SummaryBindings,
     input: &Origins,
 ) {
@@ -11451,6 +11981,8 @@ enum SinkMode<'a> {
     Flag(&'a mut Vec<Diagnostic>),
     /// SB5050: collect every read name (scope-agnostic superset).
     Collect(&'a mut HashSet<String>),
+    /// SB5056 runs on source names before each discard receives its own identity.
+    Discard(&'a mut Vec<Diagnostic>),
 }
 
 struct ReadSink<'a> {
@@ -11483,6 +12015,13 @@ impl ReadSink<'_> {
     fn collect_only(&mut self, name: &str) {
         if let SinkMode::Collect(set) = &mut self.mode {
             set.insert(name.to_string());
+        }
+    }
+
+    fn separately_checked(&mut self, name: &str, span: Span) {
+        self.collect_only(name);
+        if let SinkMode::Discard(diags) = &mut self.mode {
+            flag_discard_name(name, span, diags);
         }
     }
 
@@ -11527,24 +12066,22 @@ impl ReadSink<'_> {
     /// `handled_elsewhere` already covers the DD#100 slots.
     fn record_splat(&mut self, name: &str, span: Span, known: &HashSet<String>) {
         match &mut self.mode {
+            SinkMode::Discard(diags) => flag_discard_name(name, span, diags),
             SinkMode::Collect(set) => {
                 set.insert(name.to_string());
             }
-            SinkMode::Flag(diags) => {
-                if name == "args" {
-                    return;
-                }
-                match classify_read(name, span, known) {
-                    ReadVerdict::Silent => {}
-                    ReadVerdict::Reserved(d) => diags.push(d),
-                    ReadVerdict::Undefined => diags.push(undefined_splat_diag(name, span)),
-                }
-            }
+            SinkMode::Flag(diags) if name != "args" => match classify_read(name, span, known) {
+                ReadVerdict::Silent => {}
+                ReadVerdict::Reserved(d) => diags.push(d),
+                ReadVerdict::Undefined => diags.push(undefined_splat_diag(name, span)),
+            },
+            SinkMode::Flag(_) => {}
         }
     }
 
     fn record_param(&mut self, name: &str, span: Span, known: &HashSet<String>, opt_out: bool) {
         match &mut self.mode {
+            SinkMode::Discard(diags) => flag_discard_name(name, span, diags),
             SinkMode::Collect(set) => {
                 set.insert(name.to_string());
             }
@@ -11644,21 +12181,7 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
     let Some((form, pred)) = crate::ir::classify_attest(&c.args) else {
         return false;
     };
-    let mut attest_known = known.clone();
-    match form {
-        crate::ir::AttestForm::Indexed { binder, array } => {
-            attest_known.insert(binder.to_string());
-            // The array being attested is read (attest iterates it) — count it for
-            // dead-var; SB5031 handles an undeclared attest array elsewhere.
-            sink.collect_only(array);
-        }
-        crate::ir::AttestForm::Map { key, val, map } => {
-            attest_known.insert(key.to_string());
-            attest_known.insert(val.to_string());
-            sink.collect_only(map);
-        }
-        crate::ir::AttestForm::Scalar { .. } => {}
-    }
+    let attest_known = attest_scope(&form, known, c.name.span, sink);
     match pred {
         crate::ir::AttestPredicate::Test(test) => check_test_reads(test, &attest_known, sink),
         // DD#93 Part D: the conversion reads the attested source and every other
@@ -11681,7 +12204,7 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
         // *array* (`(( c = n + vv[0] ))`) reached codegen and ICEd.
         crate::ir::AttestPredicate::ArithConvert { value, .. } => {
             if let crate::ir::AttestForm::Scalar { var } = form {
-                sink.collect_only(var);
+                sink.separately_checked(var, c.name.span);
             }
             check_arith_reads(value, c.name.span, &attest_known, sink);
         }
@@ -11689,16 +12212,36 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
     true
 }
 
+fn attest_scope(
+    form: &crate::ir::AttestForm<'_>,
+    known: &HashSet<String>,
+    span: Span,
+    sink: &mut ReadSink,
+) -> HashSet<String> {
+    let mut attest_known = known.clone();
+    match form {
+        crate::ir::AttestForm::Indexed { binder, array } => {
+            attest_known.insert(binder.to_string());
+            sink.separately_checked(array, span);
+        }
+        crate::ir::AttestForm::Map { key, val, map } => {
+            attest_known.insert(key.to_string());
+            attest_known.insert(val.to_string());
+            sink.separately_checked(map, span);
+        }
+        crate::ir::AttestForm::Scalar { .. } => {}
+    }
+    attest_known
+}
+
 /// Default statement handling: check its own expressions, then recurse
 /// into any control-flow child bodies (same scope).
 fn check_stmt_exprs_and_bodies(stmt: &Statement, known: &HashSet<String>, sink: &mut ReadSink) {
-    if let StmtKind::Assignment(Assignment {
-        name,
-        op: AssignOp::Arith(_),
-        ..
-    }) = &stmt.kind
-    {
-        sink.record(name, stmt.span, known);
+    if let StmtKind::Command(c) = &stmt.kind {
+        check_discard_command(c, sink);
+    }
+    if let StmtKind::Assignment(a) = &stmt.kind {
+        check_assignment_reads(a, stmt.span, known, sink);
     }
     stmt.direct_exprs(&mut |e| check_expr_reads(e, known, sink));
     // A `(( … ))` statement / condition holds its reads in an `ArithExpr` tree,
@@ -11715,6 +12258,35 @@ fn check_stmt_exprs_and_bodies(stmt: &Statement, known: &HashSet<String>, sink: 
     // introduced nowhere.
     for body in stmt.structural_bodies() {
         check_reads_in_scope(body, known, sink);
+    }
+}
+
+fn check_assignment_reads(
+    assignment: &Assignment,
+    span: Span,
+    known: &HashSet<String>,
+    sink: &mut ReadSink,
+) {
+    if matches!(assignment.op, AssignOp::Arith(_)) {
+        sink.record(&assignment.name, span, known);
+    } else if matches!(assignment.op, AssignOp::Append) {
+        if let SinkMode::Discard(diags) = &mut sink.mode {
+            flag_discard_name(&assignment.name, span, diags);
+        }
+    }
+}
+
+fn check_discard_command(c: &Command, sink: &mut ReadSink) {
+    let SinkMode::Discard(diags) = &mut sink.mode else {
+        return;
+    };
+    let mut reads = HashSet::new();
+    record_value_fn_operand(c, &mut reads);
+    if sink.funcs.contains(expr_literal_str(&c.name)) {
+        reads.extend(collection_args(&c.args));
+    }
+    for name in reads {
+        flag_discard_name(&name, c.name.span, diags);
     }
 }
 
@@ -12273,60 +12845,21 @@ fn disposition_default_expansion(span: Span) -> Diagnostic {
 /// SB5056: reject any read of the don't-care binder `_`.
 pub fn check_discard_reads(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for block in program_blocks(program) {
-        for stmt in block {
-            check_discard_reads_stmt(stmt, &mut diags);
-        }
+    let funcs = program.function_defs().map(|f| f.name.clone()).collect();
+    let mut sink = ReadSink {
+        mode: SinkMode::Discard(&mut diags),
+        funcs: &funcs,
+    };
+    for block in program.bodies() {
+        check_reads_in_scope(block, &HashSet::new(), &mut sink);
     }
     diags
 }
 
-/// Expansion reads (`$_`, `${_}`, `${_[0]}`, `@_`) plus arithmetic reads. A
-/// bare `_` in `(( … ))` is an `ArithExpr::Var`, not an expansion, so the
-/// expression walkers never surface it — it reached the taint backstop instead
-/// of this check's diagnostic.
-fn check_discard_reads_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    crate::ir::walk_all_exprs(stmt, &mut |e| flag_discard_read(e, diags));
-    check_discard_arith_stmt(stmt, diags);
-}
-
-/// Bare `_` operands in every arithmetic tree owned by `stmt` or its children.
-fn check_discard_arith_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    if let StmtKind::ArithTest(a) = &stmt.kind {
-        flag_discard_arith(a, stmt.span, diags);
+fn flag_discard_name(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if is_discard_binder(name) {
+        diags.push(discard_read_diag(span, name));
     }
-    stmt.direct_exprs(&mut |e| {
-        crate::ir::walk_expr_tree(e, &mut |sub| flag_discard_arith_expr(sub, diags))
-    });
-    for body in stmt.child_bodies() {
-        for s in body {
-            check_discard_arith_stmt(s, diags);
-        }
-    }
-}
-
-/// A `$(( … ))` in value position.
-fn flag_discard_arith_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
-    if let ExprKind::Arithmetic(a) = &expr.kind {
-        flag_discard_arith(a, expr.span, diags);
-    }
-}
-
-/// Each bare variable read in an arithmetic tree.
-fn flag_discard_arith(a: &crate::ir::ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    crate::ir::walk_arith_var_reads(a, &mut |name| {
-        if crate::ir::is_discard_binder(name) {
-            diags.push(discard_read_diag(span, name));
-        }
-    });
-}
-
-/// One expression: flag it when it reads `_` in any spelling.
-fn flag_discard_read(expr: &Expr, diags: &mut Vec<Diagnostic>) {
-    let Some(name) = discard_read_name(expr) else {
-        return;
-    };
-    diags.push(discard_read_diag(expr.span, name));
 }
 
 /// The SB5056 diagnostic, shared by the expansion and arithmetic paths.
@@ -12341,17 +12874,6 @@ fn discard_read_diag(span: Span, name: &str) -> Diagnostic {
              named variable instead"
         ),
     )
-}
-
-/// The name read by `expr`, when that read is of the discard binder.
-fn discard_read_name(expr: &Expr) -> Option<&str> {
-    let name = match &expr.kind {
-        ExprKind::SimpleExpansion(v) => v.as_str(),
-        ExprKind::ParameterExpansion(pe) => pe.name.as_str(),
-        ExprKind::Subscript { name, .. } => name.as_str(),
-        _ => return None,
-    };
-    crate::ir::is_discard_binder(name).then_some(name)
 }
 
 // ── SB5057 (DD#99): `readline` takes exactly one bare target, no flags ──
@@ -13282,6 +13804,7 @@ mod tests {
         // SB4014 on the missing name — so the only way in is to hand the
         // walker the node directly.
         let c = crate::ir::Command {
+            best_effort: false,
             name: e(ExprKind::Literal("attest".to_string())),
             args: vec![e(ExprKind::Arithmetic(Box::new(
                 crate::ir::ArithExpr::Literal(1),

@@ -583,6 +583,15 @@ fn lift_cmdsub(
     block: &mut BlockId,
 ) -> SsaValue {
     let argv = lift_int_func_args(argv, ssa, state, block);
+    if matches!(argv.first(), Some(SsaValue::Literal(name)) if name == "mkdtemp") {
+        let temp = state.reserve_temp_name("__mkdtemp".into(), VarType::String);
+        let target = state.define(&temp);
+        ssa.block_mut(*block).insts.push(SsaInst::Assign {
+            target: target.clone(),
+            value: SsaValue::CmdSubst { argv, suppressed },
+        });
+        return SsaValue::Var(target);
+    }
     let Some(name) = external_capture_head(&argv).map(str::to_string) else {
         return SsaValue::CmdSubst { argv, suppressed };
     };
@@ -630,7 +639,9 @@ pub(super) fn needs_lift(val: &SsaValue) -> bool {
         | SsaValue::FuncCall { .. }
         | SsaValue::CmdSubstBody { .. } => true,
         SsaValue::CmdSubst { argv, .. } => {
-            external_capture_head(argv).is_some() || argv.iter().any(needs_lift)
+            external_capture_head(argv).is_some()
+                || matches!(argv.first(), Some(SsaValue::Literal(name)) if name == "mkdtemp")
+                || argv.iter().any(needs_lift)
         }
         SsaValue::DefaultValue { .. }
         | SsaValue::Concat(_)
@@ -1354,8 +1365,8 @@ fn sig_record_index(idx: &Expr, sig: &mut ArgSig, optional: bool) {
 /// (`${args[$i]}`, a dynamic index) is what marks the function variadic.
 /// Without such an access the count is vacuous, so it must not silently
 /// erase the arity ceiling. `$#` is the same rule, in `sig_record_name`.
-/// A function that genuinely wants its own count declares it with the DD#81
-/// no-op: `fn n { : @args; echo $# }`.
+/// A function that genuinely wants its own count reads the whole array:
+/// `fn n { array _=(@args); echo $# }` (DD#81/DD#98).
 ///
 /// Suppression changes checking, not what runs (DD#55): `$(- join args)` reads
 /// every argument exactly as `$(join args)` does, so the command is found
@@ -1760,6 +1771,7 @@ mod invariant_tests {
     fn nonliteral_command_head_is_not_a_literal_return() {
         let span = Span::new(1, 1);
         let command = Command {
+            best_effort: false,
             name: Expr {
                 kind: ExprKind::SimpleExpansion("return_name".to_string()),
                 span,

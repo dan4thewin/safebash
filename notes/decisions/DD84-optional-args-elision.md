@@ -280,16 +280,17 @@ literal element. A user-function call is the fourth, and is elidable exactly
 when the callee is variadic. That is now the whole rule, rather than a
 closed list that happened to omit the one position with a fixed arity.
 
-### Consequence — `: @args` must not promote an optional index
+### Consequence — a whole-args discard must not promote an optional index
 
 Found while applying the above. `analyze_arity` computed a variadic function's
-floor from `required ∪ optional`, so adding `: @args` — DD#81's documented way
+floor from `required ∪ optional`, so adding a whole-args discard — DD#81's way
 to accept a variable number — turned a DD#84 *optional* argument back into a
-required one:
+required one. The examples below use the provisional DD136 spelling
+`array _=(@args)`; the original spelling was `: @args`.
 
 ```sash
-fn f {           echo "[${args[0]:-}]" };  f    # accepted  (Fixed{0,1})
-fn f { : @args;  echo "[${args[0]:-}]" };  f    # SB5042    -- wrong
+fn f {                  echo "[${args[0]:-}]" }; f  # accepted (Fixed{0,1})
+fn f { array _=(@args); echo "[${args[0]:-}]" }; f  # old SB5042 was wrong
 ```
 
 The floor is now `required` only, matching the fixed path's `min`, which
@@ -309,7 +310,7 @@ the sum to the floor. That is not enough, and the gap is a silent wrong
 answer rather than a missing diagnostic:
 
 ```sash
-fn f { : @args; echo "first=[${args[0]}]" }
+fn f { array _=(@args); echo "first=[${args[0]}]" }
 array e=(q r)
 f @e x            # accepted: 0 + 1 reaches the floor of 1
 ```

@@ -1130,7 +1130,7 @@ run_sash 'fn f { echo $1; }
 f hello'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 75.17
 # 75.18 $# is the argument count (= $(len args))
-run_sash 'fn f { : @args; echo $#; }
+run_sash 'fn f { array _=(@args); echo $#; }
 f a b c'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.18
 # 75.19 a nested function call does NOT clobber the caller's positionals
@@ -1140,7 +1140,7 @@ f A'
 [[ $rc = 0 && $out = $'Z\nA' && -z $err ]]; chk 75.19
 # 75.20 user-written ${args[i]} reads the same array. DD#81: `: ${args[1]}`
 # acknowledges the skipped middle param (fixed arity must read args in order).
-run_sash 'fn f { : ${args[1]}; echo ${args[0]} ${args[2]}; }
+run_sash 'fn f { _=${args[1]}; echo ${args[0]} ${args[2]}; }
 f a b c'
 [[ $rc = 0 && $out = "a c" && -z $err ]]; chk 75.20
 # 75.21 @args splat iterates every argument
@@ -1150,12 +1150,12 @@ f a b'
 # 75.22 more than 9 args are reachable via ${args[N]} (the old scalar model
 # capped at $9). DD#81: reaching a high index without the lower ones
 # makes the function variadic — `: @args` marks it (takes any number).
-run_sash 'fn f { : @args; echo ${args[10]}; }
+run_sash 'fn f { array _=(@args); echo ${args[10]}; }
 f a b c d e f g h i j k'
 [[ $rc = 0 && $out = "k" && -z $err ]]; chk 75.22
 # 75.23 `$(len args)` is the arg count (= $#), reading the implicit array — the
 # intrinsic must resolve `args`.
-run_sash 'fn f { : @args; echo $(len args); }
+run_sash 'fn f { array _=(@args); echo $(len args); }
 f a b c'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.23
 # 75.24 `$(join args SEP)` joins the implicit array.
@@ -1854,7 +1854,7 @@ echo $(strlen @a)'
 
 # 75.89 an array splatted into a user function still arrives as args
 run_sash 'fn f {
-: @args
+array _=(@args)
 echo $(len args)
 }
 array a=(1 2)
@@ -1894,7 +1894,7 @@ echo $(strlen "$(join a ,)")'
 # it directly. Reached `check_len_operand`'s `name == "args"` arm, which no
 # spec had exercised.
 run_sash 'fn f {
-: @args
+array _=(@args)
 echo $(len args)
 }
 f a b c'
@@ -1902,7 +1902,7 @@ f a b c'
 
 # 75.95 it agrees with $# for the same frame
 run_sash 'fn f {
-: @args
+array _=(@args)
 echo "$(len args) $#"
 }
 f x y'
@@ -1917,7 +1917,7 @@ f'
 
 # 75.97 an empty string is an argument: counted, not skipped
 run_sash 'fn f {
-: @args
+array _=(@args)
 echo "$(len args) $#"
 }
 f "" ""'
@@ -1925,11 +1925,11 @@ f "" ""'
 
 # 75.98 `args` is per-frame -- a nested call does not disturb the caller's
 run_sash 'fn g {
-: @args
+array _=(@args)
 echo "g=$(len args)"
 }
 fn f {
-: @args
+array _=(@args)
 g x y z
 echo "f=$(len args)"
 }

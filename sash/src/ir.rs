@@ -86,7 +86,11 @@ impl Statement {
     /// Shorthand: a simple command with name and args.
     pub fn command(name: Expr, args: Vec<Expr>, span: Span) -> Self {
         Self {
-            kind: StmtKind::Command(Command { name, args }),
+            kind: StmtKind::Command(Command {
+                name,
+                args,
+                best_effort: false,
+            }),
             span,
         }
     }
@@ -1272,6 +1276,7 @@ pub enum DeclKeyword {
 pub struct Command {
     pub name: Expr,
     pub args: Vec<Expr>,
+    pub best_effort: bool,
 }
 
 /// SB5097 guarantees a positive decimal count. Overflow still clamps outward;
@@ -2768,6 +2773,7 @@ mod cmdsub_twin_tests {
             kind: StmtKind::Command(Command {
                 name: word(ExprKind::Literal(name.into())),
                 args,
+                best_effort: false,
             }),
             span: Span::new(1, 1),
         }

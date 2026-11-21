@@ -9,7 +9,8 @@ status: accepted
    check every call route. Literal positions are contiguous; DD84 governs
    optional trailing positions.
 4. Whole-argument access or dynamic indexing makes a signature variadic;
-   merely counting arguments does not.
+   merely counting arguments does not. In the provisional DD136 trial,
+   `array _=(@args)` is an explicit whole-argument discard.
 5. Runtime-sized splats/elisions require a variadic callee and must guarantee
    every required position before later positions become indeterminate.
 6. Materialize arguments before replacing the caller's context or applying
@@ -236,11 +237,13 @@ should controlled dynamic behaviour ever be wanted back).~~
   fixed signature must read `{0..max}` contiguously — a gap is **SB5044**
   (rule (a)). *(`$(len args)`/`$#` were in the variadic set until the
   2026-09-28 addendum below.)*
-- **The no-op idiom** (DG 2026-08-25): to acknowledge an argument a fixed-arity
-  function *takes* but does not otherwise use, reference it in a no-op — `fn f
-  { : $1; echo $2; }` (reads index 0, no hole). To take a *variable* number (or
+- **The discard idiom** (DG 2026-08-25; spelling revised by provisional
+  DD136): to acknowledge an argument a fixed-arity function *takes* but does
+  not otherwise use, write `fn f { _=$1; echo $2; }`
+  (reads index 0, no hole). To take a *variable* number (or
   reach a high index without the lower ones), mark the function variadic with
-  `@args` — `fn f { : @args; echo ${args[10]}; }`. specs functions.sh 81.9–81.13.
+  `@args` — `fn f { array _=(@args); echo ${args[10]}; }`.
+  The original colon spellings were covered by functions.sh 81.9–81.13.
 
 ## Addendum (2026-09-28) — counting the arguments is not accessing them
 
@@ -301,18 +304,19 @@ n a b
   — use @args to accept a variable number
 ```
 
-That is DD#81's **no-op idiom**, unchanged since 2026-08-25, and SB5043 was
-already worded to point at it. A function that genuinely wants its own count
-declares that it takes any number:
+That is DD#81's explicit whole-argument read. The provisional DD136 trial
+spells its discard with DD98, rather than colon. A function that genuinely
+wants its own count declares that it takes any number:
 
 ```sash
-fn n { : @args; echo "$#" }
+fn n { array _=(@args); echo "$#" }
 n a b          # → 2
 ```
 
-This is a **breaking change** — a bare `$#`/`len args` counter now needs
-`: @args` — and it is fail-closed: it rejects programs, never accepts new
-ones. Migration is one token per function.
+The counting-rule change was **breaking**: a bare `$#`/`len args` counter
+needed an explicit whole-argument read. It was fail-closed, rejecting
+programs rather than accepting new ones. The trial changes the disposal
+spelling, not this arity rule.
 
 ### Why it is the right default
 
@@ -320,7 +324,8 @@ sash checks arity at compile time (SB5042/SB5043), so a hand-written runtime
 `if (( $# != 2 ))` guard is redundant with a guarantee the compiler already
 makes. Under the old rule *writing that guard silently removed the
 guarantee it was imitating*. Making the count contribute nothing means the
-only way to opt out of the compile-time check is to say so — `: @args` —
+only way to opt out of the compile-time ceiling is to say so —
+`array _=(@args)` in the trial —
 rather than to mention `$#` in passing.
 
 ### Cost, measured
@@ -330,7 +335,7 @@ body: types.sh 75.18/75.23/75.89/75.94/75.95/75.97/75.98, functions.sh
 sp.1/sp.8, optional_args.sh 84.50/84.51, argv.sh av.h1/av.h3, arithmetic.sh
 31.24, control_flow.sh cf.f13, subscript.sh 80.32, coverage.sh cov.241. All
 were migrated by adding `: @args`. No spec exercising a real variadic access
-moved.
+moved. The DD136 trial migrates these former colon reads to discard binders.
 
 ### Not changed — "branch"
 
@@ -365,7 +370,7 @@ and then, on how that interacts with a floor:
 **Write the required arguments first, then the splat.**
 
 ```sash
-fn f { : @args; str host=${args[0]}; str port=${args[1]}; … }   # floor 2
+fn f { array _=(@args); str host=${args[0]}; str port=${args[1]}; … }   # floor 2
 
 f "$h" "$p" @rest      # correct
 f @rest "$h" "$p"      # SB5087
@@ -388,7 +393,7 @@ which, so nothing after a splat can satisfy a fixed read.
 Counting hides this, and the failure is silent rather than loud:
 
 ```sash
-fn f { : @args; echo "first=[${args[0]}]" }
+fn f { array _=(@args); echo "first=[${args[0]}]" }
 array e=(q r)
 f @e x
 ```

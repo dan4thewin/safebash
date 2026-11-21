@@ -682,6 +682,9 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
             }
         }
         SsaInst::Assign { .. }
+        | SsaInst::AttemptStart { .. }
+        | SsaInst::AttemptEnd { .. }
+        | SsaInst::RecoverGlobal { .. }
         | SsaInst::LifetimeStart { .. }
         | SsaInst::CollectionPublish { .. }
         | SsaInst::Test(..)
@@ -1344,6 +1347,7 @@ mod invariant_tests {
         // `StmtKind::Negated` is only ever a non-leading pipeline *stage*,
         // and `push_pipeline_stage` peels it there.
         let inner = stmt(StmtKind::Command(Command {
+            best_effort: false,
             name: Expr {
                 kind: ExprKind::Literal("true".to_string()),
                 span: Span::new(1, 1),

@@ -215,7 +215,7 @@ f 2'
 
 # 80.32 `$#` as the index — the same fall-through, a first byte that is
 # neither a letter nor `_`.
-run_sash 'fn f { : @args; array arr=(p q r); echo ${arr[$#]} }
+run_sash 'fn f { array _=(@args); array arr=(p q r); echo ${arr[$#]} }
 f a b'
 [[ $rc = 0 && $out = r && -z $err ]]; chk 80.32
 
@@ -642,10 +642,10 @@ echo "$s[$(( 0 ))]"'
 # 80.90 the BRACED splat subscript. `$@[0]` / `$*[0]` are SB5031 (80.20,
 # 80.21); the braced twins must say the same thing, since the desugar routes
 # the brace-less spelling through this very path.
-run_sash 'fn f { : @args; echo ${@[0]} }
+run_sash 'fn f { array _=(@args); echo ${@[0]} }
 f a'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 80.90
-run_sash 'fn f { : @args; echo ${*[0]} }
+run_sash 'fn f { array _=(@args); echo ${*[0]} }
 f a'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 80.91
 
@@ -659,7 +659,7 @@ f a'
 # family; these are the rest of it.
 
 # 80.92 `$#` — the retired length sugar.
-run_sash 'fn f { : @args; echo $#[0] }
+run_sash 'fn f { array _=(@args); echo $#[0] }
 f a'
 [[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk 80.92
 

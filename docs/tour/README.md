@@ -19,6 +19,8 @@ Every `sash` snippet in this tour is a complete program. The
 
 This edition includes directory selectors, immutable scratch values and
 validated regexes, all accepted and implemented on `main`.
+The checked-disposal and ERR-attempt slides additionally show a
+**provisional trial** on `err-attempt-trial`, not yet adopted on main.
 
 **When running under presenterm** (`mk -p 1 tour`):
 
@@ -329,6 +331,32 @@ A variable that is written but never read is an error. It is usually a
 typo, as here.
 
 To deliberately throw a value away, assign it to `_`.
+
+
+
+Checked disposal (trial)
+---
+
+```bash
+str name=sash
+_=${name:?a name is required}
+_=$(( 6 * 7 ))
+echo ready
+```
+
+**Output:**
+
+```text
+ready
+```
+
+
+`_=` evaluates a value without keeping it. Each occurrence is an independent
+sink, so these string and integer values do not conflict. `_` cannot be read.
+
+Change `name` to `""`: the `:?` guard still stops the program. Disposal is
+not an exemption from checks. For a list, use `array _=(...)`.
+Bare `:` remains a successful noop; it no longer discards operand values.
 
 
 
@@ -1891,6 +1919,83 @@ or an unhandled failure runs `ERR`. The cause picks the handler, not the
 number.
 
 Try changing `fail 3` to `exit 3`.
+
+
+
+Best-effort cleanup (trial)
+---
+
+```bash
+fn report {
+  echo report started
+  fail 7
+}
+fn cleanup {
+  report
+  echo not reached
+}
+ERR {
+  : cleanup
+  echo ERR continues
+}
+fail 3
+```
+
+**Output (expected failure):**
+
+```text
+report started
+ERR continues
+```
+
+
+In ERR, `: cleanup` attempts one void-function call. A recoverable failure
+abandons **the whole attempted call chain**, not just `report`, and ERR
+continues after the attempt. The earlier output remains.
+
+Arguments and attached redirects belong to the attempt. Scoped descriptors
+and unfinished inner captures/readers are cleaned up; completed effects are
+not rolled back. ERR's original status, here 3, survives its fall-through.
+
+
+
+A failed attempt is not a return (trial)
+---
+
+```bash
+fn report {
+  echo report started
+  if [[ $1 == stop ]] { fail 0 }
+  echo report finished
+  return 0
+}
+ERR {
+  if text=$(report stop) {
+    echo delivered: $text
+  } else {
+    int code=$(status)
+    echo abandoned: status $code, output [$text]
+  }
+}
+fail 3
+```
+
+**Output (expected failure):**
+
+```text
+abandoned: status 0, output [report started]
+```
+
+
+An ERR-owned caught status call also establishes an attempt. Normal returns
+keep their status; abandonment is **false even for `fail 0`**. The caller's
+capture retains output already emitted, but no unfinished inner value is
+invented. Change `stop` to `go` to take the ordinary successful return.
+
+Only explicit `fail` and existing unchecked operational results recover.
+NUL/index/`:?` guards, unconditional file reads, fatal faults and `exit`
+still stop cleanup. Helpers' own conditions and source `-` establish no
+attempt; integer calls cannot establish one either.
 
 
 

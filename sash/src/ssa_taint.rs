@@ -46,8 +46,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
         user_functions: collect_user_functions(program),
         diverging: collect_diverging_blocks(program),
     };
-    let main = program.process_blocks(&[program.entry]);
-    let main_view = check_process(&pass, &main, taint, &mut errors);
+    let main_view = check_process(&pass, program.entry, taint, &mut errors);
     if !program.handlers.is_empty() {
         check_handlers(&pass, &main_view, &mut errors);
     }
@@ -79,12 +78,7 @@ fn check_handler(
     for (name, input) in &handler.inputs {
         view.insert(var_key(input), taint_of_flag(incoming.contains(name)));
     }
-    let view = check_process(
-        pass,
-        &pass.program.process_blocks(&[handler.block]),
-        view,
-        errors,
-    );
+    let view = check_process(pass, handler.block, view, errors);
     check_inherited_attests(pass, handler.block, incoming, &view, errors);
     view
 }
@@ -102,11 +96,17 @@ fn check_inherited_attests(
     while let Some(id) = pending.pop_front() {
         let block = pass.program.block(id);
         let mut inherited = states[&id].clone();
-        inherited_attest_block(pass, block, view, &mut inherited, &mut violations);
-        propagate_inherited(block, &inherited, &mut states, &mut pending);
+        let failure = inherited_attest_block(pass, block, view, &mut inherited, &mut violations);
+        propagate_inherited(
+            block,
+            &inherited,
+            failure.as_ref(),
+            &mut states,
+            &mut pending,
+        );
     }
     errors.extend(violations.into_iter().map(|name| format!(
-        "tainted handler input `{name}` cannot be attested without a fresh acquisition (SSA taint backstop)"
+        "tainted inherited input `{name}` cannot be attested without a fresh acquisition (SSA taint backstop)"
     )));
 }
 
@@ -116,14 +116,35 @@ fn inherited_attest_block(
     view: &HashMap<String, Taint>,
     inherited: &mut HashSet<String>,
     violations: &mut std::collections::BTreeSet<String>,
-) {
-    for inst in crate::terminal::live_insts(block) {
-        record_inherited_attest(inst, inherited, violations);
-        if let Some((target, Taint::Tainted, _)) =
-            definition_taint(inst, view, &pass.user_functions)
-        {
-            inherited.remove(&target.name);
+) -> Option<HashSet<String>> {
+    let mut failure = None;
+    for (index, inst) in crate::terminal::live_insts(block).iter().enumerate() {
+        if block.checked_failure_at(index).is_some() {
+            failure = Some(inherited.clone());
         }
+        inherited_attest_inst(pass, inst, view, inherited, violations);
+    }
+    failure
+}
+
+fn inherited_attest_inst(
+    pass: &Pass<'_>,
+    inst: &SsaInst,
+    view: &HashMap<String, Taint>,
+    inherited: &mut HashSet<String>,
+    violations: &mut std::collections::BTreeSet<String>,
+) {
+    if let SsaInst::AttemptStart { inputs, .. } = inst {
+        inherited.extend(
+            inputs
+                .iter()
+                .filter(|input| is_tainted(view, input))
+                .map(|input| input.name.clone()),
+        );
+    }
+    record_inherited_attest(inst, inherited, violations);
+    if let Some(target) = fresh_acquisition(inst, view, &pass.user_functions) {
+        inherited.remove(&target.name);
     }
 }
 
@@ -147,10 +168,12 @@ fn record_inherited_attest(
 fn propagate_inherited(
     block: &BasicBlock,
     inherited: &HashSet<String>,
+    failure: Option<&HashSet<String>>,
     states: &mut HashMap<BlockId, HashSet<String>>,
     pending: &mut VecDeque<BlockId>,
 ) {
     for next in crate::terminal::live_successors(block) {
+        let inherited = block.checked_edge_state(next, inherited, failure);
         let previous = states.get(&next).cloned();
         states
             .entry(next)
@@ -396,9 +419,27 @@ impl Classification {
     }
 
     pub(crate) fn acquisition<'a>(&self, inst: &'a SsaInst) -> Option<&'a VarRef> {
-        let (target, value, _) = definition_taint(inst, &self.values, &self.functions)?;
-        (value == Taint::Tainted).then_some(target)
+        fresh_acquisition(inst, &self.values, &self.functions)
     }
+}
+
+fn fresh_acquisition<'a>(
+    inst: &'a SsaInst,
+    view: &HashMap<String, Taint>,
+    functions: &HashSet<String>,
+) -> Option<&'a VarRef> {
+    if matches!(
+        inst,
+        SsaInst::RecoverGlobal { .. }
+            | SsaInst::CollectionPublish {
+                append_to: Some(_),
+                ..
+            }
+    ) {
+        return None;
+    }
+    let (target, value, _) = definition_taint(inst, view, functions)?;
+    (value == Taint::Tainted).then_some(target)
 }
 
 pub(crate) fn classify_main(program: &SsaProgram) -> Classification {
@@ -428,22 +469,234 @@ pub(crate) fn classify_main(program: &SsaProgram) -> Classification {
 /// still use the completed-parent name view, including definitions after a fork.
 fn check_process(
     pass: &Pass<'_>,
-    blocks: &[BlockId],
+    root: BlockId,
     mut view: HashMap<String, Taint>,
     errors: &mut Vec<String>,
 ) -> HashMap<String, Taint> {
     let program = pass.program;
-    classify_process_defs(pass, blocks, &mut view);
-    for &id in blocks {
-        check_block_uses(program.block(id), &view, errors, &program.source_names);
-    }
+    let blocks = program.process_blocks(&[root]);
+    classify_process_defs(pass, &blocks, &mut view);
+    check_process_uses(pass, root, &blocks, &view, errors);
     let roots = blocks
         .iter()
         .flat_map(|&id| program.spawned_by(program.block(id)));
     for root in roots {
-        check_process(pass, &program.process_blocks(&[root]), view.clone(), errors);
+        check_process(pass, root, view.clone(), errors);
     }
     view
+}
+
+fn check_process_uses(
+    pass: &Pass<'_>,
+    root: BlockId,
+    blocks: &[BlockId],
+    view: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+) {
+    let program = pass.program;
+    let has_attempts = blocks
+        .iter()
+        .flat_map(|&id| &program.block(id).insts)
+        .any(|inst| matches!(inst, SsaInst::AttemptStart { .. }));
+    if has_attempts {
+        check_attempt_uses(pass, root, view, errors);
+        return;
+    }
+    for &id in blocks {
+        check_block_uses(program.block(id), view, errors, &program.source_names);
+    }
+}
+
+#[derive(Clone, PartialEq)]
+struct TaintOutcomes([Option<HashMap<String, Taint>>; 2]);
+
+impl TaintOutcomes {
+    fn new(view: HashMap<String, Taint>) -> Self {
+        Self([Some(view.clone()), Some(view)])
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for (target, source) in self.0.iter_mut().zip(&other.0) {
+            if let Some(source) = source {
+                merge_taint_view(target, source);
+            }
+        }
+    }
+
+    fn reset(&mut self, truth: Option<bool>) {
+        let mut combined = None;
+        for view in self.0.iter().flatten() {
+            merge_taint_view(&mut combined, view);
+        }
+        self.0 = [combined.clone(), combined];
+        if let Some(truth) = truth {
+            self.0[usize::from(!truth)] = None;
+        }
+    }
+
+    fn edge(&self, truth: Option<bool>) -> Option<Self> {
+        let mut result = self.clone();
+        if let Some(truth) = truth {
+            result.0[usize::from(!truth)] = None;
+        }
+        result.0.iter().any(Option::is_some).then_some(result)
+    }
+
+    fn instruction(&mut self, pass: &Pass<'_>, inst: &SsaInst) {
+        for view in self.0.iter_mut().flatten() {
+            classify_inst_def(
+                inst,
+                view,
+                &pass.user_functions,
+                &pass.program.taint_predecessors,
+            );
+        }
+        match inst {
+            SsaInst::Command {
+                kind: BuiltinCmd::NegateTestResult,
+                ..
+            } => self.0.swap(0, 1),
+            SsaInst::AttemptEnd { failed: true } => self.reset(Some(false)),
+            _ if sets_condition_status(inst) => self.reset(None),
+            _ => {}
+        }
+    }
+
+    fn phis(&mut self, block: &BasicBlock, previous: BlockId) {
+        for view in self.0.iter_mut().flatten() {
+            let values: Vec<_> = block
+                .phis
+                .iter()
+                .map(|phi| {
+                    let source = phi
+                        .sources
+                        .iter()
+                        .find_map(|(id, source)| (*id == previous).then_some(source))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "a live phi in block {} has no source for predecessor {previous}: {phi:?}",
+                                block.id
+                            )
+                        });
+                    let tainted = is_tainted(view, source);
+                    (var_key(&phi.target), taint_of_flag(tainted))
+                })
+                .collect();
+            view.extend(values);
+        }
+    }
+}
+
+fn merge_taint_view(target: &mut Option<HashMap<String, Taint>>, source: &HashMap<String, Taint>) {
+    let Some(target) = target else {
+        *target = Some(source.clone());
+        return;
+    };
+    for (name, taint) in source {
+        if *taint == Taint::Tainted {
+            target.insert(name.clone(), *taint);
+        } else {
+            target.entry(name.clone()).or_insert(*taint);
+        }
+    }
+}
+
+/// A recovered false outcome must not contaminate the normal call's true edge.
+/// Track verdicts through the caller join, applying phis on their actual incoming edge.
+fn check_attempt_uses(
+    pass: &Pass<'_>,
+    root: BlockId,
+    view: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+) {
+    let mut inputs = HashMap::from([(root, TaintOutcomes::new(view.clone()))]);
+    let mut pending = VecDeque::from([root]);
+    while let Some(id) = pending.pop_front() {
+        let block = pass.program.block(id);
+        let (normal, failure) = taint_outcomes(pass, block, inputs[&id].clone());
+        propagate_taint_outcomes(
+            pass.program,
+            block,
+            &normal,
+            failure.as_ref(),
+            &mut inputs,
+            &mut pending,
+        );
+    }
+    let mut found = Vec::new();
+    for (id, flow) in inputs {
+        check_outcome_uses(pass, pass.program.block(id), flow, &mut found);
+    }
+    found.sort();
+    found.dedup();
+    errors.extend(found);
+}
+
+fn check_outcome_uses(
+    pass: &Pass<'_>,
+    block: &BasicBlock,
+    mut flow: TaintOutcomes,
+    errors: &mut Vec<String>,
+) {
+    for inst in crate::terminal::live_insts(block) {
+        for view in flow.0.iter().flatten() {
+            check_inst_uses(inst, view, errors, &pass.program.source_names);
+        }
+        flow.instruction(pass, inst);
+    }
+}
+
+fn taint_outcomes(
+    pass: &Pass<'_>,
+    block: &BasicBlock,
+    mut flow: TaintOutcomes,
+) -> (TaintOutcomes, Option<TaintOutcomes>) {
+    let mut failure = None;
+    for (index, inst) in crate::terminal::live_insts(block).iter().enumerate() {
+        if block.checked_failure_at(index).is_some() {
+            failure = Some(flow.clone());
+        }
+        flow.instruction(pass, inst);
+    }
+    (flow, failure)
+}
+
+fn propagate_taint_outcomes(
+    program: &SsaProgram,
+    block: &BasicBlock,
+    normal: &TaintOutcomes,
+    failure: Option<&TaintOutcomes>,
+    inputs: &mut HashMap<BlockId, TaintOutcomes>,
+    pending: &mut VecDeque<BlockId>,
+) {
+    for next in crate::terminal::live_successors(block) {
+        let flow = block.checked_edge_state(next, normal, failure);
+        for truth in block.terminator.edge_outcomes(next) {
+            let Some(mut edge) = flow.edge(truth) else {
+                continue;
+            };
+            edge.phis(program.block(next), block.id);
+            enqueue_taint_outcome(next, edge, inputs, pending);
+        }
+    }
+}
+
+fn enqueue_taint_outcome(
+    next: BlockId,
+    edge: TaintOutcomes,
+    inputs: &mut HashMap<BlockId, TaintOutcomes>,
+    pending: &mut VecDeque<BlockId>,
+) {
+    let previous = inputs.get(&next).cloned();
+    match inputs.get_mut(&next) {
+        Some(input) => input.merge(&edge),
+        None => {
+            inputs.insert(next, edge);
+        }
+    }
+    if inputs.get(&next) != previous.as_ref() {
+        pending.push_back(next);
+    }
 }
 
 fn classify_process_defs(pass: &Pass<'_>, blocks: &[BlockId], view: &mut HashMap<String, Taint>) {
@@ -604,6 +857,10 @@ fn definition_taint<'a>(
     user_functions: &HashSet<String>,
 ) -> Option<(&'a VarRef, Taint, bool)> {
     let (value, preserves) = match inst {
+        SsaInst::RecoverGlobal { sources, .. } => (
+            taint_of_flag(sources.iter().any(|source| is_tainted(taint, source))),
+            false,
+        ),
         SsaInst::LifetimeStart { .. } => (Taint::Clean, false),
         SsaInst::CollectionPublish {
             source, append_to, ..
@@ -635,6 +892,8 @@ fn definition_taint<'a>(
             source, taint_off, ..
         } => (map_fill_taint(source, *taint_off, taint), true),
         SsaInst::Command { .. }
+        | SsaInst::AttemptStart { .. }
+        | SsaInst::AttemptEnd { .. }
         | SsaInst::Test(..)
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }

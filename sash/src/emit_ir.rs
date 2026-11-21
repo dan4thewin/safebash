@@ -31,7 +31,7 @@ use std::fmt::Write;
 
 /// Bumped when the shape of the emitted data changes incompatibly, so a
 /// consumer can refuse a capture it does not understand.
-pub const IR_VERSION: u32 = 3;
+pub const IR_VERSION: u32 = 4;
 
 /// Render a whole program as the inert janet data literal.
 pub fn emit_ir(program: &Program) -> String {
@@ -304,6 +304,9 @@ fn st_command(c: &Command, ln: usize, i: usize, out: &mut String) {
     nl(i, out);
     out.push_str(":args ");
     expr_list(&c.args, i + 6, out);
+    nl(i, out);
+    out.push_str(":best-effort ");
+    jbool(c.best_effort, out);
     out.push('}');
 }
 

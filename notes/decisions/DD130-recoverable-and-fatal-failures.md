@@ -20,6 +20,9 @@ status: accepted
 8. Apply DD128's once-only, allocation-free fatal dispatch and process
    ownership. Partial pipelines close pipes and wait for started stages
    without forced termination.
+9. Provisional DD136 attempts recover only explicit `fail` and existing
+   unchecked operational results. Their narrow contextual boundary does not
+   reclassify unconditional file-read or value guards as globally fatal.
 
 ---
 
@@ -29,9 +32,9 @@ where "continuing is a worse choice than aborting". Path-specific file
 errors belong to the first class. DG separately specified that failure
 to fork must abort like heap exhaustion.
 
-This is the accepted contract. Implementation is pending in the tasks
-below; the current compiler still has the setup-position inconsistencies
-recorded in `q-setup-failure-suppressibility`.
+This is the accepted contract. The DD136 trial implements uniform fatal
+fork routing; the broader classification and file-handling tasks below
+remain open. It does not settle every recorded setup inconsistency.
 
 ## The two failure classes
 
@@ -46,11 +49,12 @@ operation can encounter both classes. Being catchable today does not
 prove that a failure is recoverable; lacking a handling form today does
 not make an ordinary failure fatal.
 
-DD135's ERR-local NUL proof can establish that a particular argv guard
-cannot fail; it does not reclassify a possible failure or add recovery
-to that guard. Other uncatchable operational failures remain work under
-this decision. Readonly inputs and a generated NUL-free pathname do not
-solve the broader failure-model backlog.
+DD135's `0?` and other NUL-excluding predicates can guard actual argv data;
+they do not add recovery to the argv guard. The DD136 trial retires
+mandatory static ERR NUL proofs along with SB5101, keeping runtime guards
+terminal even inside an attempt. Other unconditional operational failures
+remain work under this decision. Readonly inputs and a generated NUL-free
+pathname do not solve the broader failure-model backlog.
 
 This is distinct from DD70's operational-result versus must-consume-value
 channels. It changes neither function return kinds nor the rule that an
@@ -208,7 +212,8 @@ Stopping further work does not undo work that already completed.
   operation/cause/state classification and align runtime, both backends
   and ERR effect analysis.
 - `bug-fork-failure-reporting-by-form`: use the fatal path uniformly for
-  every failed fork, with consistent diagnostics and no resumed branch.
+  every failed fork, with consistent diagnostics and no resumed branch;
+  implemented on the DD136 trial branch, pending its final delivery proof.
 - `recoverable-file-failures`: expose and enforce recoverable file-error
   handling, including attached redirects; depends on the classification
   work so fatal causes are not accidentally discarded.

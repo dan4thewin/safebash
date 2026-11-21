@@ -7,9 +7,10 @@ supersedes: DD15
    that capture as a separate program without coupling compiler delivery to it.
 2. Emit every IR node exhaustively, without wildcard fallbacks or semantic
    interpretation; tags name IR nodes.
-3. Consumers must refuse unsupported schema versions. Schema 3 retains a
+3. Consumers must refuse unsupported schema versions. The capture retains a
    compound cell assignment's arithmetic operator, single index and unexpanded
-   right-hand side.
+   right-hand side. Provisional DD136 schema 4 also records each command's
+   explicit `:best-effort` boolean, rather than erasing the attempt prefix.
 4. Optional EXIT and ERR bodies have separate fields; absent differs from empty.
 
 ---
@@ -116,7 +117,7 @@ DD#128 introduced **`:ir-version 2`**: optional terminal bodies in
 `:exit-block` and `:err-block`, replacing `:end-block`. An empty declared
 handler remains distinct from an absent handler.
 
-The indexed-update repair advances the capture to **`:ir-version 3`**
+The indexed-update repair advanced the capture to **`:ir-version 3`**
 (2026-11-13). An arithmetic cell update keeps its operation in the assignment's
 `:op`: `:add`, `:sub`, `:mul`, `:div`, `:mod`, `:bit-and`, `:bit-or`,
 `:bit-xor`, `:shl` or `:shr`. The assignment contains one `:index` and the
@@ -125,10 +126,16 @@ Postfix `++`/`--` use `:add`/`:sub` with arithmetic literal 1. Ordinary
 assignment and `+=` keep `:set` and `:append`; scalar arithmetic mutations
 retain their existing expanded representation.
 
-Schema 3 retains schema 2's handler fields. Both `--emit-ir` and the
-embedded/extracted IR use the same schema. The data remains inert; consumers
-must refuse versions they cannot interpret rather than silently dropping a
-handler or interpreting a compound update as a plain store.
+The **provisional DD136 trial** advances it to **`:ir-version 4`**. Each
+command has a `:best-effort` boolean: true for `: function args...`, false
+for ordinary commands, including bare colon. The command still names the
+actual function and retains its ordinary arguments and redirects. A consumer
+must not interpret a resultless attempt as a normal call or ignored data.
+
+Schema 4 retains the earlier compound-update and handler fields. Both
+`--emit-ir` and the embedded/extracted IR use the same schema. The data
+remains inert; consumers must refuse versions they cannot interpret rather
+than silently dropping a handler, attempt marker or compound update.
 
 ## Where the old code went
 

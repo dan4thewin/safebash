@@ -356,7 +356,7 @@ run_sash 'echo "*"'
 [[ $rc = 0 && $out = "*" && -z $err ]]; chk 20.3
 
 # 20.4 array-literal glob `array a=(*)` still globs (unchanged)
-run_sash 'array a=(*); : @a; echo ok'
+run_sash 'array a=(*); array _=(@a); echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 20.4
 
 # 20.5 for-in glob: 0 matches → loop body never runs (DD#20/#69).

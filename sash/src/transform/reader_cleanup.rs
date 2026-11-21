@@ -100,6 +100,16 @@ fn redirect_edge(term: &mut Terminator, old: BlockId, new: BlockId) {
             ..
         } => &mut [body_block, exit_block],
         Terminator::Goto(target) => &mut [target],
+        Terminator::Checked {
+            normal: Some(normal),
+            failed,
+            ..
+        } => &mut [normal, failed],
+        Terminator::Checked {
+            normal: None,
+            failed,
+            ..
+        } => &mut [failed],
         // The child is a separate process, not an edge out of this one.
         Terminator::Fork { parent, .. } => &mut [parent],
         Terminator::Return | Terminator::ChildExit => &mut [],

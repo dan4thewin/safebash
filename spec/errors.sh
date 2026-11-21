@@ -271,7 +271,7 @@ run_sash '/bin/true || { /bin/echo x; s=$(status); }'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.17b
 
 # $(status) as first expression → OK
-run_sash '/bin/false || s=$(status); : $s'
+run_sash '/bin/false || s=$(status); _=$s'
 [[ $rc = 0 && -z $err ]]; chk 55.17c
 
 # 55.18 $? is sugar for $(status)
@@ -557,7 +557,7 @@ run_sash 'x=a; if [[ $x == a ]]; then echo t; fi'
 run_sash 'x=foo; echo $x'
 [[ $rc = 0 && $out = "foo" && -z $err ]]; chk e.br9
 # br10 (positive) an assignment on the RIGHT of || (the consequent) is fine
-run_sash 'false || x=set; : $x; echo done'
+run_sash 'false || x=set; _=$x; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk e.br10
 
 # ── 71.1-71.9: a typed declaration is a value binding too (DD#71) ─────────
@@ -3946,7 +3946,8 @@ run_sash 'str x=$(- toupper token; echo trailing); echo "$x"'
 
 run_sash 'fn speak { echo token }
 if x=$(- speak) { echo "$x" }'
-[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"capturing a function"* ]]; chk supval.26
+[[ $rc != 0 && -z $out && $err == *SB4025* &&
+   $err == *"an undiscarded status or boolean"* ]]; chk errmig.42
 
 run_sash 'fn count -> int { if (( 1 )) { return 0 }; return 7 }
 int n=$(count; echo token)
@@ -4076,11 +4077,10 @@ str y=$(s 2>&1)
 echo "[$y]"'
 [[ $rc != 0 && -z $out && $err == *':2:9: error [SB4016]'* ]]; chk nonvoid.14
 
-# a function capture as a condition is SB4025, which supersedes SB4016
+# A predicate capture consumes the returned status, retaining false-path text.
 run_sash 'fn f { echo out; return 3 }
 if x=$(f) { echo "yes [$x]" } else { echo "no [$x]" }'
-[[ $rc != 0 && -z $out && $err == *':2:6: error [SB4025]'* \
-   && $err != *SB4016* ]]; chk nonvoid.15
+[[ $rc = 0 && $out = 'no [out]' && -z $err && -z $rerr ]]; chk errmig.43
 
 # Void forwarding cannot supply an integer result.
 run_sash 'fn g { echo g }

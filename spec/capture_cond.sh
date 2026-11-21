@@ -1,15 +1,12 @@
 #!/bin/bash
 # spec/capture_cond.sh — DD#88 capture-condition: `if x=$(cmd)` / `while x=$(cmd)`.
-# A single external command substitution (or pipeline) as an assignment RHS in a
-# boolean context is the CONDITION: the command's exit status is the truth value
-# (no abort), and its stdout is captured into the target (tainted, attest before
-# use). The rejects (SB4025 / SB5050 / SB5020) are validate/taint and
-# backend-independent.
+# A single status-producing capture supplies both the condition and its text.
+# Kernel-backed output remains tainted; handling the status does not attest it.
 set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=110
+plan=117
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -84,12 +81,104 @@ run_sash 'if x=$(/bin/echo hi) { /bin/echo $x }'
 run_sash 'if x=$(/bin/echo hi) { /bin/echo unrelated }'
 [[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 88.10
 
-# 88.11 exclusion: a user-function capture `$(f)` is NOT a capture-condition
-# (functions convey status via `return`) → SB4025. `validate` runs before
-# resolution and can't see the function table, so this rejection comes from the
-# transform (a bare `f` is external-looking until then); still SB4025, all modes.
-run_sash 'fn f { return 0 }; if x=$(f) { /bin/echo $x }'
-[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.11
+# A named predicate capture consumes its status and retains its stdout.
+run_sash 'fn f { echo bound; return 0 }; if x=$(f) { echo $x }'
+[[ $rc = 0 && $out = bound && -z $err && -z $rerr ]]; chk errmig.35
+
+run_sash 'int calls=0
+array observed
+fn sample {
+    (( calls+=1 ))
+    observed+=(kept)
+    echo scoped >&2
+    echo candidate
+    if [[ $1 == stop ]] { return 256 }
+    return 0
+}
+fn relay { return sample "$1" }
+if text=$(relay stop 2>predicate.err) { echo wrong } else {
+    echo "code:$?:${text:!}"
+}
+echo "effects:$calls:$(join observed ,)"
+/bin/echo outside >&2'
+[[ $rc = 0 && $out = $'code:256:candidate\neffects:1:kept' &&
+   -z $err && $rerr = outside && $(<predicate.err) = scoped ]]; chk predcap.1
+
+# Empty output can be true, nonempty output false; each visit replaces text.
+run_sash 'int calls=0
+fn again {
+    (( calls+=1 ))
+    if (( calls == 1 )) { return 0 }
+    echo stopped
+    return 256
+}
+fn ready {
+    (( calls+=1 ))
+    if (( calls == 1 )) { echo waiting; return 7 }
+    echo ""
+    return 0
+}
+str text=old
+while text=$(again) {
+    echo "while:[$text]"
+    if (( calls > 1 )) { break }
+}
+echo "end:[$text]:$calls"
+calls=0
+until text=$(ready) {
+    echo "until:[$text]"
+    if (( calls > 1 )) { break }
+}
+echo "end:[$text]:$calls"'
+[[ $rc = 0 && $out = $'while:[]\nend:[stopped]:2\nuntil:[waiting]\nend:[]:2' &&
+   -z $err && -z $rerr ]]; chk predcap.2
+
+run_sash 'fn full { echo candidate; return 256 }
+fn empty { echo ""; return 0 }
+str first=no
+if [[ $first == yes ]] { echo wrong } elif ! text=$(full) {
+    echo "neg:$?:$text"
+} else { echo wrong }
+text=$(full) || echo "or:$?:$text"
+text=$(empty) && echo "and:$?:[$text]"'
+[[ $rc = 0 && $out = $'neg:0:candidate\nor:256:candidate\nand:0:[]' &&
+   -z $err && -z $rerr ]]; chk predcap.3
+
+run_sash 'str text=old
+fn sample { /bin/false; echo lost; return 0 }
+ERR { echo "terminal:$?:${text:!}" }
+if text=$(sample) { echo "wrong:${text:!}" } else { echo wrong }
+echo after'
+[[ $rc = 1 && $out = terminal:1:old && -z $err &&
+   $rerr == *": /bin/false: command failed (exit 1)" ]]; chk predcap.4
+
+run_sash 'fn number -> int { fail 7; return 2 }
+fn sample { echo "$1"; return 0 }
+ERR { echo "terminal:$?" }
+if text=$(sample "$(number)") { echo "$text" } else { echo wrong }
+echo after'
+[[ $rc = 7 && $out = terminal:7 && -z $err && -z $rerr ]]; chk predcap.5
+
+run_sash 'fn sample { /bin/echo candidate; return 7 }
+if text=$(sample) { : } else { echo "$text" }'
+[[ $err == *SB5020* ]]; chk predcap.6
+
+run_sash 'fn sample {
+    /bin/echo candidate
+    if [[ $1 == yes ]] { return 0 }
+    return 7
+}
+for answer in yes no {
+    if [[ $answer == unused ]] { echo wrong } elif text=$(sample "$answer") {
+        attest text [[ $text == candidate ]]
+        echo "yes:$text"
+    } else {
+        attest text [[ $text == candidate ]]
+        echo "no:$text"
+    }
+}'
+[[ $rc = 0 && $out = $'yes:candidate\nno:candidate' &&
+   -z $err && -z $rerr ]]; chk predcap.7
 
 # 88.12 exclusion: a concatenation RHS (`foo$(cmd)`) has no single status → SB4025
 # with the DD#88 Group-B message (a capture-condition needs a single external cmd)
@@ -260,14 +349,13 @@ run_sash 'if x=$(/bin/echo a >/tmp/sash_cc_st | /bin/echo b) { attest x [[ -n $x
 [[ $rc = 0 && $out = "ok [b]" && -z $err && $(cat /tmp/sash_cc_st) = a ]]; chk 88.27
 rm -f /tmp/sash_cc_st
 
-# 88.28 a user function is still DD#88's reject, redirect or no — the function
-# table check moved with the relaxation rather than being left behind. The
-# message names the function, which is the one shape it is TRUE of.
+# A redirect cannot invent a status for a void function.
 run_sash 'fn f {
   /bin/echo hi
 }
 if x=$(f 2>/dev/null) { /bin/echo "${x:!}" }'
-[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"function's output"* ]]; chk 88.28
+[[ $rc != 0 && -z $out && $err == *SB4025* &&
+   $err == *"a named function must return a status"* ]]; chk errmig.36
 
 # ── SB4075: an abandoned capture, anywhere ─────────────────────────────
 # Scoped to every `$( … )`, because `a=$(cmd >f)` is the same mistake as
@@ -547,19 +635,21 @@ run_sash 'ERR {
 fail 3'
 [[ $rc = 3 && $out = 'err [fallback]' && -z $err && -z $rerr ]]; chk lookup.51
 
-# Default bytes participate in the ERR NUL proof, unlike actual environ text.
+# Literal defaults still meet the runtime argv boundary.
 SASH_CFLAGS=--no-taint run_sash "fail 1; ERR {
   v=\$(getenv SASH_SPEC_UNSET \$'x\\x00y')
   - /bin/echo \"\$v\"
 }"
-[[ $rc != 0 && $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk lookup.52
+[[ $rc = 1 && -z $err && -z $out &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.37
 
 run_sash 'fail 1; ERR {
   int index=-1
   v=$(arg $index fallback)
   - echo "${v:!}"
 }'
-[[ $rc != 0 && $err == *SB5101* && $err == *"invalid argument index"* ]]; chk lookup.53
+[[ $rc = 1 && -z $err && -z $out &&
+   $rerr == *"argv index out of range (requested -1,"* ]]; chk errmig.38
 
 run_sash "v=\$(getenv SASH_SPEC_UNSET \$'x\\x00y')
 echo \"\${v:!}\" | /usr/bin/od -An -tx1"

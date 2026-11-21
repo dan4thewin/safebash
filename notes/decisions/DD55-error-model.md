@@ -17,7 +17,8 @@ status: implemented
    Compatible forwarding preserves kind; constant results are legal, and
    non-void call results require compatible consumption or explicit discard.
    DD88 named-predicate captures bind stdout and consume the returned status,
-   without handling operand/body failures.
+   without ordinary handling reaching operand/body failures; DD136 defines
+   the provisional ERR-owned call exception.
    Bare `arg`/`getenv` lookup status likewise requires handling or discard;
    literal-default forms return only tainted text (DD101).
 6. Anonymous stdout bodies may return void, not explicit statuses.
@@ -38,8 +39,12 @@ status: implemented
    non-interleaving, not output size or all-or-nothing completion.
 10. EXIT handles orderly termination at every status; ERR handles failure,
     including `fail 0`. Both are once-only main-process roots over actual
-    globals, never child handlers or resumable continuations. Fatal dispatch
-    itself allocates nothing (DD128).
+    globals, never child handlers or continuations of the interrupted program.
+    Fatal dispatch itself allocates nothing (DD128).
+11. In the provisional DD136 trial, ERR-owned `: VOID_FUNCTION` and caught
+    status calls can abandon their entire helper chain on explicit `fail`
+    or an existing unchecked operational result. Unconditional guards,
+    fatal faults and `exit` remain terminal; source `-` gains no reach.
 
 ---
 
@@ -59,11 +64,10 @@ successful proof before an immutable pattern is consumed, and gives
 Fatal faults and ordinary I/O
 failures retain DD130's classification.
 
-**DD130's 2026-11-06 classification extension is accepted, with
-implementation pending.** It replaces the former setup-position split:
-fork failure is fatal, while path-specific file errors are recoverable.
-The existing runtime/handler implementation is not yet a claim that every
-form enforces this contract.
+**DD130's classification extension remains accepted.** Fork failure is
+uniformly fatal in the DD136 trial. Broader cause-specific file-I/O handling
+remains separately owned; this trial does not implement every missing
+handling surface.
 
 ## Terminal handlers (DD#128)
 
@@ -77,23 +81,26 @@ Children run neither handler.
 Both builtins are terminal operations, not returned statuses that `if`,
 `||` or `-` can consume to resume execution. An `exit` inside either handler
 terminates directly; a `fail` inside EXIT enters ERR, while a `fail` inside
-ERR terminates without re-entry. This 2026-11-06 revision was accepted in
-journal 575 and implemented in journal 576.
+ERR terminates without re-entry unless it abandons an eligible DD136 call
+attempt. The original terminal revision was accepted in journal 575 and
+implemented in journal 576.
 
-EXIT is ordinary checked code: its uncaught failure enters ERR. ERR must
-catch or suppress every recoverable failure where it actually occurs;
-otherwise SB5101 rejects the operation or call. This is not a blanket
-unchecked region. The no-reach rule below applies unchanged to helpers,
-and operand captures; attached redirects follow DD130's classification.
-If no existing form catches a recoverable failure, that operation is
-unavailable in ERR until its handling support is implemented.
+EXIT is ordinary checked code: its uncaught failure enters ERR. ERR is
+checked too. The provisional [DD136 trial](DD136-err-call-attempts.md)
+replaces SB5101's static prohibition with terminal unchecked failure and
+explicit ERR-owned call attempts. `: cleanup args...` attempts one void
+function; a caught status call supplies a failure continuation. Both include
+arguments and attached redirects, abandon the entire attempted helper chain,
+and preserve completed application effects. A condition inside a helper
+still handles only its ordinary result. Neither a bare void call nor source
+`-` establishes an attempt.
 
-Existing byte facts or DD135's ERR-local predicate proof may instead
-establish that the exact argv value cannot fail the NUL guard. This is
-proof of NUL-freedom, not catching that guard with the command's status;
-keep the runtime check and all other failure obligations. DD135 also
-requires readonly inherited ERR bindings independently of taint.
-Those predicate/readonly additions are accepted but not implemented.
+Only explicit `fail` and existing unchecked operational results recover.
+An argv-NUL guard, `:?`, invalid-index guard or currently unconditional
+slurp/read failure remains terminal, even inside an attempt. Mandatory
+compile-time ERR NUL proofs retire with SB5101; runtime guards remain.
+DD135's implemented readonly-import and `0?` contracts remain independent
+of taint and recovery.
 
 Arithmetic faults, heap exhaustion and fork failure are fatal faults.
 A first fault in main or EXIT attempts ERR once without allocating for dispatch;
@@ -345,7 +352,8 @@ Neither form simultaneously captures the value it discards.
 The child outcome saved in `waitstatus` is not a status returned by `wait`.
 No new statement-position meaning is granted to value-only intrinsics.
 
-Operand and body failures retain the no-reach rule. Heap exhaustion and
+Ordinary operand and body failures retain the no-reach rule, apart from
+DD136's explicit ERR-owned attempts. Heap exhaustion and
 other fatal faults remain fatal under DD130; they do not supply a status
 for this prefix to discard. Recoverable attached-redirect handling still
 requires an otherwise legal handling form and does not change result kind.
@@ -890,7 +898,8 @@ owns implementation. ~~This is not `getenv`'s exception to mandatory
 handling.~~ DD101 now requires explicit handling or discard for bare lookup
 status too; literal-default lookups instead return only a value. That lookup
 contract is implemented separately (`require-getenv-status-handling`,
-journal 663); the named-predicate extension remains pending.
+journal 663); named-predicate captures are implemented on the DD136 trial
+branch, without completing the separate file-read extension.
 
 ### Anonymous capture returns (DG, 2026-11-06)
 
@@ -1209,7 +1218,8 @@ the status, so it remains SB4016, with the advice `$(- f)` (`$(- f …)` when it
 has arguments). ~~A capture as a condition, `if x=$(f)`, stays SB4025 (DD#88),
 and the SB4016 at the same position is dropped.~~ DD88's accepted November 12
 extension makes that condition a consumer of f's status; implementation is
-pending in `predicate-capture-conditions`. A redirected capture of a
+delivered on the DD136 trial branch, tracked in `predicate-capture-conditions`.
+A redirected capture of a
 status function, `$(s 2>&1)`, likewise needs explicit status handling/discard;
 the current statement path gives it the bare-call text. This is not a rule
 that a redirect converts an integer capture into a stdout capture (DD#58).

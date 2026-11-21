@@ -19,8 +19,9 @@ status: accepted
    boundaries. Taint validation is independent of cardinality.
 5. Named splats are not scalars. A named `for` source is the sole, bare
    splat; DD#99 separately defines array-to-map conversion. `echo`
-   requires an explicit `join` rather than a splat. `:` evaluates its
-   operands in DD#86 order and discards their values.
+   requires an explicit `join` rather than a splat. The provisional DD136
+   trial uses DD98's write-only `_` for value disposal and reserves colon
+   operands for ERR-owned void-function attempts.
 
 ---
 
@@ -178,7 +179,9 @@ ambiguity sash eliminates, right at echo's output (worst in a pipeline).
 **Rule:** an array splat (`@a`) passed to `echo` is a **compile error**;
 use an explicit join — ~~**`echo $(join @a)`**~~ (the `join` intrinsic, DD#41/
 DD#60). Literal args are unaffected: `echo a b c` is fine (three literals,
-no array structure to lose). `:` ignores its args, so this is moot for it
+no array structure to lose). ~~`:` ignores its args, so this is moot for it.~~
+In DD136's trial, discard a splat with `array _=(@a)`; `: FUNCTION ARG...`
+instead passes arguments to an attempted void function in ERR.
 (`true`/`false` are now external programs — a bare `@a` to them is SB5032
 like any external program). (New SB code in the splat family — SB5025–5027
 — assigned at implementation; keep adjacent.)
@@ -330,7 +333,12 @@ only a run-time behaviour, it is read by the arity check
 yields for any of these four forms changes which calls compile. Specs
 `optional_args.sh` 84.59, 84.60, 84.70.
 
-## Addendum 2026-10-28: `:` evaluates its arguments
+## Historical implementation 2026-10-28: colon argument disposal
+
+The provisional [DD136 trial](DD136-err-call-attempts.md) retires this
+operand-disposal spelling and its `noop.1`-`.13` / `57.192` assertions.
+Use `_=$value` or an independent discard collection under DD98.
+The account below describes the former implementation, not the trial syntax.
 
 §3's "`:` ignores its args" is about the join rule only: `:` writes nothing,
 so it flattens nothing. It never meant that the arguments go unevaluated, but
@@ -355,7 +363,8 @@ not an error (noop.13). Specs: commands.sh noop.1-noop.13, convert.sh
 DD70's statement-effect rule (DG, 2026-11-08) preserves explicit `:` as
 the intentional no-op, including an otherwise legal `- :`. This does
 not make `:` an observable effect: a result-only `[[ ... ]] || :` at
-statement level is still pointless. Argument effects remain evaluated;
+statement level is still pointless. DD136 retains bare and redirect-only
+colon; operand effects now belong to discard binders or attempted calls.
 `- : >optional.log` also retains its real file operation and DD130
 recoverable-open handling. Enforcement of the new statement check is
 queued in `reject-pointless-statements`.

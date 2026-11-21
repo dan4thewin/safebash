@@ -162,6 +162,7 @@ mod api_contract_tests {
     fn call(kind: ExprKind) -> Statement {
         Statement {
             kind: StmtKind::Command(Command {
+                best_effort: false,
                 name: Expr {
                     kind,
                     span: Span::default(),

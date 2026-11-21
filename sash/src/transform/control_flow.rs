@@ -2,7 +2,7 @@
 
 use super::expressions::{expr_is_dynamic, expr_to_value, literal_name_of, test_to_ssa};
 use super::functions::{lift_int_func_calls, lift_test_captures};
-use super::helpers::{insert_phis_two_branch, update_loop_phi_sources};
+use super::helpers::{insert_phis_two_branch, merge_loop_jumps, update_loop_phi_sources};
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
 use super::stmt_handlers::{push_attest_all_check, push_attest_retag};
@@ -506,8 +506,10 @@ pub(super) fn lower_while(
     let _state_at_header = state.snapshot();
     let pre_collections = state.collections.clone();
     let pre_assoc_arrays = state.assoc_arrays.clone();
+    let pre_jumps = state.loop_jumps.clone();
     let body_exit_1 = lower_stmts(&w.body, ssa, state, body_block);
     let body_state_1 = state.snapshot();
+    state.loop_jumps = pre_jumps;
 
     // Insert phi nodes at header for loop-carried variables
     // This creates new versions (e.g., x_3) for modified variables
@@ -563,6 +565,7 @@ pub(super) fn lower_while(
         body_block,
         exit_block,
     };
+    let condition_state = state.snapshot();
 
     // Re-lower body with phi-merged versions
     let body_exit = lower_stmts(&w.body, ssa, state, body_block);
@@ -571,9 +574,11 @@ pub(super) fn lower_while(
     // Pop loop context
     state.loop_stack.pop();
 
-    // Update phi sources to use the correct versions from pass 2
+    // Pass two can finish in a different block from the discovery pass.
     let body_state_2 = state.snapshot();
-    update_loop_phi_sources(ssa, header, &body_state_2);
+    let jumps = state.loop_jumps.remove(&header).unwrap_or_default();
+    update_loop_phi_sources(ssa, header, body_exit, &body_state_2, &jumps);
+    merge_loop_jumps(state, ssa, exit_block, cond_exit, &condition_state);
 
     exit_block
 }
@@ -773,6 +778,8 @@ fn lower_for_static(
     for (i, word) in f.words.iter().enumerate() {
         let iter_block = iter_blocks[i];
         ssa.block_mut(current).terminator = Terminator::Goto(iter_block);
+        let versions = state.snapshot();
+        merge_loop_jumps(state, ssa, iter_block, current, &versions);
         current = iter_block;
 
         let continue_target = if i + 1 < iter_blocks.len() {
@@ -795,6 +802,8 @@ fn lower_for_static(
     }
 
     ssa.block_mut(current).terminator = Terminator::Goto(exit_block);
+    let versions = state.snapshot();
+    merge_loop_jumps(state, ssa, exit_block, current, &versions);
     exit_block
 }
 

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=247
+plan=232
 echo "1..$plan" >&3
 
 set +e
@@ -1383,7 +1383,9 @@ echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
 run_sash_under 'EXIT { echo end }
 str x=$(- /bin/sh -c "echo bad > capext.marker; echo leaked")
 echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=clone:error=EIO:when=1
-[[ $rc = 0 && $out = $'x=[]\nend' && ! -e capext.marker && -z $rerr ]]; chk h128.capext.5
+[[ $rc = 1 && -z $out && -z $err && ! -e capext.marker &&
+   $rerr == *": fork: Input/output error"* ]] &&
+    grep -q 'clone.*EIO.*INJECTED' capext.trace; chk errmig.44
 
 run_sash_under 'if x=$(/bin/sh -c "echo bad > capext.marker; echo leaked") {
   echo "bad=${x:!}"
@@ -1393,7 +1395,9 @@ run_sash_under 'if x=$(/bin/sh -c "echo bad > capext.marker; echo leaked") {
 run_sash_under 'if x=$(/bin/sh -c "echo bad > capext.marker; echo leaked") {
   echo "bad=${x:!}"
 } else { echo $(status) }' strace -qq -o capext.trace -e inject=clone:error=EIO:when=1
-[[ $rc = 0 && $out = 1 && ! -e capext.marker && -z $rerr ]]; chk capext.7
+[[ $rc = 1 && -z $out && -z $err && ! -e capext.marker &&
+   $rerr == *": fork: Input/output error"* ]] &&
+    grep -q 'clone.*EIO.*INJECTED' capext.trace; chk errmig.45
 
 # Follow the child: a parent-only trace never injects its stdout dup2.
 # These programs have no parent dup2, so the failure is isolated to setup.
@@ -1457,13 +1461,6 @@ run_sash_under '/usr/bin/printf "a\nb\n" | while readline line {
   echo "$line:[${x:!}]"
 }' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=2
 [[ $rc = 0 && $out = $'a:[]\nb:[cap]' && -z $rerr ]]; chk capext.17
-
-run_sash_under '/usr/bin/printf "a\nb\n" | while readline line {
-  attest line [[ -n $line ]]
-  str x=$(- /bin/echo cap)
-  echo "$line:[${x:!}]"
-}' strace -qq -o capext.trace -e inject=clone:error=EIO:when=2
-[[ $rc = 0 && $out = $'a:[]\nb:[cap]' && -z $rerr ]]; chk capext.18
 
 run_sash_under 'if ! x=$(/bin/echo bad) { echo "caught=$?" }
 echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
@@ -1599,129 +1596,20 @@ echo after' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
 [[ $rc = 1 && -z $out && $rerr = "./test_bin: fork: error 11" ]] &&
     grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.5
 
-# bgfork.6 suppressed: silent, and the program goes on
+# Fork failure is fatal even when the command result would be discarded.
 run_sash_under '- /bin/echo hi &
 - wait
 echo "after"' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
-[[ $rc = 0 && $out = after && -z $rerr ]] &&
-    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.6
+[[ $rc = 1 && -z $out && -z $err && $rerr = "./test_bin: fork: error 11" ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk errmig.46
 
-# bgfork.7 suppressed, but the failure's status stays, as a suppressed failed
-# command's does: fallthrough selects EXIT even with a nonzero status.
+# Fatal failure does not take the orderly EXIT route.
 run_sash_under 'EXIT { echo "end $?" }
 echo main
 - /bin/echo hi &' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
-[[ $rc = 1 && $out = $'main\nend 1' && -z $rerr ]] &&
-    grep -q 'clone.*INJECTED' bgfork.trace; chk h128.bgfork.7
-
-# bgfork.8 `$!` after a failed fork is -1, not the previous job's pid (the
-# second clone fails; the first job is still waitable by its own pid)
-run_sash_under '/bin/sleep 0.2 &
-int p0=$!
-- /bin/echo in &
-int p=$!
-int r=$(wait $p0)
-int s=$(waitstatus)
-echo "neg=$(( p == -1 )) stale=$(( p == p0 )) r=$(( r == p0 )) s=$s"' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=2
-[[ $rc = 0 && $out = 'neg=1 stale=0 r=1 s=0' && -z $rerr ]] &&
-    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.8
+[[ $rc = 1 && $out = main && -z $err && $rerr = "./test_bin: fork: error 11" ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk errmig.47
 rm -f bgfork.trace
-
-# ── `:` evaluates its arguments for their effects (DD#77, DD#69 §2) ─────
-# `:` discards its arguments' VALUES, never their evaluation: a `:?`
-# disposition aborts, a splat disposition aborts and an arithmetic fault
-# faults, exactly as the same argument does on `echo`. `:` used to lower no
-# argument at all, so every row below printed `after` -- bash's own
-# parameter-assertion idiom included (57.192). A capture argument always
-# ran, because it is lowered before the command (noop.11).
-
-# noop.1 the bare `:?` assertion aborts, with its message
-run_sash 'str s=""
-: ${s:?empty}
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": empty"* ]]; chk noop.1
-
-# noop.2 ...quoted, which is the converter's spelling
-run_sash 'str s=""
-: "${s:?empty}"
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": empty"* ]]; chk noop.2
-
-# noop.3 a splat disposition: `:?` on an empty array aborts (DD#69 §2)
-run_sash 'array a=()
-: @{a:?none}
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": none"* ]]; chk noop.3
-
-# noop.4 a missing cell under `:?`
-run_sash 'array a=(x)
-: ${a[3]:?missing}
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": missing"* ]]; chk noop.4
-
-# noop.5 an arithmetic argument faults as it does on `echo` (exit 2)
-run_sash 'int z=0
-: $(( 1 / z ))
-echo after'
-[[ $rc = 2 && -z $out && $rerr == *"division by zero"* ]]; chk noop.5
-
-# noop.6 as a condition: an abort is not a status, so no branch is taken
-run_sash 'str s=""
-if : ${s:?empty} { echo y }
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": empty"* ]]; chk noop.6
-
-# noop.7 redirected: the arguments are evaluated inside the redirect, as
-# `echo`'s are
-run_sash 'str s=""
-: ${s:?empty} >/dev/null
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": empty"* ]]; chk noop.7
-
-# noop.8 as a pipeline stage: the stage child aborts, then the stage fails
-run_sash 'str s=""
-: ${s:?empty} | /bin/cat
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": empty"* \
-   && $rerr == *"command failed"* ]]; chk noop.8
-
-# noop.9 ...and when a capture argument lifts the stage into a child block,
-# the `:` in that block is the plain statement form, which aborts the same way
-run_sash 'fn g { echo x }
-str s=""
-: $(g) ${s:?empty} | /bin/cat
-echo after'
-[[ $rc = 1 && -z $out && $rerr == *": empty"* \
-   && $rerr == *"command failed"* ]]; chk noop.9
-
-# noop.10 CONTROL: a set variable passes the assertion, and `:` prints nothing
-run_sash 'str s=x
-: ${s:?empty}
-echo "after [$s]"'
-[[ $rc = 0 && $out = "after [x]" && -z $rerr ]]; chk noop.10
-
-# noop.11 CONTROL: a capture argument runs, and its global write is kept
-run_sash 'int n=0
-fn g { n=5; echo hi }
-: $(g)
-echo "[$n]"'
-[[ $rc = 0 && $out = "[5]" && -z $rerr ]]; chk noop.11
-
-# noop.12 CONTROL: an empty plain argument is no assertion
-run_sash 'str s=""
-: $s
-echo after'
-[[ $rc = 0 && $out = after && -z $rerr ]]; chk noop.12
-
-# noop.13 CONTROL: `:` builds no argv, so a NUL-bearing argument, scalar or
-# splat element, does not trip the exec-boundary guard (an.1, an.2). The
-# value never crosses execve(2), so it stays a legitimate value, as in an.5.
-run_sash 'nul=$'"'"'\x00'"'"'
-s="a${nul}b"
-array a=($s x)
-: $s "x${s}y" @{a:~}
-echo "after $(strlen $s)"'
-[[ $rc = 0 && $out = "after 3" && -z $rerr ]]; chk noop.13
 
 set -e
 tally

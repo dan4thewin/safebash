@@ -49,10 +49,10 @@ run_sash_emit_ir() {
 # 104.1 --emit-ir accepted, and stamps a version a consumer can refuse on
 if in_modes native; then
     run_sash_emit_ir 'echo hello'
-    [[ $rc = 0 && -z $err && $out == *":ir-version 3"* \
-       && $out == *":exit-block nil"* && $out == *":err-block nil"* ]]; chk ircell.1
+    [[ $rc = 0 && -z $err && $out == *":ir-version 4"* \
+       && $out == *":exit-block nil"* && $out == *":err-block nil"* ]]; chk errmig.48
 else
-    skip_chk ircell.1
+    skip_chk errmig.48
 fi
 
 # 104.2 the capture is structural — IR node names, not an interpretation.
@@ -79,19 +79,21 @@ else
 fi
 
 # Both handlers have their own structural fields, not synthetic definitions
-# in :statements. Schema 3 retains schema 2's handler fields (DD104, DD128).
+# in :statements. Schema 4 also preserves the explicit ERR attempt marker.
 if in_modes native; then
-    run_sash_emit_ir 'echo hi
+    run_sash_emit_ir 'fn cleanup { echo cleanup }
+echo hi
 EXIT {
 echo bye
 }
-ERR { - echo failed }'
-    [[ $rc = 0 && -z $err && $out == *":ir-version 3"* \
+ERR { - echo failed; : cleanup }'
+    [[ $rc = 0 && -z $err && $out == *":ir-version 4"* \
        && $out == *":exit-block [{:kind :command"* \
        && $out == *":err-block [{:kind :suppressed"* \
-       && $out != *":end-block"* ]]; chk ircell.2
+       && $out == *":best-effort true"* && $out == *":best-effort false"* \
+       && $out != *":end-block"* ]]; chk errmig.49
 else
-    skip_chk ircell.2
+    skip_chk errmig.49
 fi
 
 # 104.6-104.8 the capture never holds an arithmetic `++`/`--` or `a[i]`

@@ -392,6 +392,9 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock) -> bool {
                 program: ctx.program,
                 cl_blocks: ctx.cl_blocks,
                 in_condition,
+                recovery: ssa_block
+                    .checked_failure_at(idx)
+                    .map(|failed| ctx.cl_blocks[&failed]),
                 signal_deferred: ssa_block.signal_deferred.contains(&idx),
             },
         ) {
@@ -408,6 +411,13 @@ fn emit_terminator(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
             let target_cl = ctx.cl_blocks[target];
             ctx.builder.ins().jump(target_cl, &[]);
         }
+        Terminator::Checked {
+            normal,
+            failed,
+            check_status,
+        } => {
+            emit_checked_edge(ctx, *normal, *failed, *check_status);
+        }
         Terminator::Branch {
             true_block,
             false_block,
@@ -423,6 +433,21 @@ fn emit_terminator(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
             let status = ctx.builder.use_var(ctx.exit_status_var);
             emit_terminal_call(ctx, ctx.externs.shutdown, status);
         }
+    }
+}
+
+fn emit_checked_edge(ctx: &mut EmitCtx, normal: Option<BlockId>, failed: BlockId, check: bool) {
+    let failed = ctx.cl_blocks[&failed];
+    let Some(normal) = normal else {
+        ctx.builder.ins().jump(failed, &[]);
+        return;
+    };
+    let normal = ctx.cl_blocks[&normal];
+    if check {
+        let status = ctx.builder.use_var(ctx.exit_status_var);
+        ctx.builder.ins().brif(status, failed, &[], normal, &[]);
+    } else {
+        ctx.builder.ins().jump(normal, &[]);
     }
 }
 

@@ -1799,6 +1799,7 @@ fn parse_test_command(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
                 kind: ExprKind::Literal("[[".to_string()),
                 span,
             },
+            best_effort: false,
             args: vec![Expr {
                 kind: ExprKind::Test(test_expr),
                 span,
@@ -2388,6 +2389,7 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
                 kind: ExprKind::Literal("attest".to_string()),
                 span,
             },
+            best_effort: false,
             args,
         }),
         span,
@@ -3047,16 +3049,14 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnos
     let name_expr = parse_expr(scanner)?;
     let name_expr = normalize_command_head(name_expr, scanner.consumed_source_since(start))?;
     let (args, redirects) = parse_command_words(scanner, span)?;
+    let command = command_from_words(name_expr, args)?;
 
     if !redirects.is_empty() {
-        reject_redirect_on_no_output_builtin(&name_expr, span)?;
+        reject_redirect_on_no_output_builtin(&command.name, span)?;
     }
 
     let mut stmt = Statement {
-        kind: StmtKind::Command(Command {
-            name: name_expr,
-            args,
-        }),
+        kind: StmtKind::Command(command),
         span,
     };
 
@@ -3071,6 +3071,26 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnos
     }
 
     Ok(stmt)
+}
+
+fn command_from_words(mut name: Expr, mut args: Vec<Expr>) -> Result<Command, Diagnostic> {
+    let best_effort = matches!(&name.kind, ExprKind::Literal(n) if n == ":") && !args.is_empty();
+    if best_effort {
+        name = args.remove(0);
+        if !matches!(&name.kind, ExprKind::Literal(n) if crate::ir::is_plain_identifier(n)) {
+            return Err(parse_error(
+                name.span,
+                "SB5108",
+                "`:` takes a literal void-function name for an ERR attempt; use `_=` to discard a value"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(Command {
+        name,
+        args,
+        best_effort,
+    })
 }
 
 /// A `{` has been reached while collecting a command's word list. Decide

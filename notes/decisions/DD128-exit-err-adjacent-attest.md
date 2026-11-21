@@ -8,8 +8,9 @@ status: accepted
       `exit` defaults to 0.
    2. Uncaught failures, first fatal faults and `fail [N]` enter ERR;
       `fail` defaults to 1 and permits 0.
-   3. Failure inside EXIT may enter ERR. `exit` in either handler and `fail`
-      in ERR terminate directly. An absent handler means termination.
+   3. Failure inside EXIT may enter ERR. `exit` in either handler terminates
+      directly. In ERR, `fail` terminates unless an eligible provisional
+      DD136 call attempt owns the transfer. An absent handler means termination.
 3. Never resume interrupted code or re-enter a handler. Preserve the full
    entry status unless explicitly replaced; `$?` is available at entry's
    first evaluated expression.
@@ -19,8 +20,10 @@ status: accepted
    ERR requires forced reads of potentially tainted incoming values;
    inherited bindings are readonly under DD135. Fresh input acquired into
    writable handler-owned state may be attested there.
-6. Every recoverable failure reachable during ERR needs explicit handling
-   at its own operation, including inside same-process callees and operands.
+6. In the provisional DD136 trial, ERR remains checked but may terminate
+   on an unchecked failure. ERR-owned void/status call attempts can recover
+   explicit `fail` and existing unchecked operational results from the
+   full call chain. Other guards and explicit `exit` remain terminal.
 7. First-fatal dispatch attempts ERR once without allocation. A fatal fault
    inside ERR terminates; cleanup is not guaranteed to finish.
 8. Within a live binding, resolve taint only by legal adjacent attest or a
@@ -58,9 +61,13 @@ On 2026-11-06 DG separated explicit orderly termination from explicit failure:
 
 DD130's later 2026-11-06 ruling distinguishes recoverable failures from
 fatal faults and makes fork failure fatal. Sections 7-8 incorporate that
-contract; its classification/fork/file-error implementation tasks remain
-open. This does not claim that the shipped handler checks already enforce
-the new classification in every form.
+contract. The DD136 trial implements uniform fatal fork routing; broader
+classification and file-error handling remain separate work.
+
+The provisional [DD136 trial](DD136-err-call-attempts.md) replaces the
+SB5101 prohibition on possible operational aborts with checked terminal
+failure and explicit ERR-owned call attempts. Its narrow recovery boundary,
+not the original no-failure-in-ERR guarantee, governs this branch.
 
 DD131/DD132's accepted model adds fresh immutable scratch
 instances and restricted unresolved fall-through after their caught
@@ -80,8 +87,9 @@ Separate orderly termination from failure cleanup:
   EXIT signal.
 - **ERR is failure cleanup**, entered on an uncaught operational failure,
   explicit `fail [N]`, or a first fatal fault before ERR. It makes no
-  optimistic assumption that incoming data was attested. Its own operational
-  failures must be caught or suppressed, not implicitly abort the handler.
+  optimistic assumption that incoming data was attested. Under provisional
+  DD136, its own failures either use an eligible call attempt or ordinary
+  local handling, or terminate cleanup.
 - **Taint is resolved beside acquisition.** A legal adjacent attest, or
   clean replacement of its subject on the failed-attest branch, can clear
   outstanding taint. An unrelated later assignment cannot.
@@ -111,14 +119,14 @@ DG also tightened the acquisition rule:
 > a later assignment, even of a literal, that isn't the branch off a
 > failed attest, should not clear taint.
 
-And the failure-handler rule:
+And the original failure-handler rule:
 
 > the ERR block should require anything that could abort to instead be
 > caught or suppressed.
 
-The latter has a deliberate limit, discussed with DG: there is no general
-recovery policy for arithmetic faults or an exhausted heap. The guarantee
-is explicit handling of operational failures, not an infallible handler.
+DD136 provisionally replaces the latter requirement with narrow ERR-owned
+attempts. Arithmetic faults and an exhausted heap remain terminal; neither
+the original rule nor the trial promises infallible cleanup.
 
 ## 1. Surface and scope
 
@@ -178,8 +186,10 @@ status. Neither builtin prints an implicit command-failure message merely
 because it was called.
 
 Both operations terminate the current execution path rather than returning a
-catchable status. An `if`, `||` or `-` cannot make a reached `exit` or `fail`
-resume the interrupted program. Operand evaluation happens before transfer;
+status. Neither resumes the interrupted program. In DD136's trial, an
+eligible ERR-owned attempted call can catch `fail` by abandoning the entire
+attempt, not by returning from the failing helper. `exit` stays terminal,
+and source `-` establishes no attempt. Operand evaluation happens before transfer;
 an uncaught failure during that evaluation retains its normal ERR behavior.
 Existing process-placement restrictions apply to `fail` as they do to `exit`.
 
@@ -218,8 +228,9 @@ status was nonzero, for example after a signal.
 
 An explicit `exit [N]` inside either handler terminates directly with N,
 including nonzero values; it never restarts EXIT or transfers to the other
-handler. An explicit `fail [N]` inside ERR also terminates directly with N,
-including zero; it does not restart ERR. Defaults remain 0 for `exit` and
+handler. An explicit `fail [N]` inside ERR terminates directly with N,
+including zero, unless it abandons an eligible DD136 attempt. Neither route
+restarts ERR. Defaults remain 0 for `exit` and
 1 for `fail`. Deliberate source-level termination remains visible control
 flow, distinct from an implicit failure exit.
 
@@ -232,8 +243,9 @@ but do not dispatch another handler. IGN, DFL and FLAG retain their meanings.
 
 Save the status that caused handler entry. Falling off the handler preserves
 it; successful cleanup commands must not accidentally replace a failure
-status with zero. Explicit `exit N` or `fail N` replaces it as described
-above. If EXIT fails into ERR, ERR receives the new failure's status.
+status with zero. A terminal `exit N` or `fail N` replaces it as described
+above; a recovered attempt does not replace ERR's saved entry status.
+If EXIT fails into ERR, ERR receives the new failure's status.
 
 The incoming status is available through `$?` as the first evaluated
 expression, under DD55's handling-position rules, for example `int code=$?`.
@@ -501,18 +513,18 @@ may use ordinary adjacent, caught attestation and then ordinary reads.
 Its failure branch must comply with section 7, and any replacement that
 resolves the subject must be written directly in that branch.
 
-### Stable byte proofs, not taint clearance (DD135)
+### Byte guards are independent of taint (DD135/DD136)
 
-NUL-freedom is independent of cleanliness. ERR may use existing byte facts
-or prove that the exact argument value is NUL-free on every reaching path:
+NUL-freedom is independent of cleanliness. Authored checks may establish
+that the exact argument value is NUL-free:
 false `0?`, true `i?`/`p?`/`g?`, or a true NUL-rejecting filename test.
 Readonly imports make their values stable; immutability alone is not the
 proof. `:!` is still required for potentially tainted reads, including the
 predicate's own read. An ordinary predicate does not clear inherited taint.
 
-Keep runtime argv guards and the other SB5101 obligations. DD135 confines
-the new demand-driven path query to ERR uses; it does not make an earlier
-main-path test dominate an independent handler entry. Its `mkdtemp`
+The DD136 trial retires SB5101 and its mandatory demand-driven ERR NUL
+proof query, not the runtime argv guard. A failed guard still terminates
+ERR and cannot abandon an attempt. DD135's `mkdtemp`
 constructor separately supplies a clean, NUL-free generated pathname,
 with a real checked/handled creation result.
 
@@ -521,60 +533,49 @@ These additions are implemented:
 its [predicate prerequisite](../tasks/nul-predicate-and-filename-tests.md),
 and [mkdtemp](../tasks/mkdtemp-value-intrinsic.md).
 
-## 7. ERR must handle recoverable operational failures explicitly
+## 7. Checked ERR and narrow call attempts (provisional DD136)
 
-An operation whose recoverable failure could implicitly abandon ERR must
-be caught or suppressed by a form that actually handles that failure.
-Otherwise it is a compile-time error. Do not implement this by marking
-the entire handler unchecked.
+ERR is not an unchecked region. An unchecked failure with no eligible
+attempt terminates cleanup without re-entry. The former SB5101 static
+prohibition is retired on this trial branch.
 
-The requirement applies to every branch, including failure reporting and
-fallbacks. In `cmd || fallback`, fallback must itself comply. A deliberate
-`exit N` in a handling branch is an explicit choice to stop cleanup, not
-an implicit failure exit.
+ERR's own `: VOID_FUNCTION ARG...` attempts one resultless call. A caught
+status-function call establishes a corresponding attempt whose normal
+return retains its status and whose recoverable abort takes the failure
+route. Both include argument evaluation and attached redirects. Abnormal
+completion is false even for `fail 0`, before authored negation.
 
-DD55's no-reach rule remains intact:
+Recovery abandons the complete intervening call chain. A helper's condition
+does not establish another boundary, and neither a bare void call nor
+source `-` establishes one. Outside these ERR-owned call sites, DD55's
+ordinary no-reach rule remains. A forked child has no parent recovery
+destination; its completion remains an ordinary process status.
 
-- Catching or suppressing a same-process function call handles its returned
-  result, not an abort inside its body.
-- An operand capture or value call is checked where it executes. A prefix
-  on the outer command does not catch its failures.
-- A called body's possible uncaught operational failure therefore matters
-  at an ERR call site, including through further calls.
-- A forked child's failure can instead be handled through its process
-  status. Requiring that handling does not turn the child into an ERR body.
+Only explicit `fail` and existing unchecked operational results use the
+attempt edge. Locally handled results do not trigger it. `:?`, argv-NUL
+and invalid-index guards, currently unconditional slurp/read failures,
+fatal faults and explicit `exit` remain terminal. A failed restoration
+stops cleanup rather than resuming with uncertain descriptor state.
 
-A helper may remain usable in main while being refused from ERR because
-its body has an uncaught operational failure. Report the call and the
-internal failure site; do not silently change the helper's behavior based
-on who called it.
+Before continuation, restore only the attempt's scoped redirects and
+abandon its unfinished captures/readers. Preserve enclosing ERR resources;
+close abandoned readers before waiting for their producers. Completed
+application effects remain, with no rollback or fabricated values.
+Taint and regex reasoning follow the actual failed prefix, not a later
+normal return. The boundary is inactive before either continuation starts.
 
-DD130 classifies setup and execution failures by recoverability, not by
-their position. A recoverable failure of the command's own attached
-redirect belongs to its handling context; a prefix still does not reach
-into an operand capture or a helper. Fatal faults cannot be caught or
-suppressed, including pipeline construction's failed fork.
-
-Where no real handling form exists for a recoverable failure, the
-operation remains unavailable in ERR until that support is implemented.
-A missing handling form does not make an ordinary error fatal. Conversely,
-the possibility of a genuinely fatal fault is not itself a reason to ban
-the operation, as arithmetic and allocation already demonstrate.
-
-Implementation remains coupled to `runtime-failure-classification` and
-`recoverable-file-failures`: today's statement-level `-` still misses a
-redirect-open failure, and some backup/restore failures have no handling
-form. Do not loosen SB5101 merely on the strength of the new terminology;
-the runtime path and its checked effect model must agree.
+This narrow contextual boundary does not globally reclassify ordinary file
+errors as fatal. `runtime-failure-classification` and
+`recoverable-file-failures` retain their broader obligations.
 
 ## 8. Fatal runtime faults
 
-The named exceptions to ERR's operational-failure guarantee are:
+The fatal classes that no ERR attempt can recover are:
 
 - DD25 arithmetic faults: overflow, division by zero and negative shift
   counts.
 - Exhaustion of the runtime heap.
-- Fork failure (DD130; uniform by-form implementation pending).
+- Fork failure (DD130; uniform routing is implemented in the DD136 trial).
 
 They remain fatal, including inside ERR. Neither `if` nor `-` promises
 recovery from them. Do not ban an operation merely because those fatal
@@ -680,26 +681,27 @@ acquisition on only one branch does not permit an inherited-input attest
 on the other. The SSA backstop independently checks incoming versions and
 fresh acquisitions, including mapped collection slots.
 
-`terminal::check_err` reports SB5101 from the live same-process lowered
-instructions, including called/inlined bodies, with the call and failure
-locations. It does not re-walk a function under caller-specific taint.
-Conservative value facts distinguish potentially empty/NUL-bearing values,
-dynamic regexes and unknown collection sizes from proven-safe forms.
-Collection mutation invalidates the relevant proofs. This currently makes
-descriptor captures, bulk/slurp reads and redirects unavailable in ERR:
-their uncatchable read or backup/restore failures remain operational
-failures even where an enclosing status is caught. Compiler-bounded argv
-iteration, known nonempty dispositions, even-length map conversion and
-valid static regexes need no fictitious extra failure handling.
+The DD136 trial removes the former SB5101 failure inventory and its local
+NUL prover. Lexical attempt sites instead become compiler-visible
+exceptional SSA edges. Function summaries separately retain normal and
+abandoned taint effects; the SSA backstop and regex checker follow the
+pre-operation state on a checked failure edge. Recovery reloads actual
+global storage rather than manufacturing normal-completion versions.
 
-DD135 extends that baseline with predicate-derived proof and readonly-import
-enforcement ([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
-Handler inputs remain seeded for all globals; a separate bound-source census
-identifies ERR imports. Filename predicates now reject NUL-bearing operands
-before lookup, making their successful outcomes valid byte-proof witnesses.
+The runtime attempt ledger owns outstanding descriptor backups and bookmarks
+the enclosing reader/capture heads. It is a cleanup mechanism, not a general
+router for `sash_abort`. Both emitters give only eligible operation checks
+the recovery destination. Children clear ownership.
 
-Artifact schema 2 has optional `:exit-block` and `:err-block` fields and no
-`:end-block`; empty handlers remain distinguishable from absent handlers.
+DD135's readonly-import enforcement remains. Handler inputs are seeded for
+all globals; a separate bound-source census identifies ERR imports.
+Filename predicates still reject NUL-bearing operands before lookup.
+Journal 640 records the original predicate-proof implementation; its
+mandatory static proof component is retired only by this provisional trial.
+
+Artifact schema 4 (DD104/DD136) retains optional `:exit-block` and `:err-block`
+fields and no `:end-block`; empty handlers remain distinct from absent ones.
+Every command additionally records its explicit `:best-effort` marker.
 
 The compiler and SSA backstop must agree on the new taint contract. Handler
 entry must preserve actual values on implicit and explicit transfers in

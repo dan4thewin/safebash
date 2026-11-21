@@ -374,13 +374,9 @@ pub(super) fn build_argv_values(
     }
 }
 
-/// `:` evaluates its arguments for their effects (a `:?` abort, a DD#69
-/// splat disposition, an arithmetic fault) and discards the values. It used
-/// to evaluate none of them, so `: ${s:?empty}` carried on (DD#77). The order
-/// is [`build_argv_runtime`]'s, splat dispositions first and then every
-/// other value left to right, but no argv is built. Nothing is exec'd, so
-/// the DD#99 NUL guard (an exec-boundary check) does not apply, and the
-/// bump heap is not charged for a table nobody reads.
+/// Evaluate retained SSA arguments without constructing argv.
+/// DD136 source noops have no data operands; `_=` lowers as an assignment.
+/// Discarded values need no exec-boundary NUL guard.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn evaluate_args_for_effects(
     args: &[SsaValue],

@@ -557,6 +557,7 @@ fn handle_break_stmt(
     let Some((_header, exit)) = loop_target(c, state) else {
         return block;
     };
+    state.record_loop_jump(exit, block);
     ssa.block_mut(block).terminator = Terminator::Goto(exit);
     ssa.new_block("after_break")
 }
@@ -570,6 +571,7 @@ fn handle_continue_stmt(
     let Some((header, _exit)) = loop_target(c, state) else {
         return block;
     };
+    state.record_loop_jump(header, block);
     ssa.block_mut(block).terminator = Terminator::Goto(header);
     ssa.new_block("after_continue")
 }
@@ -1614,13 +1616,23 @@ fn maybe_capture_condition(
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> Option<BlockId> {
-    if state.in_condition == 0 || !matches!(&a.value.kind, ExprKind::CommandSubstitution(_)) {
+    let ExprKind::CommandSubstitution(body) = &a.value.kind else {
         return None;
+    };
+    if state.in_condition == 0 {
+        return None;
+    }
+    if super::AttemptSites::status_capture(body, |name| state.call_class(name)) {
+        state.suppressed += 1;
+        let after = capture_body_into(&a.name, body, state, ssa, block);
+        state.suppressed -= 1;
+        // CaptureEnd preserves the call's verdict, including an abnormal fail 0.
+        return Some(after);
     }
     if let Some(b) = try_capture_condition(&a.name, val, state, ssa, block) {
         return Some(b);
     }
-    reject_nonexternal_capture_condition(a, state);
+    reject_resultless_capture_condition(a, state);
     None
 }
 
@@ -1696,45 +1708,20 @@ fn push_set_test_from_status(ssa: &mut SsaProgram, block: BlockId, checked: bool
     ));
 }
 
-/// DD#88: an assignment-in-condition that `validate` let through as an
-/// external-looking `$(…)` but did NOT lower to an external capture — i.e. a
-/// `$(user_fn)` capture. A function conveys status via `return`, not a captured
-/// value, so this is not a capture-condition. Emit SB4025 (compilation fails via
-/// `enforce_transform_diags`).
-fn reject_nonexternal_capture_condition(a: &Assignment, state: &mut VersionState) {
+fn reject_resultless_capture_condition(a: &Assignment, state: &mut VersionState) {
     let sp = a.value.span;
     // This rejects the capture outright (`$(- f)` included), so the capture
     // check's advice on the same capture would only lead to another SB4025.
     state.expr_diagnostics.get_mut().retain(|(at, _)| *at != sp);
     state.diagnostics.push(format!(
-        "{}:{}: error [SB4025] capturing a function's output is not a condition — a function \
-         conveys status via `return` (use it as a predicate: `if f {{ … }}`), or capture then \
-         test (`{}=$(f); if [[ … ]]`)",
-        sp.line, sp.col, a.name
+        "{}:{}: error [SB4025] a capture condition requires an undiscarded status or boolean; \
+         a named function must return a status, not an integer or no result",
+        sp.line, sp.col
     ));
 }
 
-/// The one question `validate` could not answer about a capture-condition body.
-///
-/// `validate::is_capture_condition_rhs` has already fixed the *shape* — exactly
-/// one statement, peeling to a multi-stage pipeline of externals or a command
-/// with an external-looking head — and `run_semantic_checks` exits on its
-/// diagnostics before `ir_to_ssa` runs, so nothing else reaches here. Re-testing
-/// the shape would be the same question asked of the same AST one pass later:
-/// a second copy of a classifier rather than a backstop, and the copies in this
-/// file have drifted away from their originals rather than catching them (the
-/// `Redirected`-peeling disagreements, journal 495). Specs 88.29-88.31 pin
-/// those three rejections on the gate that owns them.
-///
-/// What `validate` genuinely cannot decide is whether the head names a **user
-/// function**: it runs before resolution, so `$(f 2>&1)` arrives looking
-/// exactly like an external. A bare `$(f)` never reaches this arm at all — it
-/// lowers to `FuncCall` — so without this check the redirected spelling would
-/// drift off DD#88's side of the line from its unredirected twin (88.28).
-///
-/// A pipeline is *not* asked: a user function is legal as a stage, because what
-/// the condition tests is the pipeline's status, not the function's output
-/// (`if x=$(/bin/echo hi | myfn)` compiles and is correct).
+/// Named status captures use the caller-owned path above; other function
+/// kinds cannot fall through to the external/pipeline capture path.
 fn capture_condition_head_is_user_fn(body: &[Statement], state: &VersionState) -> bool {
     body.iter()
         .any(|stmt| match peel_capture_wrappers(&stmt.kind) {
@@ -1988,6 +1975,7 @@ mod invariant_tests {
 
     fn ice_on(name: &str, args: Vec<Expr>, want: &str) {
         let c = Command {
+            best_effort: false,
             name: lit(name),
             args,
         };
@@ -2133,6 +2121,7 @@ mod invariant_tests {
     fn extract_func_args_rejects_every_shape_single_command_subst_declines() {
         let cmd = Statement {
             kind: StmtKind::Command(Command {
+                best_effort: false,
                 name: lit("f"),
                 args: vec![],
             }),

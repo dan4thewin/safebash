@@ -22,6 +22,7 @@ pub(crate) fn ir_to_ssa_typed(
         });
     }
     let mut state = VersionState::with_types(types.vars);
+    state.attempt_calls = super::AttemptSites::new(program).calls;
     state.scratch = scratch.clone();
     state.checked_collections = types.collections;
     seed_global_collections(program, &ssa, &mut state);
@@ -48,6 +49,8 @@ pub(crate) fn ir_to_ssa_typed(
     ssa.external_deps = state.external_deps.borrow().clone();
 
     mark_unchecked_in_conditions(&mut ssa);
+    super::attempts::install(&mut ssa);
+    ssa.assert_children_disjoint();
     state.flush_expr_diagnostics();
     ssa.taint_predecessors = std::mem::take(&mut state.taint_predecessors);
     ssa.resolutions = std::mem::take(&mut state.resolutions);

@@ -1230,7 +1230,7 @@ echo "${a[$((1))]}"'
 # cov.241 `$(len args)` inside a function — `check_len_operand`'s slot branch
 # (DD#75 §5: `args` is in scope in every function body).
 run_sash 'f() {
-  : @args
+  array _=(@args)
   echo "n=$(len args)"
 }
 f a b'

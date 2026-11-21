@@ -24,6 +24,9 @@ status: accepted
 7. An unchecked operational abort reports one contextual line on the
    invoker's stderr, prefixed by verbatim `argv[0]`, then exits with failure.
    Handled failures are silent; a child's exec-error report remains separate.
+8. The provisional DD136 trial adds ERR-owned call attempts, not broader
+   source `-` suppression. A recovered abort has no automatic abort diagnostic;
+   authored output and external stderr remain observable.
 
 ---
 
@@ -38,6 +41,13 @@ DD130 (DG, 2026-11-06) separately distinguishes **recoverable failures**
 from **fatal faults**. The channels below concern result handling; a fatal
 fault is not a result to consume in either channel. A value-producing
 operation can encounter a fatal fault without changing its result kind.
+
+In the provisional [DD136 trial](DD136-err-call-attempts.md), an ERR-owned
+`: VOID_FUNCTION` or caught status-function call establishes an abandonment
+boundary around that invocation. It includes operands and redirects, but
+recovers only explicit `fail` and existing unchecked operational results.
+Helper-local conditions and source `-` keep their ordinary no-reach meaning.
+This is neither a third result kind nor general recovery from runtime guards.
 
 ## The two channels
 
@@ -285,9 +295,10 @@ justify otherwise pointless calculation. None of this changes DD130's
 failure classification or suppresses fatal faults in retained programs.
 
 **Explicit `:` remains the intentional no-op**, including its otherwise
-legal `- :` form. It still evaluates arguments and follows redirects
-(DD69). It is permitted without effects, not classified as an effect
-that can rescue an enclosing `test || :`.
+legal `- :` form and redirect-only uses. In the DD136 trial, arbitrary
+operand disposal moves to DD98's `_` binder; colon operands instead name
+an ERR-only void-function attempt. Bare colon is permitted without effects,
+not classified as an effect that can rescue an enclosing `test || :`.
 
 **Constant-returning functions remain legal.** The check concerns the
 use of an invocation, not the values a definition may return. A known

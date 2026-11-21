@@ -112,7 +112,8 @@ echo "$(join a ,)"' unsafe
 [[ $rc != 0 && $err == *SB5089* ]]; chk fillacc.18
 
 run_sash "ERR { array a=(\$'a\\x00b'); read \"safe\" a; - /bin/echo @{a:-empty} }; fail 7"
-[[ $rc != 0 && $err == *SB5101* && $err == *NUL* ]]; chk fillacc.19
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.39
 
 run_sash 'ERR { array a=(old); read "safe" a; - /bin/echo @{a:-empty} }; fail 7'
 [[ $rc = 7 && $out = 'old safe' && -z $err && -z $rerr ]]; chk fillacc.20

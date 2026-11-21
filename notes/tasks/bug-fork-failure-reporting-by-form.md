@@ -1,5 +1,5 @@
 title: "Bug: make fork failure uniformly fatal across execution forms"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -16,7 +16,12 @@ gates:
 DG requires fork failure to abort like heap exhaustion: an unpredictable
 mixture of progress and failure is worse than stopping. DD130 settles this
 for all forms, not only the `-` spelling. No handling branch resumes the
-process whose fork failed. This task remains open for implementation.
+process whose fork failed. Uniform fatal routing is implemented on
+`err-attempt-trial` (provisional DD136). Focused original/reversion controls
+and the corrected ordinary gate pass. This fork-fatality owner closes on
+the trial branch; [the integrated owner](err-call-attempt-trial.md) retains
+DG's evaluation and adoption decision, with main unchanged.
+It does not implement direct-background-exec or broader I/O classification.
 
 The table below is historical evidence. Its END forms and some old
 function/return spellings are no longer valid source; use current-language
@@ -57,11 +62,12 @@ e1 was added 2026-10-28 (probe `bgf/endf4.sh` in `files/port-f2-probes.tar.gz`):
 the same before and after F2, in both backends. At that time, outside END,
 F2 made a background job report the pipeline way (below); END kept it silent.
 DD128 now removes END and its blanket unchecked exception. EXIT is checked;
-ERR requires explicit handling of recoverable failures. DD130 makes fork
+DD136 keeps ERR checked while allowing narrow call attempts. DD130 makes fork
 failure a fatal fault in either handler. Row e1 is historical, not a
-remaining handler exception; the general by-form repair remains open.
+remaining handler exception. The trial implementation below replaces the
+old by-form split.
 
-So there are three behaviours:
+The original report distinguished three behaviours:
 - a simple command reports `<cmd>: error 11` (naming the command that never
   ran, not the fork), always, even when the failure is caught, and leaves 127,
   the status of an exec failure;
@@ -79,7 +85,7 @@ Probes: `files/port-f1f4-probes.tar.gz`, directories `ff/` (the table and
 `runf.sh`, the fault-injecting driver) and `ff2/` (the no-branch `if` status:
 d1, d6, t1, t2).
 
-## Cause (read, not yet confirmed by a fix)
+## Original cause
 
 - `sash_run` (sash-rt/src/lib.rs) handles a simple command. On a fork failure
   it prints the command's name with the errno and returns 127, which the
@@ -94,10 +100,10 @@ rule for the port (fix a known bug in a function the port modifies; file the
 others).
 
 Related: batch-531 B20, landed with F2 on 2026-10-28. A background job whose
-fork fails now reports the pipeline way: `fork: error 11`, status 1, an abort
+fork failed then reported the pipeline way: `fork: error 11`, status 1, an abort
 unless caught or suppressed, and `$!` reads -1 (`bgfork.1`-`bgfork.8` in
 commands.sh). The former END-specific silence (e1) is retired by DD128.
-This is the implementation behavior DD130 replaces with fatal routing;
+This is the historical implementation behavior DD130 replaces with fatal routing;
 the accepted rule is no longer "abort unless caught or suppressed".
 
 ## Fix direction
@@ -130,6 +136,28 @@ This settled fork case need not wait for classification of unrelated I/O
 errors in `runtime-failure-classification`. Use successful syscall controls
 and traces proving the intended failed fork; late injected clone counts
 must account for restarted entries.
+
+## Trial implementation and evidence, 2026-11-21
+
+The runtime's ordinary-command path reports `fork: error 11` and terminates
+with status 1, using the existing fork-fault convention. Low-level
+`sash_fork` still returns `-1` so each construction owner can close its pipes
+and reap already-started stages before fatal dispatch. Both backends guard
+background failure before PID formatting, allocation or publication.
+Conditions, negation, suppression and DD136 attempts cannot resume it.
+
+`errtry.46/.47` pin close-before-wait and fatality after partial construction.
+Independent native/C routing reversions each fail that backend's `.47`.
+The first full gate exposed five old recoverable-fork fixtures; their
+`errmig.52-.56` replacements all fail on the matched original compiler/runtime
+and pass on the trial. They retain child-completion, interrupted-wait and
+unchanged-array assertions. The nested case now reaps its outer producer
+before inner construction and checks the actual injection target.
+
+[Journal 664](../journal/664-err-owned-call-attempts.md) records the controls
+and passing corrected gate: 12853 checks at rowids 7334622-7347474, with
+12840 passing and 13 existing skips. Direct-background-exec and the general
+failure classification remain separate; this does not close their owners.
 
 ## Related
 

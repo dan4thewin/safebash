@@ -11,6 +11,10 @@ shipped: [status](../notes/status.md) and [tasks](../notes/tasks/) track that
 distinction. The [review checklist](REVIEW.md) describes what to verify
 when changing this implementation.
 
+This branch also implements the provisional
+[DD136 ERR-call trial](../notes/decisions/DD136-err-call-attempts.md).
+Its recovery and colon changes are not adopted on main.
+
 ## Tools and trust boundaries
 
 `sash` accepts safebash source, conventionally named `.sb`. It is not a
@@ -49,9 +53,9 @@ safebash source (.sb)
     lexical binding resolution
     semantic validation + type checking
     AST -> SSA, once, using CheckedTypes
-    scratch-write checks (trial branch)
+    scratch-write checks
     signal planning
-    immutable regex-proof + caught-scratch read checks (trial branch)
+    immutable regex-proof + caught-scratch read checks
     terminal/entry checks + dead-variable checks
         +-- --emit-ir / --manifest: inspection output
         `-- SSA taint verification
@@ -92,7 +96,7 @@ that a source program passes the real compiler.
 | [`type_check.rs`](../sash/src/type_check.rs) | Scalar/element types, collection signatures and `CheckedTypes` |
 | [`transform/`](../sash/src/transform/) | Typed AST lowering, inlining, control flow, captures and pipelines |
 | [`ssa.rs`](../sash/src/ssa.rs) | Values, instructions, blocks, versions and process/handler metadata |
-| [`signals.rs`](../sash/src/signals.rs), [`terminal.rs`](../sash/src/terminal.rs), [`ssa_taint.rs`](../sash/src/ssa_taint.rs) | Signal checkpoint planning, ERR effect checks and SSA taint verification |
+| [`signals.rs`](../sash/src/signals.rs), [`terminal.rs`](../sash/src/terminal.rs), [`ssa_taint.rs`](../sash/src/ssa_taint.rs) | Signal checkpoint planning, readonly ERR-import checks and SSA taint verification |
 | [`codegen/`](../sash/src/codegen/), [`emit_c.rs`](../sash/src/emit_c.rs) | Native and C emission from the same SSA |
 | [`sash-rt/src/`](../sash-rt/src/) | Runtime ABI, data operations, descriptors, processes and terminal dispatch |
 
@@ -107,6 +111,11 @@ identify a local in different function or capture bodies. Later semantic,
 type and SSA passes use the resolved identity; diagnostics restore the
 author's spelling. [DD86](../notes/decisions/DD86-variable-scope.md) explains
 the scope and lifetime contract.
+
+Each write-only `_` discard site gets a fresh identity. `_=$value` still
+evaluates and checks its RHS, but separate sinks may have different types
+and cannot read one another. Colon no longer disposes of operand values
+in the DD136 trial.
 
 **Collections have checked signatures.** Each function has an inferred
 collection-argument count and array/map, string/int element signature,
@@ -179,7 +188,7 @@ deleting the highest key marks it for one lazy rescan, and clearing or
 deleting the last cell resets it. Ordinary repeated appends no longer scan
 the growing destination. Integer literal appends and replacements reuse the
 checked element types and normal integer-cell encoding. Source and SSA
-taint, terminal facts and ERR's NUL analysis all retain the old destination's
+taint and exceptional-edge analysis retain the old destination's
 contribution; appending clean data is not failed-attest replacement.
 Transferred keys belong to the destination; the remaining private batch keys,
 header and index/entry storage are released, while borrowed value backing is
@@ -260,7 +269,12 @@ of runtime invocations. Shared-output ownership is an additional condition,
 not an exception to kernel reads introducing fresh taint.
 
 Source flow tracks joins, loop heads, break/continue paths and return
-effects. The SSA verifier separately follows definitions, phis and reaching
+effects. DD136 adds separate normal and abandoned effects to the same
+per-function summaries, retaining origin ownership and partial-refresh
+obligations. An absent abort outcome is not a clean outcome. Recovery also
+filters adjacent-acquisition metadata against the abandoned state: a later
+acquisition cannot lend its position to an earlier abort. The SSA
+verifier separately follows definitions, phis and reaching
 collection versions. Main, EXIT, ERR and forked children have separate
 executable views; a child's definitions cannot clean the parent's view.
 
@@ -280,7 +294,9 @@ paths and explicit argument vectors, not an implicit shell. Their failures
 are checked automatically unless handled or explicitly discarded.
 Non-void user-function results instead require consumption or a permitted
 explicit discard. A caller's condition or suppression does not turn off
-checks inside the called body or its operand captures.
+checks inside the called body or its operand captures. The explicit
+ERR-owned attempt boundary below is the provisional exception, not broader
+source suppression.
 
 Function inlining must preserve lexical lifetimes, arguments, collection
 slots and return kind. Integer-value calls have a separate result path from
@@ -288,6 +304,37 @@ stdout capture; `$()` is not universally a request to collect stdout.
 [DD55](../notes/decisions/DD55-error-model.md) and
 [DD58](../notes/decisions/DD58-int-function-capture.md) hold the contracts;
 their queued revisions must not be mistaken for delivered lowering.
+
+### ERR-owned call attempts (provisional)
+
+ERR's own `: void_helper ARG...` establishes a resultless attempt.
+A caught status-function call establishes an attempt with a true/false
+continuation, including an otherwise-legal named capture-condition.
+Only explicit `fail` and existing unchecked operational results abandon
+the complete attempted chain. Arguments and attached redirects belong to
+that attempt; helpers' own conditions create no nested boundary.
+
+[`transform/attempts.rs`](../sash/src/transform/attempts.rs) lowers these
+sites into `AttemptStart`/`AttemptEnd` and checked exceptional CFG edges.
+Failure uses the state before the checked operation, not its normal result.
+`RecoverGlobal` reloads completed storage and identifies the possible
+abandoned versions. Taint and regex checks follow those same edges;
+negation exchanges outcomes without turning an abnormal `fail 0` into a
+normal success. Its numeric status remains separate from its false verdict.
+
+[`sash-rt/src/attempts.rs`](../sash-rt/src/attempts.rs) tracks outstanding
+descriptor backups and bookmarks reader/capture heads. Recovery deactivates
+the boundary, restores scoped descriptors, discards unfinished inner
+captures, closes all abandoned readers, then reaps their producers.
+Enclosing ERR resources survive, including the capture receiving a named
+predicate's partial stdout. Completed writes and committed descriptors
+are not rolled back. Children clear attempt ownership.
+
+The ledger does not intercept arbitrary runtime aborts. `:?`, argv-NUL
+and invalid-index guards, unconditional slurp/read failures, fatal faults,
+explicit `exit` and failed restoration remain terminal. A bare void call
+or source `-` establishes no attempt. ERR fall-through still preserves its
+original entry status rather than the last recovered status.
 
 ### Pipelines and parent readers
 
@@ -441,19 +488,17 @@ allocates nothing, but a handler's own work can still allocate or fail;
 a fatal fault inside ERR terminates directly. EXIT's incoming values and
 ERR's conservative incoming-taint obligations are checked as separate
 roots, not as continuations of main's last SSA block.
-[`terminal.rs`](../sash/src/terminal.rs) checks ERR's operational-failure
-handling on executable SSA.
+[`terminal.rs`](../sash/src/terminal.rs) checks readonly ERR imports on
+executable SSA. SB5101's former failure inventory is removed; unchecked
+failure outside an eligible attempt terminates ERR.
 
 Inherited logical bindings are readonly in ERR, including through
 same-process helpers, captures and collection aliases. The bound source's
 global/call census identifies imports; it does not freeze every global or
-prevent ERR-only working state and fresh private locals.
-[`terminal/nul.rs`](../sash/src/terminal/nul.rs) proves otherwise-unknown
-argv bytes locally at their use. It follows predicate outcomes on every
-reaching path and rewinds actual storage writes: an SSA version label is
-not a snapshot in either backend. Scalar integer types retain their byte
-guarantee; collection contents and keys need their own bounds. These proofs
-neither clear taint nor remove the runtime argv guard.
+prevent ERR-only working state and fresh private locals. The trial also
+removes mandatory static ERR NUL proofs. Runtime argv guards and authored
+`0?`/filename tests remain, independently of taint. A failed NUL guard
+terminates cleanup even inside an attempted call.
 
 Signal delivery records state; generated checkpoints perform EXIT dispatch.
 [`signals.rs`](../sash/src/signals.rs) shares one plan across explicit and
@@ -475,6 +520,8 @@ AST as inert Janet data, not executable Janet code; `--manifest` reports
 external dependencies collected during lowering. These inspection exits
 follow the frontend checks but do not run the executable backends' SSA
 taint gate. Neither inspection output is a proof of executable acceptance.
+The trial uses IR schema 4, with an explicit `:best-effort` marker on every
+command; an older consumer must refuse it rather than erase recovery semantics.
 
 The verified working native platform is x86-64 Linux. The syscall shim has
 both x86-64 and AArch64 implementations, but full AArch64 compiler/runtime

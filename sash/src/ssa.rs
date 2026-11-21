@@ -539,8 +539,24 @@ pub enum RedirectClose {
 pub enum SsaInst {
     /// Compiler-only context, retained through folding and CFG rewrites.
     SourceOrigin(Option<usize>, bool),
+    /// Bookmark the scoped resources of one ERR-owned invocation.
+    AttemptStart {
+        failed: BlockId,
+        inputs: Vec<VarRef>,
+    },
+    AttemptEnd {
+        failed: bool,
+    },
+    /// Read actual global storage after an abandoned prefix, without copying it.
+    RecoverGlobal {
+        target: VarRef,
+        sources: Vec<VarRef>,
+    },
     /// Begin a fresh source lifetime without allocating or retaining old taint.
-    LifetimeStart { target: VarRef, collection: bool },
+    LifetimeStart {
+        target: VarRef,
+        collection: bool,
+    },
     /// Consume a private batch: publish it, or atomically append it to an existing array.
     CollectionPublish {
         target: VarRef,
@@ -548,7 +564,10 @@ pub enum SsaInst {
         append_to: Option<VarRef>,
     },
     /// x_n = value
-    Assign { target: VarRef, value: SsaValue },
+    Assign {
+        target: VarRef,
+        value: SsaValue,
+    },
     /// A command (no variable defined)
     Command {
         name: String,
@@ -587,7 +606,10 @@ pub enum SsaInst {
         is_integer_key: bool,
     },
     /// arr+=(val) — append to indexed array
-    ArrayAppend { array: String, value: SsaValue },
+    ArrayAppend {
+        array: String,
+        value: SsaValue,
+    },
     /// DD#99: `map m = @{a:DISP}` — fill a map from an array, consumed
     /// PAIRWISE. `mode` is the odd-count disposition: 0 `:-KEY` (the trailing
     /// element becomes the value of `key`), 1 `:?` (abort), 2 `:~`/`:!`
@@ -609,7 +631,10 @@ pub enum SsaInst {
     /// DD#99: `read $SRC ARRAY` — split a scalar VALUE on NUL into an
     /// indexed array. The stdin form is `ReadArray`; this is the same split
     /// with the bytes coming from a value rather than a fd.
-    SplitValue { source: SsaValue, target: VarRef },
+    SplitValue {
+        source: SsaValue,
+        target: VarRef,
+    },
     /// DD#99 `read ARRAY`: slurp `fd` and split it on NUL into an indexed
     /// array. NUL is the only separator — there is no delimiter flag.
     ///
@@ -640,7 +665,10 @@ pub enum SsaInst {
     /// DD#60: `argv [N] a` — fill `array` with the program argv slice
     /// argv[start..argc] (0-indexed). Auto-declares and taints the array
     /// (a bulk-read source, like `read`; DD#61).
-    ArgvFill { target: VarRef, start: i64 },
+    ArgvFill {
+        target: VarRef,
+        start: i64,
+    },
     /// DD#75 §3: `keys m k` — snapshot map `source`'s string keys into the
     /// indexed array `target`. Auto-declares the array, exactly as `ArgvFill`
     /// does.
@@ -655,7 +683,10 @@ pub enum SsaInst {
     /// `source` is a bare name rather than a `VarRef` because codegen resolves
     /// a collection by name (`find_array_slot`), as every other
     /// collection-operand instruction here does.
-    KeysFill { source: String, target: VarRef },
+    KeysFill {
+        source: String,
+        target: VarRef,
+    },
     /// DD#131: fill a private clean batch; success is independent of population.
     GlobFill {
         target: VarRef,
@@ -678,7 +709,10 @@ pub enum SsaInst {
     /// (`capture_purity`), the output is collected in a userspace
     /// buffer and no kernel object is created at all. Otherwise stdout is
     /// pointed at a memfd, as before.
-    CaptureStart { site: u32, buffered: bool },
+    CaptureStart {
+        site: u32,
+        buffered: bool,
+    },
     /// End capturing, assign captured output to target. `site` matches the
     /// paired `CaptureStart`. DD#127: draining a kernel object introduces
     /// taint; returning the compiler-owned buffer does not.
@@ -784,7 +818,10 @@ pub enum SsaInst {
     /// condition block has already evaluated exactly once. A compile-time
     /// relabelling: the target is a clean SSA version of the same runtime
     /// value, and the retag validates nothing itself.
-    AttestRetag { target: VarRef, source: VarRef },
+    AttestRetag {
+        target: VarRef,
+        source: VarRef,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1072,6 +1109,9 @@ impl SsaInst {
             // Taint propagates at definitions rather than escaping. Attest
             // retags preserve an already checked value and are not data reads.
             SsaInst::Assign { .. }
+            | SsaInst::AttemptStart { .. }
+            | SsaInst::AttemptEnd { .. }
+            | SsaInst::RecoverGlobal { .. }
             | SsaInst::Attest { .. }
             | SsaInst::AttestAll { .. }
             | SsaInst::AttestRetag { .. }
@@ -1148,6 +1188,7 @@ impl SsaInst {
 pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
     match inst {
         SsaInst::Assign { target, .. }
+        | SsaInst::RecoverGlobal { target, .. }
         | SsaInst::LifetimeStart { target, .. }
         | SsaInst::CollectionPublish { target, .. }
         | SsaInst::ReadLine { target, .. }
@@ -1162,6 +1203,8 @@ pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
         | SsaInst::AttestRetag { target, .. } => Some(target),
         SsaInst::Pipeline { capture, .. } => capture.target(),
         SsaInst::Command { .. }
+        | SsaInst::AttemptStart { .. }
+        | SsaInst::AttemptEnd { .. }
         | SsaInst::Test(..)
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
@@ -1202,6 +1245,9 @@ pub(crate) fn instruction_write(inst: &SsaInst) -> Option<&str> {
         | SsaInst::MapFromArray { .. }
         | SsaInst::Pipeline { .. } => instruction_target(inst).map(|target| target.name.as_str()),
         SsaInst::Attest { .. }
+        | SsaInst::RecoverGlobal { .. }
+        | SsaInst::AttemptStart { .. }
+        | SsaInst::AttemptEnd { .. }
         | SsaInst::AttestRetag { .. }
         | SsaInst::AttestAll { .. }
         | SsaInst::Command { .. }
@@ -1864,6 +1910,37 @@ pub struct BasicBlock {
 }
 
 impl BasicBlock {
+    pub(crate) fn checked_failure_at(&self, index: usize) -> Option<BlockId> {
+        match self.terminator {
+            Terminator::Checked { failed, .. } if index + 1 == self.insts.len() => Some(failed),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn checked_edge_state<'a, T>(
+        &self,
+        next: BlockId,
+        normal: &'a T,
+        failure: Option<&'a T>,
+    ) -> &'a T {
+        if matches!(self.terminator, Terminator::Checked { failed, .. } if failed == next) {
+            failure.expect("a checked block records its failure prefix")
+        } else {
+            normal
+        }
+    }
+
+    pub(crate) fn replace_phi_predecessor(&mut self, from: BlockId, to: BlockId) {
+        for (source, _) in self
+            .phis
+            .iter_mut()
+            .flat_map(|phi| &mut phi.sources)
+            .filter(|(source, _)| *source == from)
+        {
+            *source = to;
+        }
+    }
+
     pub(crate) fn last_operation(&self) -> Option<&SsaInst> {
         self.insts
             .iter()
@@ -1884,6 +1961,13 @@ pub(crate) struct SourceOrigin {
 pub enum Terminator {
     /// Fall through to the next block.
     Goto(BlockId),
+    /// The final instruction's exceptional edge. Guards branch at the failure
+    /// site; a lifted status primitive checks its result here instead.
+    Checked {
+        normal: Option<BlockId>,
+        failed: BlockId,
+        check_status: bool,
+    },
     /// Conditional branch: if condition then goto true_block else goto false_block.
     Branch {
         condition: String,
@@ -1991,7 +2075,11 @@ pub(crate) fn sets_condition_status(inst: &SsaInst) -> bool {
         // DD#74: `return N` is `Assign(?, N)`, and both backends keep the test
         // result in step with `$?`.
         SsaInst::Assign { target, .. } => target.name == "?",
+        SsaInst::AttemptEnd { failed: true } => true,
         SsaInst::SubscriptAssign { .. }
+        | SsaInst::AttemptStart { .. }
+        | SsaInst::AttemptEnd { failed: false }
+        | SsaInst::RecoverGlobal { .. }
         | SsaInst::ArrayAppend { .. }
         | SsaInst::MapFromArray { .. }
         | SsaInst::LifetimeStart { .. }
@@ -2082,7 +2170,7 @@ impl Terminator {
                 exit_block,
                 ..
             } => (*body_block, *exit_block),
-            Self::Goto(_) | Self::Fork { .. } => return vec![None],
+            Self::Goto(_) | Self::Fork { .. } | Self::Checked { .. } => return vec![None],
             Self::Return | Self::ChildExit => return Vec::new(),
         };
         [(yes, true), (no, false)]
@@ -2098,6 +2186,9 @@ impl Terminator {
     pub(crate) fn successors(&self) -> Vec<BlockId> {
         match self {
             Terminator::Goto(dest) => vec![*dest],
+            Terminator::Checked { normal, failed, .. } => {
+                normal.iter().copied().chain([*failed]).collect()
+            }
             Terminator::Branch {
                 true_block,
                 false_block,
@@ -2118,6 +2209,7 @@ impl Terminator {
         match self {
             Terminator::Fork { child, .. } => Some(*child),
             Terminator::Goto(_)
+            | Terminator::Checked { .. }
             | Terminator::Branch { .. }
             | Terminator::Loop { .. }
             | Terminator::Return
@@ -2488,10 +2580,17 @@ pub(crate) enum ExitSummary {
     Returns(Vec<String>),
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct LoopJump {
+    pub predecessor: BlockId,
+    pub versions: HashMap<String, u32>,
+}
+
 /// Variable versioning state — tracks the current version of each
 /// variable during SSA construction.
 #[derive(Debug, Clone)]
 pub struct VersionState {
+    pub(crate) attempt_calls: std::collections::HashSet<crate::ir::Span>,
     /// Current version for each variable name (reset on restore).
     current: HashMap<String, u32>,
     /// High-water mark — the next version to assign (never rolls back).
@@ -2518,6 +2617,7 @@ pub struct VersionState {
     pub readonly_vars: std::collections::HashSet<String>,
     /// Loop context stack: (header_block, exit_block) for break/continue.
     pub loop_stack: Vec<(usize, usize)>,
+    pub(crate) loop_jumps: HashMap<BlockId, Vec<LoopJump>>,
     /// Return target block for `return` in inlined functions.
     pub return_target: Option<usize>,
     /// DD#55: the exits of each function definition in force — the last one
@@ -2676,6 +2776,7 @@ impl VersionState {
     pub fn with_types(type_map: HashMap<String, crate::ir::VarType>) -> Self {
         let reserved_names = type_map.keys().cloned().collect();
         Self {
+            attempt_calls: std::collections::HashSet::new(),
             current: HashMap::new(),
             counter: HashMap::new(),
             taint_predecessors: HashMap::new(),
@@ -2698,6 +2799,7 @@ impl VersionState {
             collections: std::collections::HashSet::new(),
             readonly_vars: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
+            loop_jumps: HashMap::new(),
             return_target: None,
             exiting_signals: std::collections::HashSet::new(),
             diagnostics: Vec::new(),
@@ -2853,6 +2955,14 @@ impl VersionState {
     /// never repeat across branches.
     pub fn restore(&mut self, snap: &HashMap<String, u32>) {
         self.current = snap.clone();
+    }
+
+    pub(crate) fn record_loop_jump(&mut self, target: BlockId, source: BlockId) {
+        let versions = self.snapshot();
+        self.loop_jumps.entry(target).or_default().push(LoopJump {
+            predecessor: source,
+            versions,
+        });
     }
 
     /// DD#55: the class of the function a call of `name` lowered here runs —

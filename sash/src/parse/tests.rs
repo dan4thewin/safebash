@@ -258,6 +258,7 @@ mod logos_equivalence {
 
         let span = Span::new(1, 1);
         let kind = StmtKind::Command(Command {
+            best_effort: false,
             name: Expr {
                 kind: ExprKind::Literal("echo".to_string()),
                 span,

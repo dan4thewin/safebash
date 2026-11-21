@@ -705,6 +705,7 @@ mod shadowed_arm_tests {
 
     fn cmd(kind: ExprKind) -> Command {
         Command {
+            best_effort: false,
             name: Expr {
                 kind,
                 span: Span::new(1, 1),

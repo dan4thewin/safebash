@@ -534,6 +534,9 @@ fn convert_command(
     }
 
     match name {
+        ":" => {
+            return convert_noop(node, source, patches, prefix_lines, annotate, collections);
+        }
         // Mechanical: let → (( ))
         "let" => {
             let original = node_text(node, source).to_string();
@@ -674,6 +677,52 @@ fn convert_command(
         _ => {}
     }
     false
+}
+
+fn convert_noop(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+    annotate: bool,
+    collections: &Names,
+) -> bool {
+    let mut cursor = node.walk();
+    let args: Vec<_> = node
+        .children_by_field_name("argument", &mut cursor)
+        .collect();
+    if args.is_empty() {
+        return false;
+    }
+    let redirected = node
+        .parent()
+        .is_some_and(|p| p.kind() == "redirected_statement");
+    let background = node.next_sibling().is_some_and(|n| n.kind() == "&");
+    let environment = node
+        .named_children(&mut cursor)
+        .any(|n| n.kind() == "variable_assignment");
+    if status_is_consumed(node) || redirected || background || environment {
+        prefix_lines.push((
+            node.start_position().row,
+            "# MANUAL: ':' operands are value disposal, not ERR attempts; use `_=` \
+             or `array _=(...)` inside the original control/process boundary"
+                .into(),
+        ));
+        return false;
+    }
+    let mut parts = Vec::new();
+    for arg in args {
+        let value = render_subtree(arg, source, prefix_lines, annotate, collections);
+        // Separate sinks retain heterogeneous argument kinds and splat arity.
+        parts.push(format!("array _=({value})"));
+    }
+    parts.push(":".into());
+    patches.push(Patch::replace_node(
+        node,
+        parts.join("; "),
+        Some(node_text(node, source).to_string()),
+    ));
+    true
 }
 
 // ── DD#99: the read family ────────────────────────────────────
@@ -2424,6 +2473,7 @@ fn convert_bracket_splat(
         .is_some_and(|p| p.kind() == "command" || p.kind() == "for_statement");
     let quoted_join = target.id() != node.id() && kind == '*';
     let in_for = for_in_header_loop(node).is_some();
+    let discarded = whole_arg && enclosing_command_name(node, source) == Some(":");
     let line = node.start_position().row;
 
     if kind == '!' {
@@ -2459,7 +2509,7 @@ fn convert_bracket_splat(
     // `"${a[*]}"` is the joined string even in a for-in header — it is one
     // word, so the loop runs once. `${a[@]}` and unquoted `${a[*]}` are the
     // elements.
-    if in_for && !quoted_join {
+    if (in_for || discarded) && !quoted_join {
         patches.push(Patch::replace_node(target, format!("@{name}"), None));
         return;
     }

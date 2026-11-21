@@ -14,10 +14,10 @@ status: implemented
 4. Every unary filename test returns false on interior NUL before filesystem
    lookup. `-nt`, `-ot` and `-ef` return false if either operand contains NUL,
    before lookup or missing-file comparison rules.
-5. An ERR argv use requires NUL-freedom from existing value facts or a proof
-   for that exact value on every reaching path. False `0?`, or true `i?`,
-   `p?`, `g?` or filename tests, can supply that proof. Ordinary tests do not
-   grant taint clearance; runtime argv guards remain.
+5. False `0?`, or true `i?`, `p?`, `g?` or filename tests, establishes
+   NUL-freedom for the tested value, not taint clearance. The provisional
+   DD136 trial retires mandatory static ERR NUL proofs; runtime argv guards
+   remain terminal, including inside an attempted call.
 6. Zero-argument `$(mkdtemp)` atomically creates a new owner-only directory
    under fixed `/tmp`, retries name collisions and returns its absolute
    pathname directly as a clean, NUL-free string. Ignore `TMPDIR`; do not
@@ -42,6 +42,9 @@ Readonly ERR imports and predicate-derived ERR proofs are also implemented
 ([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
 The direct `mkdtemp` constructor and tour cleanup migration complete the
 package ([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)).
+The provisional [DD136 trial](DD136-err-call-attempts.md) retires only the
+mandatory ERR NUL-proof component, together with SB5101. Readonly imports,
+counted predicates, filename guards and the constructor remain implemented.
 
 ## Readonly at the ERR boundary
 
@@ -111,9 +114,9 @@ stability, pathname ownership or a later operation's success. In particular,
 successful `-d` is not protection against a filesystem change between the
 test and a later command.
 
-## Local proof at the ERR use
+## Historical static proof at the ERR use
 
-The existing ERR walk already tracks `may_nul` independently of taint.
+Before DD136, the ERR walk tracked `may_nul` independently of taint.
 Literals and known NUL-free producers need no new predicate. For an
 otherwise-unproved argv value, ask whether the necessary predicate outcome
 holds at that use, on every path that reaches it.
@@ -126,7 +129,7 @@ only one predecessor. Readonly imports remove their mutation invalidation
 problem; they do not remove these path obligations. A successful main-path
 test cannot stand in for a test after ERR's independent entry.
 
-For an inherited, potentially tainted `work`, the intended cleanup shape is:
+An explicit guard remains useful for an inherited, potentially tainted `work`:
 
 ```sash
 if [[ -d ${work:!} ]] {
@@ -136,15 +139,15 @@ if [[ -d ${work:!} ]] {
 
 The first forced read permits inspection; the second permits passing the
 data. The successful `-d` supplies only NUL-freedom for the stable value.
-The command's own failure is still explicitly handled. No inherited attest,
-blanket SB5101 exemption or NUL-guard suppression is involved.
+The command's own failure is explicitly handled. No inherited attest or
+NUL-guard suppression is involved.
 
-Keep this demand-driven check local to `terminal::check_err`. Existing
-value facts are the fast path; query path evidence only for uses they cannot
-already justify. Do not introduce a compiler-wide refinement pass or globally
-clear a binding's `may_nul` after seeing a predicate. Keep the runtime guard
-at external argv construction. Other uncatchable operational failures remain
-subject to DD128/DD130 and their existing backlog.
+The original implementation kept its demand-driven query local to
+`terminal::check_err`, using existing value facts as the fast path. DD136
+removes that query rather than promoting it to a compiler-wide refinement
+pass. An unguarded ERR argv operation may now compile but terminates ERR
+if the runtime NUL guard fails. Other unconditional failures remain subject
+to DD128/DD130 and their existing backlog.
 
 ## A generated temporary-directory value
 
@@ -172,7 +175,8 @@ The value occupies its own direct capture under DD111. No argument/template
 form, arbitrary statement-position use or typed declaration condition is
 added. Conditions, negation, status reads and discarded-result restrictions
 retain DD55/DD88's existing rules. In ERR the destination must also be
-writable under the import restriction, and creation failure must be handled.
+writable under the import restriction. Under DD136, an unchecked creation
+failure abandons an eligible attempt or terminates ERR.
 
 Failure to use `/tmp` is an error, not permission to choose `$TMPDIR`, the
 current directory or another fallback. Apply DD130 to the actual cause and
@@ -192,8 +196,8 @@ predicate-derived NUL proof.
   complete; the predicate and all three shared filename boundaries enforce
   the counted-byte contract in both backends.
 - [Readonly ERR inputs and NUL proofs](../tasks/err-readonly-inputs-and-nul-proofs.md):
-  complete; SB5102 rejects inherited logical writes, and the localized
-  SB5101 query checks the actual value and every reaching path.
+  the original delivery is complete. SB5102 still rejects inherited logical
+  writes; the DD136 trial retires its localized SB5101 proof query.
 - [mkdtemp value intrinsic](../tasks/mkdtemp-value-intrinsic.md):
   complete; native and C share exclusive creation and direct value/status
   handling, with independent clean provenance and NUL-free byte facts.

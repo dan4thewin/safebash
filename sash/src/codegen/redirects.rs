@@ -311,9 +311,12 @@ pub(super) fn emit_discard_saved(
     module: &mut ObjectModule,
     externs: &ExternFuncs,
 ) {
-    let close_ref = module.declare_func_in_func(externs.close, builder.func);
+    let discard = module.declare_func_in_func(externs.discard_fd_backup, builder.func);
     for s in saved {
-        builder.ins().call(close_ref, &[s.saved_copy]);
+        let fd = builder
+            .ins()
+            .iconst(cranelift_codegen::ir::types::I64, s.original_fd);
+        builder.ins().call(discard, &[s.saved_copy, fd]);
     }
 }
 

@@ -455,7 +455,11 @@ pub fn cli_main(args: Vec<String>) {
     check_terminal_or_exit(input, &bound, &ssa, &taint_analysis, &parsed.flags, &names);
 
     // DD#86: more-specific semantic/type/transform errors win over SB5050.
-    reject_bound_diagnostics(input, &names, validate::check_dead_variables(&bound));
+    reject_bound_diagnostics(
+        input,
+        &names,
+        validate::check_dead_variables(&bound, &names),
+    );
 
     if maybe_emit_alt_output(input, &parsed.flags, &program, &ssa) {
         return;
@@ -630,6 +634,11 @@ fn run_structural_checks(input: &str, program: &crate::ir::Program) {
         print_diags(input, &vdiags);
         std::process::exit(1);
     }
+    let discards = validate::check_discard_reads(program);
+    if !discards.is_empty() {
+        print_diags(input, &discards);
+        std::process::exit(1);
+    }
 }
 
 /// DD#82: `--no-taint-cst` (and the stronger `--no-taint`) disable the CST
@@ -731,7 +740,6 @@ fn run_semantic_checks(
         validate::ReservedScope::CommandTargets,
     ));
     tdiags.extend(validate::check_loop_control_context(program));
-    tdiags.extend(validate::check_discard_reads(program));
     tdiags.extend(validate::check_readline_arity(program));
     tdiags.extend(validate::check_match_arity(program));
     tdiags.extend(validate::check_argv_form(program));

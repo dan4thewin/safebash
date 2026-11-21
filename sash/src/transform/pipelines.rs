@@ -1,7 +1,7 @@
 //! Pipeline and for-loop variant lowering.
 
 use super::expressions::expr_to_value;
-use super::helpers::{insert_phis_two_branch, update_loop_phi_sources};
+use super::helpers::{insert_phis_two_branch, merge_loop_jumps, update_loop_phi_sources};
 use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
@@ -84,6 +84,7 @@ pub(super) fn lower_for_array(
 
     ssa.block_mut(block).terminator = Terminator::Goto(header);
     let pre_state = state.snapshot();
+    let pre_jumps = state.loop_jumps.clone();
 
     // Condition: __ai < ${#arr[@]}, on the (( )) arith path (see
     // emit_for_bound) — synthesized loop bounds are arithmetic, not [[ ]]
@@ -129,6 +130,7 @@ pub(super) fn lower_for_array(
     let body_state_1 = state.snapshot();
 
     insert_phis_two_branch(state, ssa, header, block, &pre_state, latch, &body_state_1);
+    state.loop_jumps = pre_jumps;
 
     // --- Pass 2 ---
     ssa.block_mut(header).insts.clear();
@@ -143,6 +145,7 @@ pub(super) fn lower_for_array(
     };
 
     let idx_ref_2 = state.lookup(&idx_name);
+    let condition_state = state.snapshot();
     super::statements::restart_scratch(&f.variable, ssa, state, body_block);
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
@@ -154,6 +157,8 @@ pub(super) fn lower_for_array(
     let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);
     state.loop_stack.pop();
     ssa.block_mut(body_exit_2).terminator = Terminator::Goto(latch);
+    let versions = state.snapshot();
+    merge_loop_jumps(state, ssa, latch, body_exit_2, &versions);
 
     let idx_cur_2 = state.lookup(&idx_name);
     let idx_next_2 = state.define(&idx_name);
@@ -169,7 +174,8 @@ pub(super) fn lower_for_array(
     ssa.block_mut(latch).terminator = Terminator::Goto(header);
 
     let body_state_2 = state.snapshot();
-    update_loop_phi_sources(ssa, header, &body_state_2);
+    update_loop_phi_sources(ssa, header, latch, &body_state_2, &[]);
+    merge_loop_jumps(state, ssa, exit_block, header, &condition_state);
 
     exit_block
 }
@@ -215,6 +221,7 @@ pub(super) fn lower_for_argv_slice(
     ssa.block_mut(block).terminator = Terminator::Goto(header);
 
     let pre_state = state.snapshot();
+    let pre_jumps = state.loop_jumps.clone();
 
     // --- Pass 1: discover modified variables ---
     // Condition: __fi < __argc (C argc — includes the program name), on the
@@ -265,6 +272,7 @@ pub(super) fn lower_for_argv_slice(
 
     // Insert phis at header
     insert_phis_two_branch(state, ssa, header, block, &pre_state, latch, &body_state_1);
+    state.loop_jumps = pre_jumps;
 
     // --- Pass 2: re-lower with phi-merged versions ---
     ssa.block_mut(header).insts.clear();
@@ -281,6 +289,7 @@ pub(super) fn lower_for_argv_slice(
 
     // Re-assign loop variable from argv
     let idx_ref_2 = state.lookup(&idx_name);
+    let condition_state = state.snapshot();
     super::statements::restart_scratch(&f.variable, ssa, state, body_block);
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
@@ -293,6 +302,8 @@ pub(super) fn lower_for_argv_slice(
     let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);
     state.loop_stack.pop();
     ssa.block_mut(body_exit_2).terminator = Terminator::Goto(latch);
+    let versions = state.snapshot();
+    merge_loop_jumps(state, ssa, latch, body_exit_2, &versions);
 
     // Re-increment
     let idx_cur_2 = state.lookup(&idx_name);
@@ -310,7 +321,8 @@ pub(super) fn lower_for_argv_slice(
 
     // Update phi sources
     let body_state_2 = state.snapshot();
-    update_loop_phi_sources(ssa, header, &body_state_2);
+    update_loop_phi_sources(ssa, header, latch, &body_state_2, &[]);
+    merge_loop_jumps(state, ssa, exit_block, header, &condition_state);
 
     exit_block
 }

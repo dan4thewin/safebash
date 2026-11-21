@@ -54,6 +54,7 @@ struct Emit {
     /// there is caught by the if/while, so it must not abort. Mirrors native
     /// `ctx.in_condition`.
     in_condition: bool,
+    recovery: Option<BlockId>,
     /// DD#14: the forked pipeline stages, for their entry blocks and labels.
     compound_stages: crate::ssa::CompoundStages,
     readers: std::collections::BTreeMap<u32, crate::ssa::ReaderPipeline>,
@@ -70,6 +71,7 @@ impl Emit {
             has_exiting_signals: false,
             cur_block: 0,
             in_condition: false,
+            recovery: None,
             compound_stages: crate::ssa::CompoundStages::default(),
             readers: std::collections::BTreeMap::new(),
         }
@@ -323,6 +325,14 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     writeln!(out, "extern void sash_restore_fd(i64 saved, i64 fd);").unwrap();
+    writeln!(
+        out,
+        "extern void sash_discard_fd_backup(i64 saved, i64 fd);"
+    )
+    .unwrap();
+    writeln!(out, "extern void sash_attempt_begin(void);").unwrap();
+    writeln!(out, "extern void sash_attempt_end(void);").unwrap();
+    writeln!(out, "extern void sash_attempt_abandon(void);").unwrap();
     writeln!(out, "extern i64 sash_dup2(i64 src, i64 dst);").unwrap();
     writeln!(out, "extern i64 sash_close(i64 fd);").unwrap();
     writeln!(
@@ -582,7 +592,7 @@ fn collect_var_types(ssa: &SsaProgram) -> VarTypes {
     let mut types: VarTypes = HashMap::new();
     for block in ssa.blocks.values() {
         for inst in &block.insts {
-            collect_inst_var_types(inst, &mut types);
+            collect_inst_var_types(inst, ssa, &mut types);
         }
     }
     types
@@ -623,8 +633,12 @@ fn collect_publish_var_types(
     }
 }
 
-fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
+fn collect_inst_var_types(inst: &SsaInst, ssa: &SsaProgram, types: &mut VarTypes) {
     match inst {
+        SsaInst::RecoverGlobal { target, .. } => {
+            let physical = ssa.globals[&target.name].var_type();
+            types.insert((target.name.clone(), target.version), physical);
+        }
         SsaInst::CollectionPublish {
             target,
             source,
@@ -839,10 +853,12 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     let cond_idx = crate::ssa::condition_inst_index(block);
     for (i, inst) in block.insts.iter().enumerate() {
         e.in_condition = cond_idx == Some(i);
+        e.recovery = block.checked_failure_at(i);
         e.signal_deferred = block.signal_deferred.contains(&i);
         emit_inst(e, inst, types);
     }
     e.in_condition = false;
+    e.recovery = None;
     emit_terminator(e, &block.terminator);
 }
 
@@ -1046,6 +1062,14 @@ fn emit_attest_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         // this Attest inst, so this is always the hard-abort form.)
         SsaInst::Attest { source, test, .. } => {
             let val = lower_test_expr(e, test, types);
+            if let Some(target) = e.recovery {
+                writeln!(
+                    e.out,
+                    "    if (!({val})) {{ __exit_status = 1; goto _blk_{target}; }}"
+                )
+                .unwrap();
+                return true;
+            }
             let (vp, vl) = emit_var_value(e, source, types);
             let name = e.source_names.original(&source.name);
             writeln!(
@@ -1186,6 +1210,12 @@ fn emit_attest_bind(e: &mut Emit, is_map: bool, names: &[String], t: &str) {
 fn emit_attest_check(e: &mut Emit, if_form: bool, val: &str, source: &VarRef, t: &str) {
     if if_form {
         writeln!(e.out, "        if (!({val})) {{ {t}_all = 0; break; }}").unwrap();
+    } else if let Some(target) = e.recovery {
+        writeln!(
+            e.out,
+            "        if (!({val})) {{ __exit_status = 1; goto _blk_{target}; }}"
+        )
+        .unwrap();
     } else {
         let name = e.source_names.original(&source.name);
         writeln!(
@@ -1233,7 +1263,16 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         return;
     }
     match inst {
-        SsaInst::SourceOrigin(..) => {}
+        SsaInst::SourceOrigin(..) | SsaInst::RecoverGlobal { .. } => {}
+        SsaInst::AttemptStart { .. } => {
+            writeln!(e.out, "    sash_attempt_begin();").unwrap();
+        }
+        SsaInst::AttemptEnd { failed: true } => {
+            writeln!(e.out, "    sash_attempt_abandon(); __test_result = 0;").unwrap();
+        }
+        SsaInst::AttemptEnd { failed: false } => {
+            writeln!(e.out, "    sash_attempt_end();").unwrap();
+        }
         SsaInst::LifetimeStart { target, collection } => {
             emit_lifetime_start(e, target, *collection, types);
         }
@@ -2009,15 +2048,11 @@ fn emit_cd_c(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
     )
     .unwrap();
     if checked {
-        writeln!(
-            e.out,
-            "    if ({t}_r < 0) {{ sash_emsg(\"cd\", 2, {ptr}, {len}); goto {abort}; }}",
-            t = t,
-            ptr = ptr,
-            len = len,
-            abort = ABORT_LABEL
-        )
-        .unwrap();
+        emit_checked_failure(
+            e,
+            &format!("{t}_r < 0"),
+            &format!("sash_emsg(\"cd\", 2, {ptr}, {len});"),
+        );
     }
 }
 
@@ -2062,15 +2097,9 @@ fn emit_builtin_extra(
 
 /// Background-job builtins split out of `emit_builtin_extra` (complexity gate):
 /// `$!` (StoreBgPid) and `wait`.
-fn emit_bg_builtin_c(
-    e: &mut Emit,
-    kind: &BuiltinCmd,
-    args: &[SsaValue],
-    checked: bool,
-    types: &VarTypes,
-) {
+fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
     match kind {
-        BuiltinCmd::StoreBgPid => emit_store_bg_pid_c(e, args, checked),
+        BuiltinCmd::StoreBgPid => emit_store_bg_pid_c(e, args),
         // DD#126 `wait [PID]`: reap a child (no argument, or a PID of 0 or
         // below, is any child) for its pid; the status goes to the latch
         // `$(waitstatus)` reads, never `$?`. Mirrors native emit_wait.
@@ -2079,26 +2108,23 @@ fn emit_bg_builtin_c(
     }
 }
 
-/// `$!` after `cmd &`: the Fork terminator left the child's pid in
-/// `__test_result`, and `$!` takes it either way. A negative pid (`-1`) is a
-/// fork that never started the job: `$!` reads `-1` rather than naming an
-/// earlier job (DD#126), and the statement fails the way a pipeline's fork
-/// does (`emit_pipeline_setup_failure`): status 1, and where checked the
-/// DD#55 diagnostic and abort. Mirrors native `emit_store_bg_pid`.
-fn emit_store_bg_pid_c(e: &mut Emit, args: &[SsaValue], checked: bool) {
+/// Publish only a successful fork's pid; failed forks terminate before
+/// allocation or publication. Mirrors native `emit_store_bg_pid`.
+fn emit_store_bg_pid_c(e: &mut Emit, args: &[SsaValue]) {
     let kind = BuiltinCmd::StoreBgPid;
     let [target] = kind.expect_ssa_args(args);
     let vr = kind.expect_var_arg(target);
     let base = c_var_name(&vr.name, vr.version);
-    let (p, l) = emit_itoa_temp(e, "__test_result");
-    writeln!(e.out, "    {base}_ptr = {p}; {base}_len = {l};").unwrap();
     writeln!(e.out, "    if (__test_result < 0) {{").unwrap();
     writeln!(e.out, "    __exit_status = 1; __test_result = 0;").unwrap();
-    if checked {
-        let abort = ABORT_LABEL;
-        writeln!(e.out, "    sash_emsg(\"fork\", 4, 0, 0); goto {abort};").unwrap();
-    }
+    writeln!(
+        e.out,
+        "    sash_emsg(\"fork\", 4, 0, 0); goto {ABORT_LABEL};"
+    )
+    .unwrap();
     writeln!(e.out, "    }}").unwrap();
+    let (p, l) = emit_itoa_temp(e, "__test_result");
+    writeln!(e.out, "    {base}_ptr = {p}; {base}_len = {l};").unwrap();
 }
 
 /// DD#126: the `- wait` statement. Reaps a child for the effect and drops the
@@ -2219,7 +2245,7 @@ fn emit_redirect_guarded_body(
     let in_condition = e.in_condition;
     writeln!(e.out, "    if ({failed}) {{", failed = failed).unwrap();
     writeln!(e.out, "        __exit_status = 1; __test_result = 0;").unwrap();
-    if !in_condition {
+    if !in_condition && e.recovery.is_none() {
         writeln!(
             e.out,
             "        sash_emsg({p}, {l}, 0, 0);",
@@ -2260,7 +2286,7 @@ fn emit_command_body(
         // emit_negate_test_result). Was an unimplemented TODO, breaking `! f`.
         BuiltinCmd::NegateTestResult => {
             writeln!(e.out, "    __test_result = 1 - __test_result;").unwrap();
-            writeln!(e.out, "    __exit_status = (__exit_status == 0) ? 1 : 0;").unwrap();
+            writeln!(e.out, "    __exit_status = 1 - __test_result;").unwrap();
         }
         // Capture-condition (`if x=$(cmd)`): sync the branch truth value from
         // $? after the suppressed capture (mirrors native emit_set_test_from_status).
@@ -2289,9 +2315,7 @@ fn emit_command_body(
         BuiltinCmd::Match | BuiltinCmd::Cd | BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => {
             emit_builtin_extra(e, name, kind, args, checked, types)
         }
-        BuiltinCmd::StoreBgPid | BuiltinCmd::Wait => {
-            emit_bg_builtin_c(e, kind, args, checked, types)
-        }
+        BuiltinCmd::StoreBgPid | BuiltinCmd::Wait => emit_bg_builtin_c(e, kind, args, types),
 
         // ── never reaches command position ────────────────────────────
         //
@@ -2402,16 +2426,27 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
         // placement native uses in emit_status_abort_check. Without this the c
         // backend produced the right exit status and the child's errno line but
         // never the parent's `command failed (exit N)` (spec 55.30).
-        let abort = ABORT_LABEL;
         let esc = c_escape(name);
-        writeln!(
-            e.out,
-            "    if (__exit_status != 0) {{ sash_emsg_status(\"{esc}\", {}, __exit_status); goto {abort}; }}",
-            name.len()
-        )
-        .unwrap();
+        emit_checked_failure(
+            e,
+            "__exit_status != 0",
+            &format!(
+                "sash_emsg_status(\"{esc}\", {}, __exit_status);",
+                name.len()
+            ),
+        );
     }
     emit_signal_exit_check(e, e.signal_deferred);
+}
+
+fn emit_checked_failure(e: &mut Emit, condition: &str, diagnostic: &str) {
+    writeln!(e.out, "    if ({condition}) {{").unwrap();
+    if let Some(target) = e.recovery {
+        writeln!(e.out, "        goto _blk_{target};").unwrap();
+    } else {
+        writeln!(e.out, "        {diagnostic} goto {ABORT_LABEL};").unwrap();
+    }
+    writeln!(e.out, "    }}").unwrap();
 }
 
 /// `unset m[key]` — delete one entry. The transform emits this as the internal
@@ -2460,12 +2495,11 @@ fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, _types: &V
     // literal, so there is always a spelling to quote; the wildcard that stood
     // here handed the diagnostic a null segment, as native's did.
     let (p2, l2) = (format!("\"{}\"", c_escape(lit)), lit.len().to_string());
-    writeln!(
-        e.out,
-        "    if ({t}_r < 0) {{ sash_emsg(\"close\", 5, {p2}, {l2}); goto {abort}; }}",
-        abort = ABORT_LABEL
-    )
-    .unwrap();
+    emit_checked_failure(
+        e,
+        &format!("{t}_r < 0"),
+        &format!("sash_emsg(\"close\", 5, {p2}, {l2});"),
+    );
 }
 
 /// DD#14 `exec`. Mirrors native `emit_exec` (dispatch.rs:425), which splits on
@@ -2531,7 +2565,10 @@ fn emit_signal_exit_check(e: &mut Emit, deferred: bool) {
 
 /// Transfer after an uncaught redirect failure has been reported.
 fn emit_open_failure_goto(e: &mut Emit) {
-    writeln!(e.out, "        goto {ABORT_LABEL};").unwrap();
+    let target = e
+        .recovery
+        .map_or_else(|| ABORT_LABEL.to_string(), |id| format!("_blk_{id}"));
+    writeln!(e.out, "        goto {target};").unwrap();
 }
 
 /// Build a NUL-terminated `<tN>_argv` for `[name, args…]`, expanding any
@@ -2672,11 +2709,9 @@ fn cache_splat_tables_c(
     splat_lens
 }
 
-/// `:` evaluates its arguments for their effects and discards the values;
-/// the C twin of the native `commands::evaluate_args_for_effects`. The order
-/// is [`emit_argv_splat`]'s, splat dispositions first and then every other
-/// value left to right, but no argv is built, so there is no DD#99 NUL
-/// guard (an exec-boundary check) and no bump-heap argv.
+/// Evaluate retained SSA arguments without argv or an exec-boundary NUL guard.
+/// Mirrors native `commands::evaluate_args_for_effects`; DD136 source noops
+/// have no data operands, and `_=` uses normal assignment lowering.
 fn emit_args_for_effects(e: &mut Emit, args: &[SsaValue], types: &VarTypes, ind: &str) {
     let t = e.fresh();
     cache_splat_tables_c(e, ind, &t, args, types);
@@ -2811,13 +2846,11 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
     )
     .unwrap();
     if checked {
-        writeln!(
-            e.out,
-            "    if ({t}_wf) {{ sash_emsg(\"echo\", 4, \"write error\", 11); goto {abort}; }}",
-            t = t,
-            abort = ABORT_LABEL
-        )
-        .unwrap();
+        emit_checked_failure(
+            e,
+            &format!("{t}_wf"),
+            "sash_emsg(\"echo\", 4, \"write error\", 11);",
+        );
     }
 }
 
@@ -2863,6 +2896,16 @@ fn emit_terminator(e: &mut Emit, term: &Terminator) {
         }
         Terminator::Goto(b) => {
             writeln!(out, "    goto _blk_{};", b).unwrap();
+        }
+        Terminator::Checked {
+            normal,
+            failed,
+            check_status,
+        } => {
+            if *check_status {
+                writeln!(out, "    if (__exit_status) goto _blk_{failed};").unwrap();
+            }
+            writeln!(out, "    goto _blk_{};", normal.unwrap_or(*failed)).unwrap();
         }
         Terminator::Fork { parent, child } => {
             writeln!(
@@ -3897,7 +3940,12 @@ fn emit_restore(e: &mut Emit, saved: &[SavedFdC]) {
 
 fn emit_discard_saved(e: &mut Emit, saved: &[SavedFdC]) {
     for s in saved {
-        writeln!(e.out, "    sash_close({});", s.saved_var).unwrap();
+        writeln!(
+            e.out,
+            "    sash_discard_fd_backup({}, {});",
+            s.saved_var, s.original_fd
+        )
+        .unwrap();
     }
 }
 
@@ -3950,7 +3998,9 @@ fn emit_scope_open_failure(
     path_len: &str,
 ) {
     if checked {
-        writeln!(e.out, "        sash_emsg({path_ptr}, {path_len}, 0, 0);").unwrap();
+        if e.recovery.is_none() {
+            writeln!(e.out, "        sash_emsg({path_ptr}, {path_len}, 0, 0);").unwrap();
+        }
         emit_restore(e, saved);
         emit_open_failure_goto(e);
     }
@@ -4120,14 +4170,11 @@ fn emit_pipeline_finish(
     // diagnostic names the stage that actually failed, which `{p}_fail` carried
     // out of the first-nonzero fold in emit_pipeline_wait.
     if checked {
-        let abort = ABORT_LABEL;
-        writeln!(
-            e.out,
-            "    if (__exit_status != 0) {{ sash_emsg_status({p}_fail, {p}_fail_len, \
-             __exit_status); goto {abort}; }}",
-            p = p
-        )
-        .unwrap();
+        emit_checked_failure(
+            e,
+            "__exit_status != 0",
+            &format!("sash_emsg_status({p}_fail, {p}_fail_len, __exit_status);"),
+        );
     }
 }
 
@@ -4204,14 +4251,18 @@ fn emit_pipeline_setup_failure(
         writeln!(e.out, "    sash_wait({p}_pids[{i}]);").unwrap();
     }
     writeln!(e.out, "    __exit_status = 1; __test_result = 0;").unwrap();
-    if checked {
-        let abort = ABORT_LABEL;
+    if operation == "fork" {
         writeln!(
             e.out,
-            "    sash_emsg(\"{operation}\", {}, 0, 0); goto {abort};",
-            operation.len()
+            "    sash_emsg(\"fork\", 4, 0, 0); goto {ABORT_LABEL};"
         )
         .unwrap();
+    } else if checked {
+        emit_checked_failure(
+            e,
+            "1",
+            &format!("sash_emsg(\"{operation}\", {}, 0, 0);", operation.len()),
+        );
     } else {
         writeln!(e.out, "    goto {p}_done;").unwrap();
     }
@@ -4337,6 +4388,7 @@ fn emit_pipeline_stage(
     )
     .unwrap();
 
+    let parent_recovery = e.recovery.take();
     emit_stage_child_pipes(e, p, i, n, num_pipes, capture_read_fd, report_setup_failure);
 
     // Stage-level redirects (these go inside the child).
@@ -4378,6 +4430,7 @@ fn emit_pipeline_stage(
         },
     }
 
+    e.recovery = parent_recovery;
     writeln!(e.out, "    }}").unwrap();
 }
 
@@ -4751,11 +4804,7 @@ fn emit_guarded_body(
     types: &VarTypes,
     body: impl FnOnce(&mut Emit, &VarTypes),
 ) {
-    let (saved, failure) = if redirects.is_empty() {
-        (Vec::new(), None)
-    } else {
-        emit_redirects_guarded(e, redirects, types)
-    };
+    let (saved, failure) = emit_redirects_guarded(e, redirects, types);
     let Some((failed, path_ptr, path_len)) = failure else {
         body(e, types);
         return;
@@ -4763,7 +4812,7 @@ fn emit_guarded_body(
     let in_condition = e.in_condition;
     writeln!(e.out, "    if ({failed}) {{").unwrap();
     writeln!(e.out, "        __exit_status = 1; __test_result = 0;").unwrap();
-    if !in_condition {
+    if !in_condition && e.recovery.is_none() {
         writeln!(e.out, "        sash_emsg({path_ptr}, {path_len}, 0, 0);").unwrap();
     }
     emit_restore(e, &saved);
@@ -5130,13 +5179,7 @@ mod tests {
         );
         assert_ice(
             || {
-                emit_bg_builtin_c(
-                    &mut Emit::new(),
-                    &BuiltinCmd::Echo,
-                    &[],
-                    true,
-                    &HashMap::new(),
-                );
+                emit_bg_builtin_c(&mut Emit::new(), &BuiltinCmd::Echo, &[], &HashMap::new());
             },
             "emit_bg_builtin_c called with Echo",
         );

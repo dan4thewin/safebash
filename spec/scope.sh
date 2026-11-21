@@ -113,7 +113,7 @@ run_sash 'int n = 5
 
 # 86.16 `: $v` acknowledges a deliberately-unused write (DD#81 idiom) — a read
 run_sash 'int n = 5
-: $n
+_=$n
 /bin/echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 86.16
 

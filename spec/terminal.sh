@@ -1,5 +1,5 @@
 #!/bin/bash
-# DD#128 — checked EXIT and explicitly handled ERR.
+# DD128/DD136: checked handlers and terminal failures outside attempts.
 . common.sh
 plan=79
 setup terminal
@@ -7,7 +7,8 @@ setup terminal
 set +e
 
 run_sash 'fail 1; ERR { /bin/false }'
-[[ $err == *SB5101* && $err == *"uncaught command failure"* ]]; chk migratea.1
+[[ $rc = 1 && -z $err && -z $out &&
+   $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk errmig.1
 
 run_sash '
 fn bad {
@@ -15,28 +16,33 @@ fn bad {
 }
 fail 1
 ERR { bad }'
-[[ $err == *SB5101* && $err == *":6:7:"* && $err == *"at 3:5"* ]]; chk migratea.2
+[[ $rc = 1 && -z $err && -z $out &&
+   $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk errmig.2
 
 run_sash 'fail 1; ERR { /bin/false || /bin/false }'
-[[ $err == *SB5101* && $err == *"uncaught command failure"* ]]; chk migratea.3
+[[ $rc = 1 && -z $err && -z $out &&
+   $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk errmig.3
 
 run_sash '
 fn bad { cd /sash-dd128-nonexistent-directory }
 fail 1
 ERR { - echo "$(bad)" }'
-[[ $err == *SB5101* && $err == *'uncaught `cd` failure'* ]]; chk migratea.4
+[[ $rc = 1 && -z $err && -z $out &&
+   $rerr == *"cd: /sash-dd128-nonexistent-directory: No such file or directory"* ]]; chk errmig.4
 
 run_sash 'fail 1; ERR { if /bin/true >out { : } }'
-[[ $err == *SB5101* && $err == *"descriptor backup/restore"* ]]; chk migratea.5
+[[ $rc = 1 && -z $err && -z $out && -z $rerr && -f out ]]; chk errmig.5
 
 run_sash "fail 1; ERR { - /bin/echo \$'x\\x00y' }"
-[[ $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk migratea.6
+[[ $rc = 1 && -z $err && -z $out &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.6
 
 # A stage's argv guard is in the child; the parent handles its process status.
 run_sash "fail 1; ERR {
     if /bin/echo \$'x\\x00y' | /bin/cat { - echo unexpected } else { - echo caught }
 }"
-[[ $rc = 1 && $out = caught && $err != *SB5101* ]]; chk migratea.7
+[[ $rc = 1 && $out = caught && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk migratea.7
 
 DD128_VALUE=allowed run_sash '
 v=$(- getenv DD128_VALUE)
@@ -61,7 +67,7 @@ ERR {
     attest v [[ $v == allowed ]]
     - echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"uncaught attest failure"* ]]; chk migratea.10
+[[ $rc = 1 && $out = allowed && -z $err && -z $rerr ]]; chk errmig.7
 
 printf allowed >in
 run_sash '
@@ -71,7 +77,7 @@ ERR {
     attest v [[ $v == allowed ]] || v=replaced
     - echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"slurp"* ]]; chk migratea.11
+[[ $rc = 1 && $out = allowed && -z $err && -z $rerr ]]; chk errmig.8
 
 # A second fatal fault terminates; arithmetic itself is not banned in ERR.
 run_sash '
@@ -89,10 +95,10 @@ run_sash 'fail 1; ERR { str v=good; - echo "${v:?stop}" }'
 [[ $rc = 1 && $out = good && -z $err ]]; chk migratea.13
 
 run_sash 'v=good; fail 1; ERR { - echo "${v:?stop}" }'
-[[ $err == *SB5101* && $err == *'unhandled `:?` failure'* ]]; chk migratea.14
+[[ $rc = 1 && $out = good && -z $err && -z $rerr ]]; chk errmig.9
 
 run_sash 'fail 1; ERR { - /bin/true | - /bin/true }'
-[[ $err == *SB5101* && $err == *"pipeline construction"* ]]; chk migratea.15
+[[ $rc = 1 && -z $out && -z $err && -z $rerr ]]; chk errmig.10
 
 run_sash '
 fail 1
@@ -101,7 +107,7 @@ ERR {
     map values = @{pairs:?odd}
     - echo "${values[key]}"
 }'
-[[ $err == *SB5101* && $err == *"odd-length map conversion"* ]]; chk migratea.16
+[[ $rc = 1 && -z $out && -z $err && $rerr == *": odd" ]]; chk errmig.11
 
 # A single-use call owns the acquisition through the caller's adjacent attest.
 DD128_VALUE=bad run_sash '
@@ -271,7 +277,7 @@ EXIT {
 }'
 [[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.29
 
-# Collection mutations invalidate count and nonempty proofs in ERR.
+# Collection guards check the actual state after mutations.
 run_sash '
 fail 1
 ERR {
@@ -280,7 +286,7 @@ ERR {
    map m = @{a:?odd}
    - echo "${m[key]}"
 }'
-[[ $err == *SB5101* && $err == *"odd-length map conversion"* ]]; chk migratea.31
+[[ $rc = 1 && -z $out && -z $err && $rerr == *": odd" ]]; chk errmig.12
 
 run_sash '
 fail 1
@@ -289,7 +295,7 @@ ERR {
    unset a[0]
    - /bin/echo @{a:?empty}
 }'
-[[ $err == *SB5101* && $err == *"empty-splat"* ]]; chk migratea.32
+[[ $rc = 1 && -z $out && -z $err && $rerr == *": empty" ]]; chk errmig.13
 
 run_sash '
 fail 1
@@ -313,7 +319,8 @@ SASH_CFLAGS=--no-taint run_sash "fail 1; ERR {
    v=\$(arg 999 \$'x\\x00y')
    - /bin/echo \"\$v\"
 }"
-[[ $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk migratea.35
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argument contains a NUL byte"* ]]; chk errmig.14
 
 # Implicit argv iteration is bounded by the compiler's loop guard.
 run_sash '
@@ -621,25 +628,28 @@ run_sash 'fail 1; ERR {
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"invalid argument index"* ]]; chk lookup.60
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argv index out of range (requested -1,"* ]]; chk errmig.15
 
 run_sash 'fail 1; ERR {
     array a
-    read a
+    read a <in
     attest item in a [[ -n $item ]] || unset a
+    echo "$(join a)"
 }'
-[[ $err == *SB5101* && $err == *"bulk read"* ]]; chk migratea.50
+[[ $rc = 1 && $out = allowed && -z $err && -z $rerr ]]; chk errmig.16
 
 run_sash 'fn acquire { - /bin/true }
 fail 1
 ERR {
     v=$(acquire)
     attest v [[ $v == allowed ]] || v=clean
+    echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"descriptor capture"* ]]; chk migratea.51
+[[ $rc = 1 && $out = clean && -z $err && -z $rerr ]]; chk errmig.17
 
-run_sash 'fail 1; ERR { exec /bin/true }'
-[[ $err == *SB5101* && $err == *"replacing-exec"* ]]; chk migratea.52
+run_sash 'fail 1; ERR { exec /bin/true; echo wrong }'
+[[ $rc = 0 && -z $out && -z $err && -z $rerr ]]; chk errmig.18
 
 run_sash 'fail 1; ERR {
     array pairs=(key value)

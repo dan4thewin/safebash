@@ -177,7 +177,8 @@ SASH_CFLAGS=--no-taint-cst run_refusal \
 [[ $rc != 0 && $err == *'tainted variable p_'* ]]; chk mkd.23
 
 run_refusal 'ERR { str work=$(mkdtemp); - echo $work }; fail'
-[[ $rc != 0 && $err == *SB5101*'unhandled mkdtemp creation failure'* ]]; chk mkd.24
+[[ $rc = 1 && -z $err && -z $rerr && $out =~ ^/tmp/sash\.[0-9a-f]{32}$ &&
+   -d $out && $(grep -c '^mkdirat(.*= 0$' refusal.trace) = 1 ]]; chk errmig.41
 
 run_refusal 'str work=old
 ERR { if work=$(mkdtemp) { - echo $work } }

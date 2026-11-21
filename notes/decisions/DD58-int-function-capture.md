@@ -11,6 +11,9 @@ status: implemented
    statuses, predicates or direct pipeline stages.
 5. Capturing a value and discarding that same value is invalid. A stdout
    wrapper must discard the integer separately under ordinary body checks.
+6. In the provisional DD136 trial, an integer call cannot establish an ERR
+   attempt. It may run inside one; abandonment skips its consumers rather
+   than fabricating an integer result.
 
 ---
 
@@ -128,8 +131,12 @@ and exposes output; it is not an integer-to-string or integer-to-status cast.
 **Accepted, implementation pending** in
 `bug-int-capture-redirect-switches-kind` (journal 583). The old
 redirect-dependent switch to stdout is not an exception to this contract.
-DD#55's no-reach rule and DD130's failure classes remain: a failed setup
-cannot manufacture an integer zero or turn an absent return into success.
+DD#55's ordinary no-reach rule and DD130's failure classes remain: a failed
+setup cannot manufacture an integer zero or turn an absent return into
+success. In the provisional [DD136 trial](DD136-err-call-attempts.md), an
+integer helper may execute inside an ERR-owned void/status attempt, but
+cannot establish one itself. A recoverable abort abandons that whole call
+chain, including the unfinished integer expression.
 
 ## Integer return completeness
 

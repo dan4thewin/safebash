@@ -6,10 +6,12 @@ status: accepted
 2. Predicate consumers require status/boolean results, not void or integer
    values. An unconsumed final action in a logical-list statement is not a
    predicate. DD88 named-predicate captures bind stdout and consume the
-   function's explicit status without extending handling into its body.
+   function's explicit status; ordinary handling does not extend into its body.
 3. `return` forwards only compatible producer results, including legal
    composites and redirects; it cannot forward a discarded or nonexistent result.
-4. Producer handling does not catch operand/body failures or fatal faults.
+4. Ordinary producer handling does not catch operand/body failures or fatal
+   faults. The provisional DD136 trial gives ERR-owned caught status calls a
+   narrow full-call abandonment boundary, never a boundary inside a helper.
 5. Constant results are legal. Anonymous stdout bodies may return void, not
    explicit statuses; source `-` cannot prefix a return.
 
@@ -34,8 +36,17 @@ DD88 also admits an otherwise-legal stdout capture of a named predicate in
 those consuming contexts: `if text=$(f)` binds text and tests f's explicit
 returned status. The function runs once, in the same process, with ordinary
 body/operand checks and taint rules. Direct and redirected calls follow the
-same rule. This extension was accepted on 2026-11-12; implementation is
-pending in [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md).
+same rule. This extension was accepted on 2026-11-12 and is implemented
+on the DD136 trial branch, tracked in
+[`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md).
+
+Under provisional [DD136](DD136-err-call-attempts.md), an ERR-owned caught
+status call also recovers explicit `fail` and existing unchecked operational
+results from its complete attempted call chain. Normal returns still
+provide the ordinary status. An abnormal `fail 0` is false before authored
+negation, despite its numeric status; negation keeps its ordinary 0/1 update.
+Integer calls cannot establish attempts, and helper-local conditions do not
+establish nested ones. Ordinary calls outside ERR keep the no-reach rule.
 
 **Addendum (DG, 2026-09-07): the TAIL of an `&&`/`||` *statement* is not a
 boolean context.** A function is a predicate when something branches on its

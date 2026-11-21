@@ -61,19 +61,19 @@ run_sash 'array a=(hello); int i=0; echo ${a[$i]:!-fallback}'
 
 # The separate forced read keeps the old dead-variable fault from masking
 # the index-taint regression. Forcing a cell read never overrides its index's checks.
-run_sash 'array a=(hello); str i=$(- arg 1); : ${i:!}
+run_sash 'array a=(hello); str i=$(- arg 1); _=${i:!}
 echo ${a[$(( ${i:-0} ))]:!}' 0
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.13
 
-run_sash 'array a=(hello); str i=$(- arg 1); : ${i:!}
+run_sash 'array a=(hello); str i=$(- arg 1); _=${i:!}
 str z=${a[$(( ${i:-0} ))]:!}; echo "$z"' 0
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.14
 
-run_sash 'array a=(hello); str i=$(- arg 1); : ${i:!}
+run_sash 'array a=(hello); str i=$(- arg 1); _=${i:!}
 array b=(${a[$(( ${i:-0} ))]:!}); echo $(join b)' 0
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk ctrs.15
 
-run_sash 'map m=([k]=hello); str key=$(- arg 1); : ${key:!}
+run_sash 'map m=([k]=hello); str key=$(- arg 1); _=${key:!}
 echo ${m[$key]:!}' k
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.16
 
@@ -3392,7 +3392,7 @@ run_sash 'fn count -> int { /bin/echo side; return 7 }
 str x=$(echo "$(( (count) ))")
 attest x [[ -n $x ]]
 echo "$x"
-: $(( (count) ))'
+_=$(( (count) ))'
 [[ $rc != 0 && $err == *SB5100* && $err == *'`count` is shared'* ]]; chk outown.20
 
 run_sash 'str x=""
@@ -3440,7 +3440,7 @@ printf 'file\n' > input-own
 run_sash 'fn raw { /bin/echo hello }
 fn consume {
     readline ignored
-    : "${ignored:!}"
+    _="${ignored:!}"
     readline x <input-own
     attest x [[ $x == file ]]
     echo "$x"
@@ -3618,7 +3618,7 @@ echo "${x:!}"'
 [[ $rc != 0 && $err == *':2:10: error [SB5020]'* ]]; chk adjpolicy.6
 
 run_sash 'str x=clean
-for outer in a b { : "$outer"
+for outer in a b { _="$outer"
     for inner in c d {
         if [[ $inner == c ]] { x=$(/bin/echo dirty); break 2 }
         x=clean
@@ -3629,7 +3629,7 @@ echo "$x"'
 [[ $rc != 0 && $err == *':9:6: error [SB5020]'* ]]; chk loopflow.11
 
 run_sash 'str x=clean
-for outer in a b { : "$outer"
+for outer in a b { _="$outer"
     for inner in c d {
         if [[ $inner == c ]] { x=$(/bin/echo dirty); continue 2 }
         x=clean
@@ -3641,7 +3641,7 @@ echo "$x"'
 
 # SB5097 permits oversized positive literals; they still clamp outward.
 run_sash 'str x=clean
-for outer in a b { : "$outer"
+for outer in a b { _="$outer"
     for inner in c d {
         if [[ $inner == c ]] { x=$(/bin/echo dirty); break 999999999999999999999999999 }
         x=clean
@@ -3653,7 +3653,7 @@ echo "$x"'
 
 # The while condition belongs to its own loop, not the enclosing for.
 run_sash 'str x=clean
-for k in a b { : "$k"
+for k in a b { _="$k"
     while x=$(/bin/echo dirty); break { x=clean }
     attest x [[ $x == dirty ]]
     x=clean
@@ -3663,7 +3663,7 @@ echo "$x"'
 
 # Nested capture loops do not hide the enclosing body's later cleanup.
 run_sash 'str x=clean
-for k in a b { : "$k"
+for k in a b { _="$k"
     y=$(
         for j in c d {
             if [[ $j == c ]] { x=$(/bin/echo dirty); break }
@@ -3727,7 +3727,7 @@ echo "${x:!}"'
 
 # Quiet inner-loop probes keep the enclosing depth without exporting exits.
 run_sash 'str x=clean
-for outer in a b { : "$outer"
+for outer in a b { _="$outer"
     x=$(/bin/echo clean)
     attest x [[ $x == clean ]]
     for inner in c d {
@@ -3849,7 +3849,7 @@ attest x [[ $x == allowed ]] || x=$(- arg 2)' dirty other
 
 run_sash 'x=$(- arg 1)
 if attest x [[ $x == allowed ]] { : } else {
-  : $(x=safe; echo "$x")
+  _=$(x=safe; echo "$x")
   x=safe
 }' dirty
 [[ $rc != 0 && $err == *':3:20: error [SB5020]'* ]]; chk adjresolve.18

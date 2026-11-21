@@ -296,6 +296,19 @@ pub(super) fn inline_function_call(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    super::attempts::lower_call(c, ssa, state, block, |ssa, state, block| {
+        inline_function_body(name, body, c, ssa, state, block)
+    })
+}
+
+fn inline_function_body(
+    name: &str,
+    body: &[Statement],
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
     // DD#27/§5: recursion. Tail self-calls are handled before reaching here.
@@ -689,6 +702,7 @@ mod invariant_tests {
     #[should_panic(expected = "SB4062 validated the signal disposition")]
     fn handle_signal_rejects_an_unknown_disposition() {
         let c = Command {
+            best_effort: false,
             name: lit("signal"),
             args: vec![lit("15"), lit("BOGUS")],
         };
@@ -707,6 +721,7 @@ mod invariant_tests {
     #[should_panic(expected = "a malformed read must not disappear")]
     fn malformed_read_cannot_be_silently_dropped() {
         let c = Command {
+            best_effort: false,
             name: lit("read"),
             args: vec![],
         };
@@ -747,6 +762,7 @@ mod invariant_tests {
         state.current_args_name = "args_7".to_string();
         state.pending_redirect_scope = Some(vec![]);
         let c = Command {
+            best_effort: false,
             name: lit("f"),
             args: vec![],
         };

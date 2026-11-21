@@ -558,7 +558,7 @@ for x in safe { echo "$x" }' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.9
 
 run_sash 'x=$(- arg 1)
-attest x [[ $x == allowed ]] || : $(x=safe; echo fallback)
+attest x [[ $x == allowed ]] || _=$(x=safe; echo fallback)
 echo "$x"' dirty
 [[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.10
 

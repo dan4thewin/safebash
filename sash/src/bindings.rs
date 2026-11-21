@@ -85,6 +85,14 @@ impl Resolver {
         format!("{owner}_capture{id}")
     }
 
+    fn binder(&mut self, name: &mut String, scope: &Scope, owner: &str) {
+        if is_discard_binder(name) {
+            *name = self.local(owner, "_");
+        } else {
+            rename(name, scope);
+        }
+    }
+
     fn scope(&mut self, body: &mut [Statement], parent: &Scope, owner: &str) {
         let mut introduced = HashSet::new();
         crate::validate::collect_scope_names(body, &mut introduced);
@@ -113,14 +121,14 @@ impl Resolver {
                 return;
             }
             StmtKind::Assignment(a) => {
-                rename(&mut a.name, scope);
+                self.binder(&mut a.name, scope, owner);
                 self.optional_expr(a.index.as_mut(), scope, owner);
                 self.expr(&mut a.value, scope, owner);
             }
             StmtKind::Declaration(d) => self.declaration(d, scope, owner),
             StmtKind::Command(c) => self.command(c, scope, owner),
             StmtKind::For(f) => {
-                rename(&mut f.variable, scope);
+                self.binder(&mut f.variable, scope, owner);
                 self.exprs(&mut f.words, scope, owner);
             }
             StmtKind::Case(c) => {
@@ -155,7 +163,7 @@ impl Resolver {
 
     fn declaration(&mut self, d: &mut Declaration, scope: &Scope, owner: &str) {
         for a in &mut d.assignments {
-            rename(&mut a.name, scope);
+            self.binder(&mut a.name, scope, owner);
             self.optional_expr(a.value.as_mut(), scope, owner);
         }
     }
@@ -175,7 +183,13 @@ impl Resolver {
     fn command(&mut self, c: &mut Command, scope: &Scope, owner: &str) {
         let predicate_scope = self.predicate_scope(c, scope, owner);
         let scope = &predicate_scope;
-        rename_command_operands(c, scope, &self.functions);
+        let mut targets = HashSet::new();
+        crate::validate::command_bound_names(c, &mut targets);
+        let mut target_scope = scope.clone();
+        if targets.contains("_") && crate::type_check::expr_to_name(&c.name) != "attest" {
+            target_scope.insert("_".to_string(), self.local(owner, "_"));
+        }
+        rename_command_operands(c, &target_scope, &self.functions);
         self.expr(&mut c.name, scope, owner);
         self.exprs(&mut c.args, scope, owner);
     }
@@ -265,7 +279,7 @@ impl Resolver {
             | ArithExpr::PostIncDec { var: name, .. }
             | ArithExpr::PreIncDec { var: name, .. } => rename(name, scope),
             ArithExpr::Assign { var, value } | ArithExpr::CompoundAssign { var, value, .. } => {
-                rename(var, scope);
+                self.binder(var, scope, owner);
                 self.arith(value, scope, owner);
             }
             ArithExpr::Subscript { name, index } => {
