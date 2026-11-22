@@ -1125,14 +1125,14 @@ pub unsafe extern "C" fn sash_argv_snapshot(start: i64) -> *mut SashTable {
 /// the map's `i`th live entry, so the snapshot is in the same insertion order
 /// `$(keys m)` iterates and `sash_table_key` reports.
 ///
-/// Both the keys and the values of the result are heap-copied by
-/// `sash_table_set`, so the array outlives any later `unset`/overwrite of the
-/// source map. That is the point of a *snapshot*: `$(keys m)` iterates the
-/// live map, this does not.
+/// Snapshot indices are heap-copied; values borrow the source's immutable
+/// key bytes, which `unset`/clear/overwrite do not free. Direct `$(keys m)`
+/// loops use this snapshot for mutable maps; immutable sources can instead
+/// be traversed without copying.
 ///
 /// `sash_table_key` is itself O(live entries), so this is O(n²) in the map
-/// size — the same cost the `$(keys m)` for-in loop already pays per
-/// iteration, and not a new one.
+/// size. Snapshotting also allocates table and element storage on every
+/// loop entry.
 #[no_mangle]
 pub unsafe extern "C" fn sash_keys_snapshot(src: *const SashTable) -> *mut SashTable {
     let n = sash_table_len(src);

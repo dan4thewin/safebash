@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=153
+plan=189
 echo "1..$plan" >&3
 
 set +e
@@ -1047,6 +1047,293 @@ str key=$(- getenv SUBSCRIPT_INDEX)
 (( a[${key:-0}] += 1 ))
 echo $a[0]'
 [[ $rc != 0 && -z $out && $(grep -cF '[SB5020]' <<< "$err") = 1 ]]; chk subonce.12
+
+# DD75: direct key loops snapshot once, independently of later map mutations.
+run_sash 'map m=([alpha]=A [beta]=B [gamma]=C)
+for k in $(keys m) {
+  echo $k
+  if [[ $k == alpha ]] { unset m[alpha] }
+  if [[ $k == gamma ]] { unset m[beta] }
+}
+echo survivors
+for k in $(keys m) { echo $k }'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'alpha\nbeta\ngamma\nsurvivors\ngamma' ]]; chk iterdel.1
+
+run_sash 'map m=([alpha]=A [beta]=B [gamma]=C)
+for k in $(keys m) {
+  if [[ $k == alpha ]] { unset m[beta]; m[gamma]=changed }
+  echo "$k=${m[$k]}"
+  if [[ $k == beta ]] { unset m }
+}
+echo remaining=$(len m)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'alpha=A\nbeta=\ngamma=\nremaining=0' ]]; chk iterdel.2
+
+run_sash 'map m=([alpha]=A [beta]=B [gamma]=C)
+for k in $(keys m) {
+  echo $k
+  if [[ $k == alpha ]] {
+    unset m[alpha]
+    m[alpha]=reinserted
+    for added in d e f g h i j k l m n o p q r s { m[$added]=new }
+  }
+}
+echo $m[alpha]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'alpha\nbeta\ngamma\nreinserted' ]]; chk iterdel.3
+
+run_sash '__forkeys=kept
+fn walk {
+  for k in $(keys A) {
+    echo outer=$k
+    for j in $(keys A) {
+      echo inner=$j
+      unset A
+      break
+    }
+    continue
+  }
+}
+int map m=([alpha]=1 [beta]=2 [gamma]=3)
+walk =m
+echo $__forkeys'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'outer=alpha\ninner=alpha\nouter=beta\nouter=gamma\nkept' ]]; chk iterdel.4
+
+run_sash 'map m=([alpha]=A [beta]=B)
+for round in first second {
+  echo $round
+  for k in $(keys m) { echo $k; unset m }
+  m=([gamma]=C)
+}
+echo $m[gamma]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'first\nalpha\nbeta\nsecond\ngamma\nC' ]]; chk iterdel.5
+
+# Values stay live even when whole-map replacement changes the captured keys.
+run_sash 'int map m=([alpha]=1 [beta]=2 [gamma]=3)
+for k in $(keys m) {
+  if [[ $k == alpha ]] { m[beta]=20 }
+  echo "$k=${m[$k]}"
+  if [[ $k == beta ]] { m=([delta]=4) }
+}
+for k in $(keys m) { echo "$k=${m[$k]}" }'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'alpha=1\nbeta=20\ngamma=0\ndelta=4' ]]; chk iterdel.6
+
+# Runtime unset keys retain a static collection identity and ordinary index rules.
+run_sash 'map m=([alpha]=A [beta]=B [gamma]=C)
+str key=alpha
+unset m[$key] m[missing]
+for k in $(keys m) { unset m[$k] }
+echo $(len m)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 0 ]]; chk unsetkey.1
+
+run_sash 'array a=(a b c)
+int array n=(10 20 30)
+int index=1
+unset a[$index] n[$(( index + 1 ))]
+echo $(join a ,) $(join n ,)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 'a,c 10,20' ]]; chk unsetkey.2
+
+run_sash 'map m=([alpha]=A [beta]=B [gamma]=C)
+int array a=(10 20)
+str key=alpha
+int index=0
+fn later { key=beta; index=1; write gamma }
+unset m[$key] a[$index] m[$(later)]
+echo $key $(len m) $m[beta] $(len a) $a[1]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 'beta 1 B 1 20' ]]; chk unsetkey.3
+
+# Even a whole clear waits until the last operand has been evaluated.
+run_sash 'map m=([alpha]=A [beta]=B)
+str observed
+fn later { observed=$m[alpha]; write beta }
+unset m m[$(later)]
+echo $observed $(len m)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 'A 0' ]]; chk unsetkey.4
+
+run_sash 'int calls=0
+int array a=(10 20 30)
+fn index -> int { (( calls++ )); return $calls }
+unset a[$(index)] a[$(( (index) ))]
+echo $calls $(len a) $a[0]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '2 1 10' ]]; chk unsetkey.5
+
+run_sash 'map aliases=([first]=alpha)
+map m=([prealpha]=A)
+str selected=first
+unset m["pre${aliases[$selected]}"]
+str key=$'"'"'nul\x00key'"'"'
+m[$key]=binary
+unset m[$key]
+echo $(len m)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 0 ]]; chk unsetkey.6
+
+run_sash 'fn key { write "a]b" }
+map m
+m["a]b"]=data
+unset m[
+  "$(key)"
+]
+echo $(len m)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 0 ]]; chk unsetkey.7
+
+run_sash 'fn words {
+  map cells=([alpha]=A)
+  str key=alpha
+  unset cells[$key]
+  echo $(len cells)
+}
+fn numbers {
+  int array cells=(10 20)
+  int key=1
+  unset cells[$key]
+  echo $(len cells) $cells[0]
+}
+words
+numbers'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'0\n1 10' ]]; chk unsetkey.8
+
+run_sash 'fn inner { str key=$1; unset A[$key] }
+fn relay { inner $1 =A }
+int map m=([alpha]=1 [beta]=2)
+relay alpha =m
+echo $(len m) $m[beta]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '1 2' ]]; chk unsetkey.9
+
+# A key-producing call can replace the target before deletion takes effect.
+run_sash 'map m=([alpha]=A)
+fn key { m=([beta]=B); write beta }
+unset m[$(key)]
+echo $(len m)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 0 ]]; chk unsetkey.10
+
+run_sash 'int array a=(10 20)
+fn index -> int { fail 7 }
+ERR { echo $(len a) }
+unset a[0] a[$(index)]'
+[[ $rc = 7 && -z $err && -z $rerr && $out = 2 ]]; chk unsetkey.11
+
+# Deletion reads the index, not the tainted contents of the target.
+run_sash '/bin/printf "one\0two\0" | read a
+int index=1
+unset a[$index]
+echo ${a[0]:!}'
+[[ $rc = 0 && -z $err && -z $rerr && $out = one ]]; chk unsetkey.12
+
+run_sash 'map m=([alpha]=A)
+str key=$(/bin/echo alpha)
+unset m[$key]
+echo $(len m)'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5063* ]]; chk unsetkey.13
+
+run_sash 'map m=([alpha]=A)
+unset m[$(/bin/echo alpha)]
+echo $(len m)'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5063* ]]; chk unsetkey.14
+
+run_sash 'int index=0
+/bin/printf "bad\0unchecked\0" | read a
+if attest value in a [[ $value == good ]] {
+  echo accepted
+} else {
+  unset a[$index]
+}
+echo $a[1]'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5063* ]]; chk unsetkey.15
+
+run_sash 'array a=(word)
+str key=0
+unset a[$key]
+echo $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk unsetkey.16
+
+run_sash 'map m
+int key=0
+unset m[$key]
+echo $(len m)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk unsetkey.17
+
+run_sash 'int array a=(10 20 30)
+unset a[1 + 1]
+echo $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk unsetkey.18
+
+run_sash 'fn unused {
+  array a=(word)
+  str key=0
+  unset a[$key]
+  echo $(len a)
+}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk unsetkey.19
+
+run_sash 'map m=([alpha]=A)
+fn remove { str key=alpha; unset m[$key]; echo $(len A) }
+remove =m'
+[[ $rc != 0 && -z $out && $err == *SB5099* ]]; chk unsetkey.20
+
+run_sash 'map m=([alpha]=beta [beta]=B)
+fn remove { unset A[${m[alpha]}]; echo $(len A) }
+remove =m'
+[[ $rc != 0 && -z $out && $err == *SB5099* ]]; chk unsetkey.21
+
+run_sash 'fn unused {
+map _m=([alpha]=A)
+str key=alpha
+unset _m[$key]
+echo $(len _m)
+}'
+[[ $rc != 0 && -z $out && $err == *SB5103* &&
+   $err == *'introduce it with a whole-value construction instead'* ]]; chk unsetkey.22
+
+run_sash 'fn remove { str key=$1; unset A[$key] }
+map _m=([alpha]=A)
+remove alpha =_m
+echo $(len _m)'
+[[ $rc != 0 && -z $out && $err == *SB5103* ]]; chk unsetkey.23
+
+run_sash 'fn remove {
+  unset args
+  int index=0
+  unset args[$index]
+  echo "$#"
+}
+remove word'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB5052]' <<< "$err") = 2 ]]; chk unsetkey.24
+
+run_sash 'map m=([alpha]=A)
+unset m[$missing]
+echo $(len m)'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk unsetkey.25
+
+run_sash 'map m=([alpha]=A)
+map other=([beta]=B)
+str key=alpha
+unset m[$key]other
+echo $(len m) $(len other)'
+[[ $rc != 0 && -z $out && $err == *SB5063* \
+   && $err == *'an unset target must be a bare collection name or name[INDEX]'* ]]; chk unsetkey.26
+
+# The former noalias.18 refusal is now a legal, still-checked uncalled body.
+run_sash 'map choices=([part]=keep)
+fn filter {
+keys choices parts
+for pre in @parts { unset choices[$pre] }
+}'
+[[ $rc = 0 && -z $out && -z $err && -z $rerr ]]; chk unsetkey.27
+
+run_sash 'map m=([alpha]=A)
+ERR { str key=alpha; unset m[$key] }
+fail 3'
+[[ $rc != 0 && -z $out && $err == *SB5102* ]]; chk unsetkey.28
+
+run_sash 'map m=([alphatail]=A [betatail]=B)
+str key=alpha
+fn later { key=beta; write tail }
+unset m["$key$(later)"]
+echo $(len m) $m[betatail]'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '1 B' ]]; chk unsetkey.29
+
+run_sash 'int array a=(1)
+unset a[$(( 1+ ))]'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:9: error [SB4020] arithmetic expression ends where an operand is expected'* ]]; chk unsetkey.30
 
 set -e
 tally

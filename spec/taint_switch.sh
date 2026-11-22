@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=78
+plan=79
 echo "1..$plan" >&3
 
 set +e
@@ -374,6 +374,17 @@ array a=( $t v )
 map m = @{a:~}
 for k in $(keys m) { /bin/echo $k }'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.16
+
+# Snapshot input uses the reaching version, not a later attested map.
+run_sash 'str t=$(- getenv HOME)
+array a=( $t v )
+map m = @{a:~}
+keys m ks
+attest k v in m [[ -n $k && -n $v ]]
+/bin/echo "${ks[0]}"'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* &&
+   $err == *"a keys source"* ]]; chk bkstp.19
+
 # bkstp.17 POSITIVE -- mode 0 (`:-KEY`). The override is carried in its own field
 #          rather than a third `mode`, so it must hold for every disposition,
 #          not just the `:~` that shares mode 2 with it.

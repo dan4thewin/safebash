@@ -672,15 +672,24 @@ fn try_dispatch_array(
         return None;
     }
     let it = detect_array_iter(&f.words[0].kind)?;
-    let name = super::expressions::resolve_args_name(&it.name, state);
+    let mut name = super::expressions::resolve_args_name(&it.name, state);
+    let mut use_keys = it.use_keys;
+    // Scratch maps cannot change their key sequence; retain their key proofs.
+    if use_keys && !state.scratch.contains(&name) {
+        let snapshot = super::statements::private_collection_target(
+            "__forkeys".to_string(),
+            VarType::String,
+            false,
+            ssa,
+            state,
+            block,
+        );
+        super::stmt_handlers::fill_keys(name, &snapshot, ssa, state, block);
+        name = snapshot;
+        use_keys = false;
+    }
     Some(lower_for_array(
-        f,
-        &name,
-        it.use_keys,
-        it.vouched,
-        ssa,
-        state,
-        block,
+        f, &name, use_keys, it.vouched, ssa, state, block,
     ))
 }
 

@@ -652,11 +652,12 @@ while (( n<10000 )) { for x in @m { _=$x }; (( n++ )) }
 echo $n'
 [[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.2
 
-SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'map m=([k]=red [j]=blue)
+# An immutable map avoids snapshot copies, isolating the key-loop counter.
+SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'map _m=([k]=red [j]=blue)
 int n=0
-while (( n<10000 )) { for k in $(keys m) { _=$k }; (( n++ )) }
+while (( n<10000 )) { for k in $(keys _m) { _=$k }; (( n++ )) }
 echo $n'
-[[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.3
+[[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.17
 
 SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'int n=0
 while (( n<10000 )) {

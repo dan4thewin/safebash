@@ -175,53 +175,27 @@ pub(super) fn handle_signal(
     block
 }
 
-/// Split `unset`'s arguments into one string per target.
-///
-/// Flags (`-v`, `-f`, `-n`) are dropped. The parser can split a subscripted
-/// target into `["m", "[b]"]`, so an argument that *starts with* `[`
-/// re-attaches to the previous one. Joining every argument instead made
-/// `unset a[0] a[1]` a single target named `a` with the key `0]a[1`, which
-/// matches nothing — every target after the first was silently discarded.
-/// Non-literal operands return `None`: early analyses run before SB5063's
-/// diagnostics are reported, while type checking and lowering require success.
-pub(crate) fn unset_targets(c: &Command) -> Option<Vec<String>> {
-    let mut items: Vec<String> = Vec::new();
-    for arg in &c.args {
-        let ExprKind::Literal(arg) = &arg.kind else {
-            return None;
-        };
-        match items.last_mut() {
-            _ if arg.starts_with('-') => {}
-            Some(prev) if arg.starts_with('[') => prev.push_str(arg),
-            _ => items.push(arg.to_string()),
-        }
-    }
-    Some(items)
-}
-
 /// `unset arr[key]` → a table delete.
 ///
 /// A map keys its entries by the string; an indexed array by the 8 raw bytes
 /// of an i64 (`lower_subscript_raw`, codegen/values.rs). Deleting with the
 /// wrong encoding matches nothing, so the wrong pick here is a silent no-op.
 fn unset_element(
-    full: &str,
-    bracket: usize,
+    arr_name: &str,
+    key: SsaValue,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let arr_name = resolve_args_name(&full[..bracket], state);
-    let key = full[bracket + 1..full.len() - 1].to_string();
-    let arr_ref = state.lookup(&arr_name);
-    let cmd = if state.assoc_arrays.contains(&arr_name) {
+    let arr_ref = state.lookup(arr_name);
+    let cmd = if state.assoc_arrays.contains(arr_name) {
         BuiltinCmd::TableDelete
     } else {
         BuiltinCmd::TableDeleteIdx
     };
     ssa.block_mut(block).insts.push(SsaInst::internal(
         cmd,
-        vec![SsaValue::Var(arr_ref), SsaValue::Literal(key)],
+        vec![SsaValue::Var(arr_ref), key],
         state.suppressed == 0,
     ));
 }
@@ -241,25 +215,50 @@ fn unset_whole(name: &str, ssa: &mut SsaProgram, state: &mut VersionState, block
         .push(SsaInst::Assign { target, value });
 }
 
-/// Handle `unset` — delete an element, or clear a whole variable.
-///
-/// `unset -f func` is not supported; the flag is dropped and the name treated
-/// as a variable.
+/// DD86: evaluate and retain every key before any deletion or whole clear.
 pub(super) fn handle_unset(
-    _name: &str,
     c: &Command,
-    _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
-    for full in unset_targets(c).expect("SB5063 requires literal unset targets") {
-        match full.find('[') {
-            Some(bracket) => unset_element(&full, bracket, ssa, state, block),
-            None => unset_whole(&full, ssa, state, block),
+    let mut prepared = Vec::new();
+    for target in unset_targets(c).expect("SB5063 requires static unset targets") {
+        prepared.push(prepare_unset_target(target, ssa, state, &mut block));
+    }
+    for (name, key) in prepared {
+        match key {
+            Some(key) => unset_element(&name, key, ssa, state, block),
+            None => unset_whole(&name, ssa, state, block),
         }
     }
     block
+}
+
+fn prepare_unset_target(
+    target: UnsetTarget<'_>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> (String, Option<SsaValue>) {
+    let name = resolve_args_name(target.name, state);
+    let key = target.index.map(|index| {
+        let ty = if state.assoc_arrays.contains(&name) {
+            VarType::String
+        } else {
+            VarType::Int
+        };
+        super::functions::unsuppressed(state, |state| {
+            super::stmt_handlers::save_subscript_operand(
+                expr_to_value(index, state),
+                ty,
+                state,
+                ssa,
+                block,
+            )
+        })
+    });
+    (name, key)
 }
 
 /// Handle function call (inline expansion) or external command emit.

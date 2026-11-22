@@ -25,6 +25,5 @@ mod stmt_handlers;
 
 pub(crate) use self::entry::ir_to_ssa_typed;
 pub(crate) use attempts::AttemptSites;
-pub(crate) use cmd_handlers::unset_targets;
 
 mod entry;

@@ -9,11 +9,15 @@ status: accepted
 3. `len NAME` counts array elements or map entries; `strlen VALUE` counts
    string bytes. Both return integers in value and arithmetic contexts.
    Collection operands are bare names, not values or splats (DD#100).
-4. `keys MAP` yields keys only as the sole `for` source;
-   `keys MAP ARRAY` appends an independent clean key snapshot in map
-   iteration order to an eligible ordinary array, or constructs fresh
-   immutable scratch (DD131). The target may auto-declare. Existing
-   unresolved destination taint remains subject to DD#128.
+4. Both `keys` forms produce an independent clean key snapshot in map
+   iteration order. `$(keys MAP)` is legal only as the sole `for` source
+   and takes its snapshot once at loop entry. Every captured key is visited
+   once; insertion, deletion, reinsertion, clearing and replacement of the
+   source map do not change that sequence. Value lookups in the body still
+   read the current map, including ordinary missing-cell behavior.
+   `keys MAP ARRAY` appends its snapshot to an eligible ordinary array, or
+   constructs fresh immutable scratch (DD131). The target may auto-declare.
+   Existing unresolved destination taint remains subject to DD#128.
 5. `@a` splats array elements and `@m` splats map values, not indices.
    String joining is explicit with `join NAME [SEPARATOR]`; its literal
    separator defaults to a space, and an explicit empty separator stays
@@ -129,11 +133,11 @@ handler — which silently returned 0 — be deleted.)
 
 ## 3. `keys` is map-only
 
-- `$(keys <map>)` → a **splat of the map's string keys** (each key a string).
+- `$(keys <map>)` → a **snapshot of the map's string keys** (each key a string).
   Like `$(argv)`, it is an array splat subject to the DD#60 context rule: legal
   as the **sole source of a for-in header**, and **SB5025** anywhere else
-  (command-arg / scalar position). Today it wrongly bypasses that guard — see
-  §7.
+  (command-arg / scalar position). The snapshot is taken once on entry to
+  that loop, including a fresh snapshot when the loop is entered again.
 - `keys <map> <array>` → **snapshot** the keys into the array. See the
   addendum below: the parenthetical "(or snapshotted into an array)" that used
   to sit in the line above described a form that did not exist.
@@ -145,6 +149,10 @@ Map access is symmetric and both forms already work: **`$(keys m)`** splats the
 string keys, **`@m`** splats the values; `${m[$k]}` reads one value by key. No
 `values` companion intrinsic is needed. (Retiring `keys` on indexed arrays also
 removes a current bug where it returns blanks.)
+
+Snapshot creation allocates, including on loop reentry; the contract does
+not promise allocation-free iteration. The compiler may omit copying for an
+immutable source, whose key sequence cannot change during the loop.
 
 ## 4. One splat spelling; retire the bracket-subscript collection forms
 
@@ -420,7 +428,12 @@ keys m k            # k = (alpha beta), in iteration order
   expression, two is the fill statement. `argv` needs a splat/fill
   discriminator (`argv a` and `argv 1` are both arity 1); `keys` does not.
 - **The array is a snapshot, not a view.** Deleting a key afterwards leaves it
-  alone. `$(keys m)` walks the live map; this copies out of it.
+  alone. ~~`$(keys m)` walks the live map; this copies out of it.~~
+  DG revised the direct loop form on 2026-11-22: both forms now snapshot.
+  The loop visits its captured keys even if those keys are deleted or the
+  source map is cleared or replaced. New entries do not extend the loop,
+  and reinsertion does not add a second visit. Only keys are snapshotted;
+  explicit value lookups still observe the current map.
 - **Order is the map's iteration order**, the same order `$(keys m)` yields.
 - **Destination behavior:** the target may auto-declare. Ordinary arrays
   accumulate complete batches; scratch construction starts a fresh instance.

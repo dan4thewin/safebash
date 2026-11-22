@@ -96,8 +96,7 @@ pub enum BuiltinCmd {
     SignalFlag,
     /// Poll a pending EXIT request at a DD#56 boundary.
     SignalCheckpoint,
-    /// `unset arr[key]` on a **map** — the key is the literal string, which is
-    /// how a map keys its entries.
+    /// `unset arr[key]` on a **map** — the key is a retained string value.
     TableDelete,
     /// `unset arr[i]` on an **indexed array**. An indexed array keys its
     /// entries by the 8 raw bytes of an i64 (`lower_subscript_raw`,
@@ -673,18 +672,12 @@ pub enum SsaInst {
     /// indexed array `target`. Auto-declares the array, exactly as `ArgvFill`
     /// does.
     ///
-    /// Unlike `ArgvFill` the result is **clean**, and that is not an oversight.
-    /// `argv` is a bulk read of bytes from outside the program (DD#61); a map's
-    /// keys were all put there by the program itself, and DD#93 closes every
-    /// route to a tainted map at construction — a tainted key reaches a
-    /// subscript only through `attest`, which cleans it. So there is no
-    /// tainted key to carry over.
-    ///
-    /// `source` is a bare name rather than a `VarRef` because codegen resolves
-    /// a collection by name (`find_array_slot`), as every other
-    /// collection-operand instruction here does.
+    /// The result is clean because construction checks prevent tainted keys.
+    /// The SSA backstop checks the source too: `--no-taint-cst` disables those
+    /// front-end checks. Retain its reaching version even though backend
+    /// collection storage is per binding.
     KeysFill {
-        source: String,
+        source: VarRef,
         target: VarRef,
     },
     /// DD#131: fill a private clean batch; success is independent of population.
@@ -899,7 +892,7 @@ pub enum TestOrigin {
 pub(crate) enum TaintRead<'a> {
     Value(&'a SsaValue),
     RedirectTarget(&'a crate::ir::Expr),
-    Binding(&'a str),
+    Binding(&'a VarRef),
 }
 
 fn value_reads<'a>(values: &'a [SsaValue], ctx: String) -> Vec<(TaintRead<'a>, String)> {
@@ -979,11 +972,18 @@ impl SsaInst {
     fn reads(&self, propagation: bool) -> Vec<(TaintRead<'_>, String)> {
         match self {
             SsaInst::Command {
+                kind,
                 name,
                 args,
                 redirects,
                 ..
             } => {
+                // Deletion's first operand is storage identity, not a content read.
+                let args = if matches!(kind, BuiltinCmd::TableDelete | BuiltinCmd::TableDeleteIdx) {
+                    &args[1..]
+                } else {
+                    args.as_slice()
+                };
                 let mut v = value_reads(args, format!("an argument to '{}'", name));
                 v.extend(redirect_reads(
                     redirects,
@@ -1052,7 +1052,7 @@ impl SsaInst {
                 )];
                 if propagation && !taint_off {
                     reads.push((
-                        TaintRead::Binding(&source.name),
+                        TaintRead::Binding(source),
                         format!("an array filling '{}'", target.name),
                     ));
                 }
@@ -1095,10 +1095,10 @@ impl SsaInst {
                 vec![(TaintRead::Value(value), "an assigned value".to_string())]
             }
             SsaInst::CollectionPublish { source, .. } if propagation => vec![(
-                TaintRead::Binding(&source.name),
+                TaintRead::Binding(source),
                 "a published collection".to_string(),
             )],
-            SsaInst::KeysFill { source, .. } if propagation => {
+            SsaInst::KeysFill { source, .. } => {
                 vec![(TaintRead::Binding(source), "a keys source".to_string())]
             }
             SsaInst::Attest { test, .. } | SsaInst::AttestAll { test, .. } if propagation => {
@@ -1119,7 +1119,6 @@ impl SsaInst {
             | SsaInst::LifetimeStart { .. }
             | SsaInst::CollectionPublish { .. }
             | SsaInst::ArgvFill { .. }
-            | SsaInst::KeysFill { .. }
             | SsaInst::CaptureStart { .. }
             | SsaInst::PipelineFinish { .. }
             | SsaInst::RedirectPop { .. }

@@ -74,9 +74,7 @@ fn try_builtin(
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
-        BuiltinCmd::Unset => Some(super::cmd_handlers::handle_unset(
-            name, c, stmt, ssa, state, *block,
-        )),
+        BuiltinCmd::Unset => Some(super::cmd_handlers::handle_unset(c, ssa, state, *block)),
         BuiltinCmd::Read => Some(super::cmd_handlers::handle_read(c, ssa, state, *block)),
         _ => None,
     }
@@ -747,13 +745,24 @@ fn handle_keys(
     let source = super::expressions::resolve_args_name(literal_name_of(map), state);
     let destination = super::expressions::resolve_args_name(literal_name_of(dest), state);
     let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
+    fill_keys(source, &array, ssa, state, block);
+    super::statements::publish_collection(&destination, &array, ssa, state, block);
+    block
+}
+
+pub(super) fn fill_keys(
+    source: String,
+    array: &str,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
     // Later uses refer to the fill, not its empty initialization.
-    let target = state.define_replacement(&array);
+    let source = state.lookup(&source);
+    let target = state.define_replacement(array);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::KeysFill { source, target });
-    super::statements::publish_collection(&destination, &array, ssa, state, block);
-    block
 }
 
 fn handle_glob(
@@ -1480,7 +1489,7 @@ fn build_subscript_rhs(
     }
 }
 
-fn save_subscript_operand(
+pub(super) fn save_subscript_operand(
     value: SsaValue,
     ty: VarType,
     state: &mut VersionState,

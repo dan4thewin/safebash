@@ -1109,7 +1109,7 @@ fn read_names(read: TaintRead<'_>) -> Vec<String> {
         TaintRead::Value(value) => {
             value.read_variables(&mut |var| names.push(var.name.clone()));
         }
-        TaintRead::Binding(name) => names.push(name.to_string()),
+        TaintRead::Binding(var) => names.push(var.name.clone()),
         TaintRead::RedirectTarget(expr) => {
             crate::ir::walk_expr_tree(expr, &mut |node| {
                 crate::ssa_taint::collect_expr_var_name(node, &mut names);

@@ -175,11 +175,24 @@ complete append-index range and reserves all destination index/entry capacity
 before adding cells. Publication then transfers the private batch's owned
 integer keys without allocation, rather than cloning the whole destination.
 Reservation can compact or grow physical storage, but failure leaves the old
-logical contents intact for ERR. The header address remains stable for aliases
-and live iteration. Both backends reserve the same 40-byte runtime header.
+logical contents intact for ERR. The header address remains stable for aliases.
+Both backends reserve the same 40-byte runtime header.
 Empty batches change nothing, and EOF/no-match truth belongs to the producer,
 not the accumulated population. Assignment, scalar `readline` and map
 conversion retain replacement semantics.
+
+Direct `$(keys m)` loops use an independent key snapshot taken at loop entry,
+so source-map mutation cannot change their iteration sequence; body lookups
+remain live. Mutable sources allocate a snapshot on each entry. Immutable
+scratch maps can retain non-copying traversal, since their sequence cannot
+change.
+
+`unset NAME[KEY]` carries a static collection identity and an ordinary
+subscript expression through the shared binding, type and taint checks.
+Lowering retains all keys in source order before performing any deletion or
+whole clear, using the existing typed operand saver and deletion operations.
+The target denotes storage, not a content read; key evaluation remains checked.
+This needs no new runtime operation or collection layout.
 
 Sparse append uses one past the greatest live nonnegative index, or zero
 when none exists, with checked overflow. It does not confuse population

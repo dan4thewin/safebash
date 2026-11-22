@@ -495,7 +495,9 @@ fn assignment_exprs<'a>(a: &'a Assignment, f: &mut impl FnMut(&'a Expr)) {
 
 fn command_exprs<'a>(c: &'a Command, f: &mut impl FnMut(&'a Expr)) {
     f(&c.name);
-    visit_each(&c.args, f);
+    for arg in c.value_args() {
+        f(arg);
+    }
 }
 
 fn case_exprs<'a>(c: &'a Case, f: &mut impl FnMut(&'a Expr)) {
@@ -1277,6 +1279,36 @@ pub struct Command {
     pub name: Expr,
     pub args: Vec<Expr>,
     pub best_effort: bool,
+}
+
+impl Command {
+    /// An unset target denotes storage; only its index is evaluated.
+    pub(crate) fn value_args(&self) -> impl Iterator<Item = &Expr> {
+        let unset = matches!(&self.name.kind, ExprKind::Literal(name) if name == "unset");
+        self.args.iter().map(move |arg| match &arg.kind {
+            ExprKind::Subscript { index, .. } if unset => index.as_ref(),
+            _ => arg,
+        })
+    }
+}
+
+pub(crate) struct UnsetTarget<'a> {
+    pub name: &'a str,
+    pub index: Option<&'a Expr>,
+}
+
+pub(crate) fn unset_target(arg: &Expr) -> Option<UnsetTarget<'_>> {
+    let (name, index) = match &arg.kind {
+        ExprKind::Literal(name) => (name.as_str(), None),
+        ExprKind::Subscript { name, index } => (name.as_str(), Some(index.as_ref())),
+        _ => return None,
+    };
+    is_plain_identifier(name).then_some(UnsetTarget { name, index })
+}
+
+/// Early analyses precede SB5063 reporting; checked passes require valid targets.
+pub(crate) fn unset_targets(c: &Command) -> Option<Vec<UnsetTarget<'_>>> {
+    c.args.iter().map(unset_target).collect()
 }
 
 /// SB5097 guarantees a positive decimal count. Overflow still clamps outward;

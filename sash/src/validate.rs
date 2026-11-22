@@ -173,11 +173,9 @@ fn flag_const_writes(stmt: &Statement, consts: &HashSet<String>, diags: &mut Vec
 /// the time it gets here, and an arithmetic *test* that writes is SB5007's or
 /// SB4020's, so an `ArithTest` normally binds nothing; it still answers. A
 /// declaration is the binding itself, and a second one is SB5049's
-/// redeclaration. `unset` is left out because every const is a scalar
-/// (the parser has no `const array`/`const map`, and SB4064 refuses a
-/// collection value), and type_check rejects it on a scalar in either
-/// textual order (SB4030). An attest retag validates unchanged bytes, not a
-/// write; its arithmetic conversion target is still a real binding.
+/// redeclaration. Unset targets are writes, not new bindings. An attest retag
+/// validates unchanged bytes, not a write; its arithmetic conversion target
+/// is still a real binding.
 ///
 /// Total over `StmtKind`; do not add a wildcard.
 fn stmt_written_names(stmt: &Statement, f: &mut impl FnMut(&str)) {
@@ -186,10 +184,8 @@ fn stmt_written_names(stmt: &Statement, f: &mut impl FnMut(&str)) {
         StmtKind::For(fr) => f(&fr.variable),
         StmtKind::ArithTest(e) => walk_arith_var_writes(e, f),
         StmtKind::Command(c) => {
-            let mut names = HashSet::new();
-            command_bound_names(c, &mut names);
-            for name in &names {
-                f(name);
+            for name in command_written_names(c) {
+                f(&name);
             }
         }
         StmtKind::Declaration(_)
@@ -205,6 +201,20 @@ fn stmt_written_names(stmt: &Statement, f: &mut impl FnMut(&str)) {
         | StmtKind::Negated(_)
         | StmtKind::ReturnProducer(_) => {}
     }
+}
+
+fn command_written_names(c: &Command) -> HashSet<String> {
+    let mut names = HashSet::new();
+    command_bound_names(c, &mut names);
+    if expr_literal_str(&c.name) == "unset" {
+        names.extend(
+            crate::ir::unset_targets(c)
+                .into_iter()
+                .flatten()
+                .map(|target| target.name.to_string()),
+        );
+    }
+    names
 }
 
 /// The scalar an `attest` re-tags: `v` in `attest v [[ … ]]`, and SOURCE in
@@ -276,16 +286,6 @@ fn check_scratch_mutations(
     stmt_written_names(stmt, &mut |name| {
         writes.insert(name.to_string());
     });
-    match &stmt.kind {
-        StmtKind::Command(c)
-            if c.args
-                .iter()
-                .all(|arg| matches!(arg.kind, ExprKind::Literal(_))) =>
-        {
-            collection_identity_uses(c, &HashSet::new(), &mut writes);
-        }
-        _ => {}
-    }
     let mut writes: Vec<_> = writes.into_iter().collect();
     writes.sort();
     for name in writes.into_iter().filter(|name| {
@@ -6036,6 +6036,8 @@ fn command_writes_args(c: &Command) -> bool {
         // is the `$(keys m)` splat, which writes nothing.
         "keys" => c.args.len() == 2 && c.args.last().map(expr_literal_str) == Some("args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
+        "unset" => crate::ir::unset_targets(c)
+            .is_some_and(|targets| targets.iter().any(|target| target.name == "args")),
         _ => false,
     }
 }
@@ -8034,13 +8036,13 @@ fn reader_origins(name: &str, cx: &SlotCx) -> Origins {
 }
 
 fn resolve_unset_replacement(c: &Command, tainted: &mut Tainted, sx: &SlotCx) {
-    // SB5063 diagnoses non-literal targets after this analysis.
-    let Some(targets) = crate::transform::unset_targets(c) else {
+    // SB5063 diagnoses invalid targets after this analysis.
+    let Some(targets) = crate::ir::unset_targets(c) else {
         return;
     };
-    for name in targets {
-        if !name.contains('[') {
-            sx.resolve_replacement(&name, tainted);
+    for target in targets {
+        if target.index.is_none() {
+            sx.resolve_replacement(target.name, tainted);
         }
     }
 }
@@ -8054,7 +8056,7 @@ fn check_command_reads(
     diags: &mut Vec<Diagnostic>,
 ) {
     check_expr_taint(&c.name, tainted, output, diags);
-    for arg in &c.args {
+    for arg in c.value_args() {
         check_expr_taint(arg, tainted, output, diags);
     }
     check_collection_reader_taint(c, tainted, diags);
@@ -10317,15 +10319,10 @@ fn collection_identity_uses(c: &Command, funcs: &HashSet<String>, names: &mut Ha
     }
     if head == "unset" {
         names.extend(
-            crate::transform::unset_targets(c)
+            crate::ir::unset_targets(c)
                 .into_iter()
                 .flatten()
-                .map(|target| {
-                    target
-                        .split_once('[')
-                        .map_or(target.as_str(), |(base, _)| base)
-                        .to_string()
-                }),
+                .map(|target| target.name.to_string()),
         );
     }
 }
@@ -11787,26 +11784,23 @@ fn check_fill_target_body(body: &[Statement], diags: &mut Vec<Diagnostic>) {
     }
 }
 
-/// Which words of `c` are out-params, and whether `a[i]` is allowed among
-/// them. `None` for a command that fills nothing.
-///
-/// `unset` takes several targets and permits the subscript form `a[i]`; the
-/// fill builtins take one, and a bare name only.
-fn fill_target_spec(c: &Command) -> Option<(Vec<&str>, bool)> {
+/// Static target names, or an empty string for an invalid target operand.
+fn fill_target_spec(c: &Command) -> Option<Vec<&str>> {
     let spec = match expr_literal_str(&c.name) {
-        "argv" => (argv_target_name(&c.args).into_iter().collect(), false),
-        "glob" | "rglob" => (
-            c.args.first().map(expr_literal_str).into_iter().collect(),
-            false,
-        ),
+        "argv" => argv_target_name(&c.args).into_iter().collect(),
+        "glob" | "rglob" => c.args.first().map(expr_literal_str).into_iter().collect(),
         // DD#75: `keys m k` — the out-array is the second argument. One
         // argument is the splat and has no target.
-        "keys" if c.args.len() == 2 => (last_arg_target(c), false),
+        "keys" if c.args.len() == 2 => last_arg_target(c),
         // DD#63: the out-array is the third argument. `match S P` is the
         // two-arg boolean form and has no target at all, and a wrong arity
         // is SB4045's to report — do not preempt it.
-        "match" | "matchall" if c.args.len() == 3 => (last_arg_target(c), false),
-        "unset" => (c.args.iter().map(expr_literal_str).collect(), true),
+        "match" | "matchall" if c.args.len() == 3 => last_arg_target(c),
+        "unset" => c
+            .args
+            .iter()
+            .map(|arg| crate::ir::unset_target(arg).map_or("", |target| target.name))
+            .collect(),
         _ => return None,
     };
     Some(spec)
@@ -11817,29 +11811,15 @@ fn last_arg_target(c: &Command) -> Vec<&str> {
     c.args.last().map(expr_literal_str).into_iter().collect()
 }
 
-/// A target is a binding, so it must be a bare name; `unset` additionally
-/// accepts `a[i]`.
-fn is_valid_fill_target(word: &str, allow_subscript: bool) -> bool {
-    is_plain_identifier(word) || (allow_subscript && is_subscripted_name(word))
-}
-
 fn flag_fill_target(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
-    let Some((targets, allow_subscript)) = fill_target_spec(c) else {
+    let Some(targets) = fill_target_spec(c) else {
         return;
     };
     let builtin = expr_literal_str(&c.name);
     for target in targets {
-        if !is_valid_fill_target(target, allow_subscript) {
+        if !is_plain_identifier(target) {
             diags.push(fill_target_diag(builtin, span));
         }
-    }
-}
-
-/// `a[i]` — a plain identifier carrying a subscript. `unset a[i]` is legal.
-fn is_subscripted_name(word: &str) -> bool {
-    match word.split_once('[') {
-        Some((name, rest)) => is_plain_identifier(name) && rest.ends_with(']'),
-        None => false,
     }
 }
 
@@ -12552,37 +12532,35 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
 ///
 /// The rule is the index's, not the position's: it is enforced on reads
 /// (`${a[K]}` and its two brace-less spellings, which the lexer desugars to it)
-/// by `flag_subscript_index`, and on writes (`a[K]=v`) by
-/// `flag_assignment_index`. Those are different IR shapes, which is why it
+/// by `flag_subscript_index`, and on assignment/unset targets by
+/// `flag_target_indices`. Those are different IR roles, which is why it
 /// takes two visitors to state one rule.
 pub fn check_subscript_index(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| flag_subscript_index(e, &mut diags));
         crate::ir::walk_stmt_tree(std::slice::from_ref(stmt), &mut |s| {
-            flag_assignment_index(s, &mut diags)
+            flag_target_indices(s, &mut diags)
         });
     }
     diags
 }
 
-/// The same rule on the WRITE side (`m[K]=v`).
-///
-/// An assignment's LHS index is a bare `Expr` in the `Assignment.index` struct
-/// field — it is never wrapped in an `ExprKind::Subscript`, so the expression
-/// walk above reaches it but cannot tell it is an index and sees only a
-/// `Literal`. The rule belongs to the index, not to the spelling, so it is
-/// applied here too: `m[ a b ]=9` must reject exactly as `${m[ a b ]}` does.
-///
-/// Before this existed the write side accepted every ambiguous form the read
-/// side rejected, and `m[ $s x ]=9` silently stored the UNEXPANDED text `$s x`
-/// as the key.
-fn flag_assignment_index(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    let StmtKind::Assignment(a) = &stmt.kind else {
-        return;
+/// Value-root traversal exposes a target's index, not a read of its cell.
+fn flag_target_indices(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let indices: Vec<_> = match &stmt.kind {
+        StmtKind::Assignment(a) => a.index.iter().collect(),
+        StmtKind::Command(c) if expr_literal_str(&c.name) == "unset" => crate::ir::unset_targets(c)
+            .into_iter()
+            .flatten()
+            .filter_map(|target| target.index)
+            .collect(),
+        _ => return,
     };
-    if let Some(d) = a.index.as_ref().and_then(ambiguous_index_diag) {
-        diags.push(d);
+    for index in indices {
+        if let Some(d) = ambiguous_index_diag(index) {
+            diags.push(d);
+        }
     }
 }
 

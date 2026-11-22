@@ -141,6 +141,9 @@
     5. Assignment replaces; array `+=` appends an array-shaped value. No map append.
         1. Whole-value shape must match the target; scalar assignment cannot create a collection.
         2. `unset` clears a declared collection or removes a cell; missing cells are harmless. Scalars cannot be unset.
+            1. `unset NAME[KEY]` uses a static collection name and the ordinary key/index grammar and types, including runtime values.
+            2. All keys are evaluated once, left to right, and retained before the command applies any deletion or clear.
+            3. Deletion changes the current collection but does not read or validate its contents; the key remains an ordinary checked read.
     6. `@a`/`@m` splat collection values into separate words; splats cannot be quoted.
         1. Named-collection iteration uses a sole bare splat.
             1. The binder takes the element type, as if assigned from the current cell; an existing binder of the other type rejects.
@@ -218,7 +221,10 @@
         2. Explicit presence handling or discard is mandatory: `$(- arg INDEX)` / `$(- getenv NAME)` discard only status. Using the string is not handling.
         3. With a literal default: only the selected string; absence selects the default, present-empty never does. No status remains to test or discard.
         4. Argument-index literals are nonnegative decimal digits, leading zeros allowed; computed indices are integers. Malformed/negative indices remain errors, default or not.
-    7. `$(keys MAP)` supplies keys only as the sole `for` source; `keys MAP ARRAY` supplies a key snapshot in map iteration order.
+    7. Both `keys` forms snapshot keys in map iteration order; `$(keys MAP)` is legal only as the sole `for` source and snapshots once at loop entry.
+        1. Visit each captured key once; source-map insertion, deletion, reinsertion, clearing or replacement does not change that sequence.
+        2. Explicit value lookups in the body read the current map, with ordinary missing-cell behavior.
+        3. `keys MAP ARRAY` supplies the same independent key snapshot to its destination.
     8. Process/environment values: `getpid` (also `$$`), `getppid`, `getcwd`, `epochseconds`, `random`.
     9. `$(mkdtemp)` atomically creates a new owner-only directory under `/tmp` and returns its absolute pathname.
         1. No operands or `TMPDIR` use; retry name collisions, never adopt an existing object or fall back to another directory.

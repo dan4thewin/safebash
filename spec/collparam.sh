@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=161
+plan=160
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────
@@ -942,15 +942,7 @@ fn f { /bin/echo =a; echo "$(len A)" }
 f =a'
 [[ $rc = 0 && $out = $'=a\n1' && -z $err ]]; chk noalias.16
 
-# The alias census runs before pending target diagnostics are reported.
-run_sash 'map choices=([part]=keep)
-fn filter {
-keys choices parts
-for pre in @parts { unset choices[$pre] }
-}'
-[[ $rc = 1 && -z $out && $err == *SB5063* \
-   && $err == *'`unset`'\''s target must be a bare name'* ]]; chk noalias.18
-
+# Invalid whole targets still reach SB5063 after the early alias census.
 run_sash 'array a=(x)
 fn clear { unset "a" }
 clear

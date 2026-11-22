@@ -959,9 +959,7 @@ fn check_inst_uses(
             TaintRead::RedirectTarget(e) => {
                 check_redirect_target(e, taint, errors, &context, names)
             }
-            TaintRead::Binding(_) => {
-                unreachable!("binding-only reads require ordinary_reads, not taint_reads")
-            }
+            TaintRead::Binding(array) => check_tainted_array(array, &context, taint, errors, names),
         }
     }
 }

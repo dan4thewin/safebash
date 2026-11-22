@@ -425,6 +425,17 @@ impl Scanner {
         std::str::from_utf8(&self.source[start..end]).unwrap_or("")
     }
 
+    /// The index parser owns the nested lexer modes, not outer command lookahead.
+    pub fn take_subscript(&mut self, open: usize) -> Option<(String, Origin)> {
+        let close = super::expr::balanced_subscript_close(&self.source, open)?;
+        let index = self.source_slice(open + 1, close).to_string();
+        let origin = self.origin_of(open + 1);
+        self.pos = close + 1;
+        self.last_end = self.pos;
+        self.peeked.clear();
+        Some((index, origin))
+    }
+
     /// Consumed source only: lookahead and following trivia are excluded.
     pub fn consumed_source_since(&self, start: usize) -> &str {
         self.source_slice(start, self.last_end)

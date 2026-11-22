@@ -157,7 +157,7 @@ impl SsaInst {
             }
             SsaInst::KeysFill { source, target } => {
                 return super::inst_handlers::handle_keys_fill(
-                    source,
+                    &source.name,
                     &target.name,
                     builder,
                     module,

@@ -1331,7 +1331,7 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             all,
         } => emit_match_into_c(e, subject, pattern, array, *all, types),
         SsaInst::ArgvFill { target, start } => emit_argv_fill_c(e, &target.name, *start),
-        SsaInst::KeysFill { source, target } => emit_keys_fill_c(e, source, &target.name),
+        SsaInst::KeysFill { source, target } => emit_keys_fill_c(e, &source.name, &target.name),
         SsaInst::GlobFill {
             target,
             directory,

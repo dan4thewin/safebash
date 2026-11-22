@@ -3033,11 +3033,12 @@ fn wrong_quoted_head_diag(text: &str, span: Span) -> Diagnostic {
 fn parse_command_words(
     scanner: &mut Scanner,
     span: Span,
+    unset: bool,
 ) -> Result<(Vec<Expr>, Vec<Redirect>), Diagnostic> {
     let mut args = Vec::new();
     let mut redirects: Vec<Redirect> = Vec::new();
     while !scanner.at_eof() {
-        if !parse_command_element(scanner, span, &mut args, &mut redirects)? {
+        if !parse_command_element(scanner, span, unset, &mut args, &mut redirects)? {
             break;
         }
     }
@@ -3048,7 +3049,8 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnos
     let start = scanner.peek().span.start;
     let name_expr = parse_expr(scanner)?;
     let name_expr = normalize_command_head(name_expr, scanner.consumed_source_since(start))?;
-    let (args, redirects) = parse_command_words(scanner, span)?;
+    let unset = matches!(&name_expr.kind, ExprKind::Literal(name) if name == "unset");
+    let (args, redirects) = parse_command_words(scanner, span, unset)?;
     let command = command_from_words(name_expr, args)?;
 
     if !redirects.is_empty() {
@@ -3124,6 +3126,7 @@ fn brace_after_word(scanner: &mut Scanner) -> Result<bool, Diagnostic> {
 fn parse_command_element(
     scanner: &mut Scanner,
     span: Span,
+    unset: bool,
     args: &mut Vec<Expr>,
     redirects: &mut Vec<Redirect>,
 ) -> Result<bool, Diagnostic> {
@@ -3161,11 +3164,60 @@ fn parse_command_element(
             parse_fd_prefixed(scanner, &w, span, args, redirects)?;
         }
 
-        _ => {
-            args.push(parse_expr(scanner)?);
-        }
+        _ => args.push(parse_command_arg(scanner, unset, args)?),
     }
     Ok(true)
+}
+
+fn parse_command_arg(
+    scanner: &mut Scanner,
+    unset: bool,
+    args: &[Expr],
+) -> Result<Expr, Diagnostic> {
+    if !unset {
+        return parse_expr(scanner);
+    }
+    if matches!(
+        args.last().map(|arg| &arg.kind),
+        Some(ExprKind::Subscript { .. })
+    ) && scanner.next_is_adjacent()
+    {
+        let start = scanner.peek().span.start;
+        return Err(unset_target_error(span_from(scanner, start)));
+    }
+    parse_unset_arg(scanner)
+}
+
+fn parse_unset_arg(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
+    let token = scanner.peek().clone();
+    let Tok::Word(word) = token.token else {
+        return parse_expr(scanner);
+    };
+    let name = word.split_once('[').map_or(word.as_str(), |(name, _)| name);
+    let open = token.span.start + name.len();
+    if !is_identifier(name) || scanner.byte_at(open) != Some(b'[') {
+        return parse_expr(scanner);
+    }
+    let span = span_from(scanner, token.span.start);
+    let (index, origin) = scanner
+        .take_subscript(open)
+        .ok_or_else(|| unset_target_error(span))?;
+    let index = parse_subscript_index(&index, span, origin)?;
+    Ok(Expr {
+        kind: ExprKind::Subscript {
+            name: name.to_string(),
+            index: Box::new(index),
+        },
+        span,
+    })
+}
+
+fn unset_target_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB5063",
+        "an unset target must be a bare collection name or name[INDEX]".to_string(),
+    )
 }
 
 /// Does a file-descriptor word bind to the redirect operator after it?

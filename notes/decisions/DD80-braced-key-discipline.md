@@ -9,7 +9,7 @@ status: accepted
    `0..9223372036854775807`. Map keys must be strings; quote digit-only
    keys and integer values. A string disposition alone does not convert
    it to an integer index.
-3. Reads and assignments share the key grammar and type checks.
+3. Reads, assignments and `unset NAME[K]` share the key grammar and type checks.
    `$a[K]` and its quoted spelling desugar to `${a[K]}`, including in
    arithmetic (DD#123); bare arithmetic subscripts retain DD#79's
    separate rvalue/lvalue grammar.
@@ -17,6 +17,15 @@ status: accepted
    arbitrary nesting cap, retaining earlier values in DD#86 order.
    An explicit index's parse failure reports its own error; leftover
    implicit text remains an ambiguous-index error.
+5. `unset` names its collection statically; only the key/index is evaluated.
+   Evaluate and retain all keys once, left to right, before applying any
+   deletion or whole-collection clear. A key-producing helper may mutate the
+   collection; deletion then acts on its current contents. Missing entries
+   are a no-op. Mutation has no result. Element deletion does not resolve
+   collection taint; whole clearing retains DD128's existing failed-attest
+   replacement rule.
+   Scratch, immutable arguments, readonly ERR imports and collection
+   non-aliasing retain their ordinary restrictions.
 
 ---
 
@@ -24,6 +33,13 @@ Companion to DD#79 (arithmetic subscripts, model B). DD#79 governs a **bare**
 subscript inside `(( ))` (arithmetic). This DD governs the **braced** form
 `${a[K]}` / `${m[K]}` in every context: what a valid key/index is, and why it
 is *not* interpreted by arithmetic rules.
+
+DG requested runtime-key/index `unset` on 2026-11-22. Its target uses this
+same direct-key grammar, including nested explicit expressions; a quoted
+whole target or a runtime collection name is still invalid. Target storage
+identity is not a read of its contents, but evaluating the key is an ordinary
+checked read. This extends the earlier literal-only `unset` implementation,
+not the scope of arithmetic subscripts.
 
 Settled with DG (2026-08-22).
 
