@@ -182,20 +182,21 @@ pub(super) fn handle_signal(
 /// re-attaches to the previous one. Joining every argument instead made
 /// `unset a[0] a[1]` a single target named `a` with the key `0]a[1`, which
 /// matches nothing — every target after the first was silently discarded.
-pub(crate) fn unset_targets(c: &Command) -> Vec<String> {
+/// Non-literal operands return `None`: early analyses run before SB5063's
+/// diagnostics are reported, while type checking and lowering require success.
+pub(crate) fn unset_targets(c: &Command) -> Option<Vec<String>> {
     let mut items: Vec<String> = Vec::new();
-    for arg in c
-        .args
-        .iter()
-        .map(literal_name_of)
-        .filter(|arg| !arg.starts_with('-'))
-    {
+    for arg in &c.args {
+        let ExprKind::Literal(arg) = &arg.kind else {
+            return None;
+        };
         match items.last_mut() {
+            _ if arg.starts_with('-') => {}
             Some(prev) if arg.starts_with('[') => prev.push_str(arg),
             _ => items.push(arg.to_string()),
         }
     }
-    items
+    Some(items)
 }
 
 /// `unset arr[key]` → a table delete.
@@ -252,7 +253,7 @@ pub(super) fn handle_unset(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    for full in unset_targets(c) {
+    for full in unset_targets(c).expect("SB5063 requires literal unset targets") {
         match full.find('[') {
             Some(bracket) => unset_element(&full, bracket, ssa, state, block),
             None => unset_whole(&full, ssa, state, block),

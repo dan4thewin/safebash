@@ -2539,7 +2539,8 @@ fn attest_map_form_error(key: &str, val: &str, map: &str, env: &TypeEnv) -> Opti
 
 /// DD#30: both whole and subscripted targets must name collections.
 fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    for target in crate::transform::unset_targets(c) {
+    for target in crate::transform::unset_targets(c).expect("SB5063 requires literal unset targets")
+    {
         let name = target
             .split_once('[')
             .map_or(target.as_str(), |(base, _)| base);

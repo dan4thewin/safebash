@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=158
+plan=161
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────
@@ -941,6 +941,30 @@ run_sash 'array a=(x)
 fn f { /bin/echo =a; echo "$(len A)" }
 f =a'
 [[ $rc = 0 && $out = $'=a\n1' && -z $err ]]; chk noalias.16
+
+# The alias census runs before pending target diagnostics are reported.
+run_sash 'map choices=([part]=keep)
+fn filter {
+keys choices parts
+for pre in @parts { unset choices[$pre] }
+}'
+[[ $rc = 1 && -z $out && $err == *SB5063* \
+   && $err == *'`unset`'\''s target must be a bare name'* ]]; chk noalias.18
+
+run_sash 'array a=(x)
+fn clear { unset "a" }
+clear
+echo "$(len a)"'
+[[ $rc = 1 && -z $out && $err == *SB5063* \
+   && $err == *'`unset`'\''s target must be a bare name'* ]]; chk noalias.19
+
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" \
+run_sash 'array a=(x)
+fn clear { name=a; unset a $name }
+clear
+echo "$(len a)"'
+[[ $rc = 1 && -z $out && $err == *SB5063* \
+   && $err == *'`unset`'\''s target must be a bare name'* ]]; chk noalias.20
 
 # DD127/DD131: appending new input cannot authorize inherited-taint attests.
 run_sash 'fn clean {

@@ -8034,16 +8034,11 @@ fn reader_origins(name: &str, cx: &SlotCx) -> Origins {
 }
 
 fn resolve_unset_replacement(c: &Command, tainted: &mut Tainted, sx: &SlotCx) {
-    // SB5063 checks binding operands after this pass. The lowering decoder
-    // requires literals; a malformed command has no effects to summarize.
-    if !c
-        .args
-        .iter()
-        .all(|arg| matches!(arg.kind, ExprKind::Literal(_)))
-    {
+    // SB5063 diagnoses non-literal targets after this analysis.
+    let Some(targets) = crate::transform::unset_targets(c) else {
         return;
-    }
-    for name in crate::transform::unset_targets(c) {
+    };
+    for name in targets {
         if !name.contains('[') {
             sx.resolve_replacement(&name, tainted);
         }
@@ -10324,6 +10319,7 @@ fn collection_identity_uses(c: &Command, funcs: &HashSet<String>, names: &mut Ha
         names.extend(
             crate::transform::unset_targets(c)
                 .into_iter()
+                .flatten()
                 .map(|target| {
                     target
                         .split_once('[')
