@@ -37,6 +37,10 @@ does not claim that repair or select its policy.
 [Regex allocation/reuse](tasks/dd39-precompile-literal-regex.md) remains
 separately owned, as does the
 [Bash-compatible assignment loader](tasks/sash-expand-bash-assignment-loader.md).
+[Runtime-key unset](tasks/runtime-indexed-unset.md) is queued separately
+from the repaired diagnostic ICE. Investigation also found that
+[live map iteration can skip surviving keys after deletion](tasks/bug-map-iteration-deletion-skip.md);
+explicit key snapshots do not have that problem.
 This is a current handoff,
 not a second journal: keep the dated account in [journal/](journal/) and
 delivery boundaries in the individual [task records](tasks/).
@@ -91,6 +95,12 @@ limitation with its guard and the combined-attest guidance.
 
 ## Just completed
 
+- **Runtime-key unset backlogged; live-map deletion hazard identified.**
+  The extension keeps the collection name static and reuses ordinary
+  key/index rules. A separate native/C probe shows that deleting the
+  current map key can skip a surviving next key; that defect has its own
+  owner. No compiler behavior changed.
+  [Journal 666](journal/666-runtime-unset-and-live-iteration.md) records both.
 - **Nonliteral `unset` targets diagnose instead of crashing.**
   Early alias and taint analyses share fallible target decoding; checked
   typing and lowering retain their invariants. The unchanged reported input
