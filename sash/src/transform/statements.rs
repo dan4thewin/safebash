@@ -935,7 +935,11 @@ fn lower_one_declaration(
 ) -> BlockId {
     // DD#99: `map m = @{a:DISP}` fills a map from an array, pairwise.
     restart_scratch(&a.name, ssa, state, block);
-    if is_assoc && lower_map_from_array(a, ssa, state, block) {
+    if is_assoc
+        && a.value
+            .as_ref()
+            .is_some_and(|value| lower_map_from_array(&a.name, value, ssa, state, block))
+    {
         return block;
     }
     let val = compute_declaration_value(a, is_array, is_assoc, ssa, state, &mut block);
@@ -1211,30 +1215,31 @@ fn lower_background(
     parent_block
 }
 
-/// Emit the empty map plus its pairwise fill. `false` when the declaration's
-/// value is not an array splat, so ordinary map literals fall through.
-fn lower_map_from_array(
-    a: &DeclAssignment,
+/// Build privately, then replace the destination only after a complete conversion.
+/// Ordinary map literals fall through.
+pub(super) fn lower_map_from_array(
+    name: &str,
+    value: &Expr,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> bool {
-    let Some((source, mode, key, message, taint_off)) = map_from_array_parts(a, state) else {
+    let Some((source, mode, key, message, taint_off)) = map_from_array_parts(value, state) else {
         return false;
     };
+    let source = super::expressions::resolve_args_name(&source, state);
     let source = state.lookup(&source);
-    let destination = collection_fill_target(&a.name, true, ssa, state, block);
-    state.collections.insert(a.name.clone());
-    state.assoc_arrays.insert(a.name.clone());
-    if destination == a.name {
-        let target = state.define_replacement(&destination);
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target,
-            value: SsaValue::AssocArray(vec![]),
-        });
-    }
-    // The fill is a separate definition from the empty-map initialization.
-    let target = state.define_replacement(&destination);
+    let destination = private_collection_target(
+        format!("__map_{name}"),
+        state.lookup(name).var_type,
+        true,
+        ssa,
+        state,
+        block,
+    );
+    state.collections.insert(name.to_string());
+    state.assoc_arrays.insert(name.to_string());
+    let target = state.define(&destination);
     ssa.block_mut(block).insts.push(SsaInst::MapFromArray {
         source,
         target,
@@ -1243,17 +1248,17 @@ fn lower_map_from_array(
         message,
         taint_off,
     });
-    if destination != a.name {
-        publish_collection(&a.name, &destination, ssa, state, block);
-    }
+    let source = state.lookup(&destination);
+    let target = state.define_replacement(name);
+    ssa.block_mut(block).insts.push(SsaInst::CollectionPublish {
+        target,
+        source,
+        append_to: None,
+    });
     true
 }
 
-/// DD#99: `map m = @{a:DISP}` — the source array splat and its odd-count
-/// disposition. `None` when the declaration's value is not an array splat, so
-/// ordinary map literals fall through. A BARE `@a` is rejected in validate,
-/// not here (the diagnostic belongs with the other splat-position rules).
-/// DD#99 fill mode for `map m=@{a:DISP}`: `:-` carries a key (0), `:?` an
+/// DD#99 fill mode: `:-` carries a key (0), `:?` an
 /// abort message (1), `:~` is wordless (2). Any other operator is not a fill.
 fn arrvals_fill_mode(pe: &ParameterExpansion) -> Option<(u8, String)> {
     match pe.operator.as_deref()? {
@@ -1271,10 +1276,10 @@ fn arrvals_fill_mode(pe: &ParameterExpansion) -> Option<(u8, String)> {
 }
 
 fn map_from_array_parts(
-    a: &DeclAssignment,
+    value: &Expr,
     state: &mut VersionState,
 ) -> Option<(String, u8, SsaValue, String, bool)> {
-    let ExprKind::ParameterExpansion(pe) = &a.value.as_ref()?.kind else {
+    let ExprKind::ParameterExpansion(pe) = &value.kind else {
         return None;
     };
     let (mode, message) = arrvals_fill_mode(pe)?;

@@ -4,7 +4,8 @@ status: accepted
 1. Whole-value assignments must match the target's scalar, array or map
    kind. Indexed lists and keyed map literals are not interchangeable;
    collection values do not implicitly turn scalar bindings into
-   collections.
+   collections. DD#99 explicitly converts a string array into a string map,
+   in a declaration or an assignment to an existing map.
 2. Array append requires an array-shaped value on an existing mutable
    array. A map has no append position: write its named cells instead.
    Declaration initializers retain DD#117's separate no-append rule.
@@ -92,6 +93,17 @@ A subscript assignment (`a[i]=v`) is untouched. It assigns to a *cell*, and a
 scalar is exactly what belongs there; the collection's kind says nothing about
 the cell's value.
 
+DD99's explicit pairwise conversion, `m=@a:DISP`, is a map-valued RHS,
+not a scalar splat assignment. Its source must be a string array and its
+destination a string map. A disposition is mandatory (SB5058); a map still
+has no `+=` form. Success replaces the entire destination, while failure
+publishes nothing.
+
+DD100 applies these rules to whole-collection writes through A-E using the
+function's inferred signature. `A=(...)`, `A=([key]=value)` and `A=@B:DISP`
+do not rebind a slot; they update the actual collection's contents.
+Element types and readonly restrictions are independent of value shape.
+
 ## Deferrals
 
 SB5090 defers to two better diagnostics, for the reasons DD#117 recorded:
@@ -99,10 +111,12 @@ SB5090 defers to two better diagnostics, for the reasons DD#117 recorded:
 - an **argv splat** (`array a=(x); a=$(argv 1)`) — SB5025 names the out-param
   form `argv N a`, which is the only thing that works. SB5090's advice
   ("write `a=(…)`") is actively wrong there.
-- a **named splat** (`a=@{b:-}`) — SB5025 again.
+- a **named splat outside DD99's map conversion** (`array a; a=@{b:-}`) —
+  SB5025 again. A valid map conversion follows its own disposition and
+  source/destination type checks.
 
-In practice taint (SB5020) reaches the argv case first. The deferral is what
-keeps either of them reachable at all.
+In practice taint (SB5020) reaches the argv case first. Deferring its shape
+diagnostic preserves the more specific refusal.
 
 ## Divergence from bash, accepted
 

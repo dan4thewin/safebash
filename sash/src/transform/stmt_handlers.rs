@@ -1369,6 +1369,11 @@ pub(super) fn handle_assignment(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    let source_name = &a.name;
+    let a = &Assignment {
+        name: resolve_args_name(&a.name, state),
+        ..a.clone()
+    };
     check_var_func_collision(&a.name, stmt, state);
     check_bare_collection_literal(a, stmt, state);
     if let Some(ref idx) = a.index {
@@ -1377,7 +1382,8 @@ pub(super) fn handle_assignment(
     if a.op == crate::ir::AssignOp::Append {
         return handle_append_assign(a, state, ssa, block);
     }
-    super::statements::restart_scratch(&a.name, ssa, state, block);
+    // A slot alias never starts a fresh lifetime for the caller's scratch.
+    super::statements::restart_scratch(source_name, ssa, state, block);
     handle_plain_assign(a, state, ssa, block)
 }
 
@@ -1396,7 +1402,7 @@ fn check_bare_collection_literal(a: &Assignment, stmt: &Statement, state: &mut V
     if a.index.is_some() || !matches!(a.value.kind, ExprKind::Array(_) | ExprKind::AssocArray(_)) {
         return;
     }
-    if state.collections.contains(&a.name) {
+    if state.collections.contains(&a.name) || is_collection_slot(&a.name) {
         return;
     }
     state.diagnostics.push(format!(
@@ -1582,6 +1588,9 @@ fn handle_plain_assign(
     ssa: &mut SsaProgram,
     mut block: BlockId,
 ) -> BlockId {
+    if super::statements::lower_map_from_array(&a.name, &a.value, ssa, state, block) {
+        return block;
+    }
     let val = assignment_value(a, state);
     if let Some(b) = maybe_capture_condition(a, &val, state, ssa, block) {
         return b;

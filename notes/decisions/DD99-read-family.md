@@ -14,11 +14,15 @@ status: accepted
 3. Bulk `read` is not a `while`/`until` condition, including through a
    pipeline. `readline` is the streaming iteration form; `if read` and
    bulk reads in loop bodies remain available.
-4. Maps are constructed pairwise from arrays with an explicit disposition:
+4. String maps are constructed or replaced pairwise from string arrays:
+   `map m=@a:DISP` introduces a map; `m=@a:DISP` replaces an existing map,
+   including through collection slots. An explicit disposition is required:
    `:-KEY` gives an odd trailing value the supplied literal key, `:?MSG`
    aborts on odd count, and `:~` drops the trailing element; `:!~` also
    explicitly forces the read. Empty arrays form empty maps. Ordinary
-   taint checks and adjacent validation still apply.
+   taint checks and adjacent validation still apply. Publish only a complete
+   conversion: failure preserves an existing map and leaves a new map empty.
+   The source array is unchanged; no integer-element conversion is implicit.
 5. Collection operands and fill targets are bare names; sigils yield
    values. DD#75 governs value splats and the rejected map-to-array
    pseudo-inverse.
@@ -97,7 +101,7 @@ The input acquisition also needs its adjacent attest before ordinary
 value use, or an explicit forced read (DD#121/DD#127/DD#128); the
 unvalidated conversion above is not a current checked example.
 
-The array is consumed **pairwise**: element 0 is a key, element 1 its value,
+The array is read **pairwise**: element 0 is a key, element 1 its value,
 and so on. An **odd** count leaves a trailing element with no partner, and the
 splat's disposition says what to do about it.
 
@@ -108,12 +112,42 @@ to inspect — so the two-step is what makes checking possible at all.
 Array→map is also independently useful: build an array programmatically, then
 convert.
 
+Both declaration and reassignment use this conversion:
+
+```sh
+array pairs=(ONE one TWO two)
+map m
+m=@pairs:~
+echo ${m[ONE]}
+```
+
+The destination must be a string-valued map and the source a string array.
+Integer arrays, integer maps and map sources are rejected rather than
+silently stringified or reinterpreted. Duplicate keys retain the last value.
+Successful reassignment removes the old contents, including when the source
+is empty; it is not a map merge. The source array remains unchanged.
+
+DG selected existing-map assignment and complete-conversion publication on
+2026-11-22. A failure, including an odd-tail `:?` abort, leaves an existing
+map unchanged. A newly declared map remains empty. Repeated scratch
+construction starts fresh-empty as DD131 requires, never recovering an older
+instance. Allocation failure remains fatal under DD130; partial conversion
+is not published before entering ERR. This does not roll back input
+acquisition or earlier effects.
+
+DD100 applies uniformly: `A=@B:~` replaces the caller's map through A using
+the caller's array through B, including forwarded slots. Whole-collection
+assignment changes contents, not collection identity; readonly actuals
+remain readonly. `match` and `matchall` still produce arrays, not maps.
+
 ### The disposition is mandatory
 
 As with DD#69's external-command splat, a bare `map m = @a` is a **compile
 error**. The hazard — a silently mis-paired map — is exactly the shape DD#69
 addressed for a silently-empty argument list, so the same rule applies: the
 splat site states its behaviour.
+The same disposition requirement and meanings apply to reassignment
+(`m=@a:DISP`) and collection-slot destinations.
 
 | form | on an odd count |
 |---|---|

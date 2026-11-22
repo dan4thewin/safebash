@@ -120,6 +120,9 @@ in the DD136 trial.
 **Collections have checked signatures.** Each function has an inferred
 collection-argument count and array/map, string/int element signature,
 including forwarded slots. Slots alias the caller's collections.
+Well-typed whole-collection assignments update those contents without
+rebinding identity. Only slot-dependent shape checks wait for this signature;
+ordinary-name shape checks retain their earlier diagnostic stage.
 [DD100](../notes/decisions/DD100-collection-parameters.md) also requires
 distinct argument identities and forbids overlap with globals named by the
 callee or its transitive callees. That check is independent of taint switches
@@ -180,6 +183,14 @@ Both backends reserve the same 40-byte runtime header.
 Empty batches change nothing, and EOF/no-match truth belongs to the producer,
 not the accumulated population. Assignment, scalar `readline` and map
 conversion retain replacement semantics.
+
+Array-to-map declarations and existing-map assignments share one lowering
+path, resolving both collection slots before constructing a private map.
+Replacement-form `CollectionPublish` installs it only after conversion
+completes, preserving an old map on failure and leaving new construction
+empty. Ordinary replacement retains unresolved taint; a legal direct
+failed-attest replacement uses the existing resolution metadata. A write
+through a slot never starts a new lifetime for its caller's scratch binding.
 
 Direct `$(keys m)` loops use an independent key snapshot taken at loop entry,
 so source-map mutation cannot change their iteration sequence; body lookups

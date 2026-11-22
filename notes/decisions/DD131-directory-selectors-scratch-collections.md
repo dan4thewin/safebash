@@ -22,9 +22,9 @@ status: accepted
    An initializer cannot read its own target, directly or through a helper.
 7. Immutability survives aliases and collection slots. Validation may refine
    checked properties, not mutate the value.
-8. Failed array fills leave existing ordinary targets unchanged and fresh
-   scratch empty; publish no partial batch. Preserve each producer's own
-   EOF/no-match result, independently of destination contents.
+8. Failed array fills and DD99 map conversions leave existing ordinary
+   targets unchanged and fresh scratch empty; publish no partial collection.
+   Preserve producer EOF/no-match results independently of destination contents.
 9. Assignment replaces, append adds and iteration supplies items through
    checked fresh results; none gains a status or implicit argument globbing.
    Only bare literal list words activate glob sugar. Quoted/computed strings
@@ -207,6 +207,8 @@ immutability**. A helper may read an immutable collection but cannot fill,
 append, unset or mutate it, directly or through forwarding. Fills through
 mutable slots still accumulate. There is no hidden append/replace mode
 chosen by the caller's spelling, and a slot is not a fresh-binding request.
+Well-typed whole-collection assignments through mutable slots replace
+contents, not identity; they cannot restart an immutable actual's lifetime.
 The existing non-aliasing and one-signature contracts remain.
 
 Interpret the source binding, not a qualified internal name or compiler
@@ -244,6 +246,13 @@ attempt instead starts fresh and remains empty on operation error; it
 cannot expose an earlier instance or a partly constructed batch. This
 applies across all patterns of one selector invocation. The failure
 status remains a failure, not an invented successful empty result.
+
+DD99 map conversion follows the same publication guarantee for declarations
+and existing-map assignments, including collection-slot destinations.
+Its successful result **replaces** the map rather than accumulating.
+An empty source therefore clears an existing map; an odd-tail `:?` failure
+preserves it. A new map or repeated scratch construction remains empty on
+failure. The source array is not consumed or changed.
 
 This needs an all-or-nothing **collection update**, not just removal of
 the current clear-on-entry calls. Account for allocation while preparing

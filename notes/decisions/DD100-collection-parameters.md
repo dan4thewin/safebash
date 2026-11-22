@@ -10,7 +10,10 @@ status: accepted
    All calls, including transitive forwarding, must agree; every type
    check uses that signature.
 3. A slot denotes the caller's actual collection, so legal mutations
-   affect that collection. Language constructs keep bare collection-name
+   affect that collection. Well-typed whole-collection assignment replaces
+   its contents without rebinding identity; array append remains legal and
+   map append remains forbidden. Slot declarations and scalar replacement
+   remain forbidden. Language constructs keep bare collection-name
    operands rather than call-site sigils or splats. DD135's readonly ERR
    imports and DD131's immutable scratch remain readonly through slots.
 4. Collection arguments have distinct identities and cannot overlap
@@ -195,6 +198,29 @@ Part D's bare-name rule is current.
 out-parameters or multiple return values — a function can fill several
 collections in place.
 
+DG confirmed on 2026-11-22 that this includes **well-typed whole-collection
+assignment**, not only cell writes and fillers:
+
+```sh
+fn replace { A=@B:~ }
+map m=([old]=stale)
+array pairs=(key value)
+replace =m =pairs
+echo ${m[key]}
+```
+
+Array/map literals replace a matching actual, array `+=` appends a matching
+array-shaped value, and DD99's pairwise conversion replaces a string map
+from a string array. Sources and destinations both resolve through
+forwarding. All operations use the function's one inferred signature;
+an uncalled template does not invent a concrete element type.
+
+An assignment changes the actual's **contents**, not which collection the
+slot denotes. `array A`, `map A`, scalar `A=value` and top-level slot use
+remain SB5065. Whole-value shape and element checks apply just as they do
+to ordinary collection names. Conversion publishes only its complete
+result; failure leaves the caller's existing map unchanged.
+
 DD135's accepted ERR boundary makes inherited actuals readonly during
 same-process handler execution, including through helper/slot forwarding.
 This covers contents, fills, append and unset, not just rebinding a name.
@@ -205,8 +231,9 @@ is recorded in
 DD131's immutable-scratch model preserves this identity
 and the actual collection's immutability. A read-only helper may accept
 scratch, but writes, fills, append and unset must reject, including
-through transitive forwarding. Mutable A-E targets accumulate under
-the proposed fill policy, independent of the caller's original name.
+through transitive forwarding. Array fillers through mutable A-E targets
+accumulate under the accepted fill policy; assignment replaces, independent
+of the caller's original name.
 A fresh-binding request cannot target an already-bound slot.
 
 DD132 additionally requires real regex proof when a received element

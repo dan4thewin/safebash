@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=160
+plan=178
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────
@@ -1135,6 +1135,119 @@ fn outer { map m=([k]=safe); inspect =A =m }
 argv 1 a
 outer =a' value
 [[ $rc = 0 && $out = 'safe 1' && -z $err && -z $rerr ]]; chk sflow.18
+
+# Whole-collection writes preserve the slot's caller identity.
+run_sash 'fn fill { A=@B:~; echo "${A[key]} $(len B)" }
+map m=([old]=stale)
+array a=(key value)
+fill =m =a
+echo "${m[key]} ${m[old]:-gone} $(len a)"'
+[[ $rc = 0 && $out = $'value 2\nvalue gone 2' && -z $err && -z $rerr ]]; chk slotassign.1
+
+run_sash 'fn fill { A=@B:~ }
+fn forward { fill =B =A }
+array a=(key forwarded)
+map m=([old]=stale)
+forward =a =m
+echo "${m[key]} ${m[old]:-gone}"'
+[[ $rc = 0 && $out = 'forwarded gone' && -z $err && -z $rerr ]]; chk slotassign.2
+
+run_sash 'fn replace { A=([key]=7); B=(2 3); B+=(4) }
+int map m=([old]=99)
+int array a=(1)
+replace =m =a
+echo "${m[key]} ${m[old]} $(join a ,) $((a[0]+a[1]+a[2]))"'
+[[ $rc = 0 && $out = '7 0 2,3,4 9' && -z $err && -z $rerr ]]; chk slotassign.3
+
+run_sash 'fn replace { A=(one); A+=(two); B=([new]=yes) }
+fn forward { replace =B =A }
+map m=([old]=no)
+array a=(old)
+forward =m =a
+echo "$(join a ,):${m[new]}:${m[old]:-gone}"'
+[[ $rc = 0 && $out = 'one,two:yes:gone' && -z $err && -z $rerr ]]; chk slotassign.4
+
+run_sash 'fn replace { A=(text) }
+int array a
+replace =a
+echo $(len a)'
+[[ $rc = 1 && $err == *SB4030* && $err == *'non-numeric element in int collection'* ]]; chk slotassign.5
+
+run_sash 'fn replace { int n=7; A=([key]=$n) }
+map m
+replace =m
+echo $(len m)'
+[[ $rc = 1 && $err == *SB4030* && $err == *'cannot assign int value to string'* ]]; chk slotassign.6
+
+run_sash 'fn replace { A=(one) }
+map m
+replace =m
+echo $(len m)'
+[[ $rc = 1 && $err == *SB5090* ]]; chk slotassign.7
+
+run_sash 'fn append { A+=([key]=value) }
+map m
+append =m
+echo $(len m)'
+[[ $rc = 1 && $err == *SB5091* ]]; chk slotassign.8
+
+run_sash 'fn fill { A=@B:~ }
+fn forward { fill =A =B }
+array a=(key value)
+map _m=([old]=stale)
+forward =_m =a
+echo $(len _m)'
+[[ $rc = 1 && $err == *SB5103* ]]; chk slotassign.9
+
+run_sash 'map m=([old]=stale)
+fn replace { A=([key]=value) }
+fn forward { replace =A }
+ERR { forward =m }
+fail 1'
+[[ $rc = 1 && $err == *SB5102* ]]; chk slotassign.10
+
+run_sash 'fn replace { A=([key]=value); B=([other]=value) }
+map m
+replace =m =m
+echo $(len m)'
+[[ $rc = 1 && $err == *SB5099* ]]; chk slotassign.11
+
+run_sash 'A=([key]=value); echo done'
+[[ $rc = 1 && $err == *SB5065* ]]; chk slotassign.12
+
+run_sash 'A[0]=value; echo done'
+[[ $rc = 1 && $err == *SB5065* ]]; chk slotassign.13
+
+run_sash 'fn replace { A=([key]=value) }; replace; echo done'
+[[ $rc = 1 && $err == *SB5066* ]]; chk slotassign.14
+
+run_sash 'fn fill { A=@B:~ }
+fn forward { fill =B =A }
+int array a=(1 2)
+map m
+forward =a =m
+echo $(len m)'
+[[ $rc = 1 && $err == *SB4030* && $err == *'requires a string array source'* ]]; chk slotassign.15
+
+run_sash 'fn convert { map m=@A:~; echo ${m[key]} }
+array a=(key declared)
+convert =a'
+[[ $rc = 0 && $out = declared && -z $err && -z $rerr ]]; chk slotassign.16
+
+run_sash 'fn unused { A=($(( 7 ))); B=([key]=$(( 8 ))); A+=($(( 9 ))) }
+fn unused_conversion { A=@B:~ }
+echo ok'
+[[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk slotassign.17
+
+run_sash 'fn fill {
+argv 1 A
+if ! attest v in A [[ $v == accepted ]] { A=(fallback) }
+echo $(join A ,)
+}
+array a
+fill =a
+echo ${a[0]}' rejected
+[[ $rc = 0 && $out = $'fallback\nfallback' && -z $err && -z $rerr ]]; chk slotassign.18
 
 set -e
 tally

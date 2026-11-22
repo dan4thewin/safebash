@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=224
+plan=227
 echo "1..$plan" >&3
 
 set +e
@@ -1603,6 +1603,34 @@ for source in ': "$@"' $'declare -A a=([one]=two)\n: "${!a[@]}"'; do
     [[ $rc = 0 && -z $err && $out == *'# MANUAL:'* ]] || ((bad++))
 done
 [[ $bad = 0 ]]; chk convdiscard.7
+
+discard_roundtrip 'declare -i n=7
+text=abc
+declare -ia nums=(4 5)
+: $n ${n} ${#text} $$ ${nums[0]} ${#nums[@]}
+: ${nums[@]} ${nums[*]} "${nums[@]}" "${nums[*]}"
+echo kept' kept; chk convdiscard.8
+
+# DD30/DD76: whole integers need stringification at string-collection
+# literals, but not at integer collections or inside an already-string word.
+discard_roundtrip 'declare -i n=7
+text=word
+a=($n $((n+1)) "$n" pre$n)
+echo "${a[0]} ${a[1]} ${a[2]} ${a[3]}"
+a=(${n} ${#text})
+a+=($((n+2)))
+echo "${a[0]} ${a[1]} ${a[2]}"
+declare -ia nums=($n $((n+1)))
+echo "${nums[0]} ${nums[1]}"' $'7 8 7 pre7\n7 4 9\n7 8' 0 '' no; chk convctype.1
+
+discard_roundtrip 'declare -i n=7
+text=word
+declare -A m=([first]=$n [next]=$((n+1)) [quoted]="$n" [text]=pre$n)
+echo "${m[first]} ${m[next]} ${m[quoted]} ${m[text]}"
+m=([value]=${n} [size]=${#text})
+echo "${m[value]} ${m[size]}"
+declare -iA nums=([first]=$n [next]=$((n+1)))
+echo "${nums[first]} ${nums[next]}"' $'7 8 7 pre7\n7 4\n7 8' 0 '' no; chk convctype.2
 
 run_convert '#!/bin/bash
 trap "echo cleanup" EXIT'

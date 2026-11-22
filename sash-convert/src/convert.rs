@@ -145,13 +145,14 @@ fn walk_node(
     annotate: bool,
     collections: &Names,
 ) {
-    // DD#30: sash's `[[ ]]` compares strings, and an int operand there is
-    // SB4030. Bash draws no such line, so an operand the converted script
+    // DD#30/DD#76: string tests and string-collection elements require strings.
+    // Bash draws no such line, so an operand the converted script
     // holds as an int is quoted, which is sash's int→string conversion. The
     // patches are zero-width, so the operand's own rewrite (`$?` →
     // `$(status)`) still applies between them.
     if is_int_expansion(node, source, &collections.int_typed)
-        && is_string_test_operand(node, source)
+        && (is_string_test_operand(node, source)
+            || is_string_collection_element(node, source, collections))
     {
         patches.push(Patch::insert_at(node.start_byte(), "\""));
         patches.push(Patch::insert_at(node.end_byte(), "\""));
@@ -713,7 +714,12 @@ fn convert_noop(
     let mut parts = Vec::new();
     for arg in args {
         let value = render_subtree(arg, source, prefix_lines, annotate, collections);
-        // Separate sinks retain heterogeneous argument kinds and splat arity.
+        let value = if is_int_expansion(arg, source, &collections.int_typed) {
+            format!("\"{value}\"")
+        } else {
+            value
+        };
+        // Separate sinks retain argument order and splat arity.
         parts.push(format!("array _=({value})"));
     }
     parts.push(":".into());
@@ -1779,6 +1785,9 @@ fn is_int_expansion(node: Node, source: &[u8], int_typed: &HashSet<String>) -> b
             if let Some(rest) = inner.strip_prefix('#') {
                 return rest.is_empty() || length_operand(rest).is_some();
             }
+            if bracket_splat(inner).is_some() {
+                return false;
+            }
             let end = inner
                 .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                 .unwrap_or(inner.len());
@@ -1786,6 +1795,35 @@ fn is_int_expansion(node: Node, source: &[u8], int_typed: &HashSet<String>) -> b
         }
         _ => false,
     }
+}
+
+fn is_string_collection_element(node: Node, source: &[u8], collections: &Names) -> bool {
+    let Some(array) = collection_element_array(node, source) else {
+        return false;
+    };
+    let Some(name) = array
+        .parent()
+        .and_then(|assignment| child_variable_name(assignment, source))
+    else {
+        return false;
+    };
+    !collections.int_typed.contains(&name)
+}
+
+fn collection_element_array<'tree>(node: Node<'tree>, source: &[u8]) -> Option<Node<'tree>> {
+    let parent = node.parent()?;
+    if parent.kind() == "array" {
+        return Some(parent);
+    }
+    // Bash map entries are concatenations: `[key]=` followed by the value.
+    if parent.kind() != "concatenation" || node.end_byte() != parent.end_byte() {
+        return None;
+    }
+    let prefix = &source[parent.start_byte()..node.start_byte()];
+    if !prefix.starts_with(b"[") || !prefix.ends_with(b"]=") {
+        return None;
+    }
+    parent.parent().filter(|array| array.kind() == "array")
 }
 
 /// Whether `node` is a whole operand of a `[ ]` / `[[ ]]` test that compares

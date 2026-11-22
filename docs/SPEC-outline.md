@@ -153,10 +153,13 @@
         5. Braceless dispositions also work: `@a:-WORD`, `@a:?MESSAGE`, `@a:~`.
     7. `join COLLECTION [SEPARATOR]` produces one string; literal separator, default one space, empty means concatenate.
         1. Join collections explicitly for echo.
-    8. Array-to-map assignment consumes key/value pairs and requires an odd-tail disposition.
+    8. Array-to-map assignment reads key/value pairs and requires an odd-tail disposition.
         1. `@{a:-KEY}` makes the trailing item the value of literal `KEY`.
         2. `@{a:?MESSAGE}` aborts on odd count; `@{a:~}` drops the tail.
         3. Empty array produces empty map. Map-to-array conversion requires explicit traversal.
+        4. String array to string map only; declare with `map m=@a:DISP` or replace with `m=@a:DISP`. The source stays unchanged.
+        5. Duplicate keys keep the last value; replacement removes old keys.
+        6. Publish only a complete conversion: failure preserves an existing map; a new map or scratch instance remains empty.
 10. Functions and calls
     1. `fn NAME { ... }`; `NAME() { ... }` and `function NAME { ... }` are aliases.
         1. Call with `NAME ARG...`.
@@ -188,6 +191,8 @@
         3. Identities must be distinct and cannot alias a global named by the callee or its transitive callees.
         4. Conditional access, writes, validation, metadata and identity forwarding all count.
         5. Passing identity is not a value read; actual reads count, and write-only outputs still require a reader.
+        6. Well-typed whole-collection assignment and array append update the actual's contents without rebinding identity; map append, slot declarations and scalar replacement reject.
+        7. Array-to-map conversion resolves both source and destination slots, including forwarding; readonly actuals stay readonly.
 11. Captures
     1. `$(...)` captures stdout unless its direct producer yields a typed value.
     2. Value intrinsics occupy their own direct capture, not arbitrary statement positions; a statusless value capture cannot use `-`.

@@ -2450,45 +2450,63 @@ pub fn check_assign_value_shape(program: &Program) -> Vec<Diagnostic> {
         crate::type_check::collect_collection_kinds(block, &mut kinds);
     }
     let mut diags = Vec::new();
+    let mut visit = |stmt: &Statement| {
+        let StmtKind::Assignment(a) = &stmt.kind else {
+            return;
+        };
+        // Slots need the type checker's per-function signature.
+        if is_collection_slot(&a.name) {
+            return;
+        }
+        diags.extend(assign_shape_diag(a, kinds.get(&a.name).copied()));
+    };
     for block in program_blocks(program) {
-        crate::ir::walk_stmt_tree(block, &mut |stmt| {
-            let StmtKind::Assignment(a) = &stmt.kind else {
-                return;
-            };
-            if let Some(d) = assign_shape_diag(a, &kinds) {
-                diags.push(d);
-            }
-        });
+        crate::ir::walk_stmt_tree(block, &mut visit);
     }
     diags
 }
 
 /// `Some(diag)` when a statement assignment's value contradicts the target's
-/// kind. `kinds` maps a declared collection name to whether it is a map.
-fn assign_shape_diag(a: &Assignment, kinds: &HashMap<String, bool>) -> Option<Diagnostic> {
+/// checked kind, including the current function's collection-slot signature.
+pub(crate) fn assign_shape_diag(a: &Assignment, collection: Option<bool>) -> Option<Diagnostic> {
     // `a[i]=v` assigns to a *cell*, and a scalar is exactly what belongs
     // there. The kind of the collection says nothing about the cell's value.
     if a.index.is_some() {
         return None;
     }
-    let kind = assign_target_kind(&a.name, kinds);
-    if kind == TargetKind::Map && a.op == AssignOp::Append {
-        return Some(map_append_diag(a));
+    let kind = assign_target_kind(collection);
+    match (kind, &a.op) {
+        (TargetKind::Map, AssignOp::Append) => Some(map_append_diag(a)),
+        _ if is_named_array_splat(&a.value) => map_assignment_splat_diag(a, kind),
+        _ if assign_shape_deferred(kind, &a.value) => None,
+        _ => shape_mismatch_msg(&a.name, kind, &a.value)
+            .map(|msg| Diagnostic::error_span(a.value.span, "SB5090", msg)),
     }
-    if assign_shape_deferred(kind, &a.value) {
-        return None;
-    }
-    let msg = shape_mismatch_msg(&a.name, kind, &a.value)?;
-    Some(Diagnostic::error_span(a.value.span, "SB5090", msg))
 }
 
 /// The kind a name holds. A name absent from the program's collection
 /// declarations is a scalar; SB5049 rejects a name that is both.
-fn assign_target_kind(name: &str, kinds: &HashMap<String, bool>) -> TargetKind {
-    match kinds.get(name) {
+fn assign_target_kind(collection: Option<bool>) -> TargetKind {
+    match collection {
         Some(true) => TargetKind::Map,
         Some(false) => TargetKind::Array,
         None => TargetKind::Scalar,
+    }
+}
+
+fn map_assignment_splat_diag(a: &Assignment, kind: TargetKind) -> Option<Diagnostic> {
+    match (kind, &a.op) {
+        (TargetKind::Map, AssignOp::Set) => {}
+        (TargetKind::Scalar, AssignOp::Set) if is_collection_slot(&a.name) => {}
+        _ => return Some(named_splat_scalar_diag(a.value.span)),
+    }
+    let ExprKind::ParameterExpansion(pe) = &a.value.kind else {
+        unreachable!("named splats are parameter expansions");
+    };
+    match pe.operator.as_deref() {
+        Some("arrvals") => Some(map_disposition_diag(a.value.span, &pe.name, &a.name)),
+        Some("arrvals_default" | "arrvals_abort") => None,
+        _ => Some(named_splat_scalar_diag(a.value.span)),
     }
 }
 
@@ -2499,8 +2517,7 @@ fn assign_shape_deferred(kind: TargetKind, value: &Expr) -> bool {
     if kind == TargetKind::Scalar {
         return true;
     }
-    // Deferred for the same reason SB4064 defers it: SB5025 names the
-    // out-param form `argv N a`, which is the only thing that works here.
+    // SB5025 owns argv captures and names their out-param alternative.
     is_argv_splat_expr(value)
 }
 
@@ -6184,14 +6201,13 @@ fn check_for_source_word(w: &Expr, diags: &mut Vec<Diagnostic>) -> bool {
     false
 }
 
-/// DD#69 addendum: a named-array splat (`@a` / `@{a:?}`) is not a scalar —
-/// it is legal only as a command argument or a for-in source. As an
-/// assignment RHS or subscript index it is SB5025.
+/// Whole-name splat assignments are checked with the target's collection kind.
+/// A cell value or index is still scalar, independent of that kind.
 fn check_argv_splat_assignment(a: &Assignment, diags: &mut Vec<Diagnostic>) {
-    if is_named_array_splat(&a.value) {
-        diags.push(named_splat_scalar_diag(a.value.span));
-    } else {
+    if !is_named_array_splat(&a.value) {
         check_argv_splat_expr(&a.value, diags);
+    } else if a.index.is_some() {
+        diags.push(named_splat_scalar_diag(a.value.span));
     }
     match &a.index {
         Some(idx) if is_named_array_splat(idx) => diags.push(named_splat_scalar_diag(idx.span)),
@@ -6206,8 +6222,9 @@ fn named_splat_scalar_diag(span: Span) -> Diagnostic {
     Diagnostic::error_span(
         span,
         "SB5025",
-        "an array splat `@a` is not a scalar — it is valid only as a command \
-         argument or a for-in source; use `$(join a)` for a joined string, \
+        "an array splat `@a` is not a scalar — use it as a command \
+         argument, a for-in source or a dispositioned array-to-map conversion; \
+         use `$(join a)` for a joined string, \
          or `${a[i]}` for a single element"
             .to_string(),
     )
@@ -11580,15 +11597,14 @@ fn escaping_taint_diag(span: Span, fname: &str, target: &str, via: &str, why: &s
 ///   `args`/`$1` are (SB5024). Left to fall through, a top-level slot read
 ///   reached SB5039 ("introduced nowhere … declare it"), whose advice can't
 ///   be followed because declaring it is itself an error.
-/// - **A slot can't be rebound.** A typed declaration (`array A=…`, `str A`)
-///   or a whole-name assignment (`A=v`) would shadow the caller's collection.
-///   Mutating *through* the slot — `A[0]=v`, `read A` — is the point of
-///   DD#100 Part E and stays legal.
+/// - **A slot's identity can't be rebound.** Declarations and scalar
+///   replacements are forbidden. Well-typed collection assignments, cell
+///   writes and fillers update the caller's collection through that identity.
 pub fn check_collection_slots(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for block in program_blocks(program) {
         crate::ir::walk_scoped_stmts(block, "", &mut |stmt, in_fn| {
-            slot_rebind(stmt, &mut diags);
+            slot_rebind(stmt, in_fn.is_empty(), &mut diags);
             if in_fn.is_empty() {
                 slot_toplevel_reads(stmt, &mut diags);
             }
@@ -11597,29 +11613,42 @@ pub fn check_collection_slots(program: &Program) -> Vec<Diagnostic> {
     diags
 }
 
-/// A declaration or whole-name assignment of a slot name. `A[0]=v` carries an
-/// index and is a *mutation through* the slot, which Part E allows.
-fn slot_rebind(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+/// Collection-valued assignments inside functions need their inferred kinds.
+fn slot_rebind(stmt: &Statement, top_level: bool, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
-            flag_slot_rebind(a.index.is_none(), &a.name, stmt.span, diags);
+            diags.extend(slot_assignment_rebind_diag(a, top_level, stmt.span));
         }
         // A declaration never carries an index, so every name it binds is a
         // whole-name rebind of the slot.
         StmtKind::Declaration(d) => {
             for a in &d.assignments {
-                flag_slot_rebind(true, &a.name, stmt.span, diags);
+                flag_slot_rebind(&a.name, stmt.span, diags);
             }
         }
         _ => {}
     }
 }
 
-/// Push the Part E rebind diagnostic when a whole-name write lands on a
-/// collection slot. `A[0]=v` carries an index and is a mutation *through* the
-/// slot, which is allowed.
-fn flag_slot_rebind(whole_name: bool, name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
-    if whole_name && is_collection_slot(name) {
+fn slot_assignment_rebind_diag(a: &Assignment, top_level: bool, span: Span) -> Option<Diagnostic> {
+    if !is_collection_slot(&a.name) {
+        return None;
+    }
+    if top_level {
+        return Some(slot_toplevel_diag(&a.name, span));
+    }
+    if a.index.is_some()
+        || matches!(a.value.kind, ExprKind::Array(_) | ExprKind::AssocArray(_))
+        || is_named_array_splat(&a.value)
+    {
+        return None;
+    }
+    Some(slot_rebind_diag(&a.name, span))
+}
+
+/// A declaration always attempts to rebind a slot's identity.
+fn flag_slot_rebind(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if is_collection_slot(name) {
         diags.push(slot_rebind_diag(name, span));
     }
 }
@@ -11651,7 +11680,8 @@ fn slot_rebind_diag(name: &str, span: Span) -> Diagnostic {
         format!(
             "`{name}` is a reserved collection-parameter slot — it names the \
              collection a caller passed as `={{name}}`, so it can't be declared or \
-             assigned. Write through it instead (`{name}[i]=…`, `read {name}`), or \
+             replaced with a scalar. Use a well-typed collection assignment, \
+             `{name}[i]=…` or `read {name}`, or \
              use a differently named local"
         ),
     )
@@ -13020,7 +13050,7 @@ fn check_array_target_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagno
 }
 
 /// The subject of ANY `@name` splat (with or without a disposition).
-fn any_splat_source(value: &Expr) -> Option<&str> {
+pub(crate) fn any_splat_source(value: &Expr) -> Option<&str> {
     let ExprKind::ParameterExpansion(pe) = &value.kind else {
         return None;
     };
@@ -13051,7 +13081,7 @@ fn map_disposition_diag(span: Span, source: &str, target: &str) -> Diagnostic {
         span,
         "SB5058",
         format!(
-            "`map {target} = @{source}` must state what happens to an odd \
+            "`{target} = @{source}` must state what happens to an odd \
              element count — the array is consumed pairwise. Use \
              `@{{{source}:-KEY}}` (the trailing element becomes the value of \
              KEY), `@{{{source}:?MSG}}` (abort), or `@{{{source}:~}}` (discard \

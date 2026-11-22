@@ -759,26 +759,19 @@ fn run_semantic_checks(
     )
 }
 
-/// Type check, reporting every SB4030 before exiting. Split out of
-/// `run_semantic_checks` so that function stays a flat list of passes.
+/// Type check, including shape rules that need inferred collection slots.
+/// Split out of `run_semantic_checks` so that function stays a flat list of passes.
 fn type_check_or_exit(
     input: &str,
     program: &crate::ir::Program,
     names: &bindings::SourceNames,
 ) -> type_check::CheckedTypes {
-    let type_errors = match type_check::type_check(program) {
+    let mut diagnostics = match type_check::type_check(program) {
         Ok(types) => return types,
         Err(errors) => errors,
     };
-    for te in &type_errors {
-        eprintln!(
-            "{}:{}:{}: error [SB4030] {}",
-            input,
-            te.span.line,
-            te.span.col,
-            names.restore(&te.message)
-        );
-    }
+    restore_diagnostics(&mut diagnostics, names);
+    print_diags(input, &diagnostics);
     std::process::exit(1);
 }
 

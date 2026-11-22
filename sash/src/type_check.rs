@@ -5,6 +5,7 @@
 /// - An int operand in a `[[ ]]` test, dispatch or `attest` predicate
 /// - `exit` with unbounded int variable
 /// - `if func` where func is `-> int`
+use crate::diagnostic::Diagnostic;
 use crate::ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -1056,7 +1057,7 @@ fn declared_collection_kind(d: &Declaration) -> Option<bool> {
 }
 
 /// Type-check every body and return the checked types used by lowering.
-pub fn type_check(program: &Program) -> Result<CheckedTypes, Vec<TypeError>> {
+pub fn type_check(program: &Program) -> Result<CheckedTypes, Vec<Diagnostic>> {
     let mut errors = Vec::new();
     let mut env = TypeEnv::new();
 
@@ -1097,7 +1098,13 @@ pub fn type_check(program: &Program) -> Result<CheckedTypes, Vec<TypeError>> {
     // only way to apply the tail rule consistently.
     check_int_fn_predicates(program, &env, &mut errors);
 
-    if errors.is_empty() {
+    let mut diagnostics = errors
+        .into_iter()
+        .map(|error| Diagnostic::error_span(error.span, "SB4030", error.message))
+        .collect();
+    run_stmt_pass(program, &env, &mut diagnostics, check_assignment_shape);
+
+    if diagnostics.is_empty() {
         let collections = env
             .collections
             .into_iter()
@@ -1112,7 +1119,7 @@ pub fn type_check(program: &Program) -> Result<CheckedTypes, Vec<TypeError>> {
             collections,
         })
     } else {
-        Err(errors)
+        Err(diagnostics)
     }
 }
 
@@ -1144,11 +1151,11 @@ fn check_program_bodies(program: &Program, env: &mut TypeEnv, errors: &mut Vec<T
 }
 
 /// Every pass uses the same function binding and visits each statement once.
-fn run_stmt_pass(
+fn run_stmt_pass<E>(
     program: &Program,
     env: &TypeEnv,
-    errors: &mut Vec<TypeError>,
-    pass: fn(&Statement, &TypeEnv, &mut Vec<TypeError>),
+    errors: &mut Vec<E>,
+    pass: fn(&Statement, &TypeEnv, &mut Vec<E>),
 ) {
     let mut scopes = HashMap::new();
     let mut visit = |stmt: &Statement, owner: &str| {
@@ -1163,6 +1170,20 @@ fn run_stmt_pass(
     };
     for body in program.bodies() {
         walk_scoped_stmts(body, "", &mut visit);
+    }
+}
+
+fn check_assignment_shape(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Diagnostic>) {
+    let StmtKind::Assignment(a) = &stmt.kind else {
+        return;
+    };
+    if !is_collection_slot(&a.name) {
+        return;
+    }
+    let collection = (env.is_collection(&a.name) && !env.is_slot(&a.name))
+        .then(|| env.assoc_arrays.contains(&a.name));
+    if let Some(error) = crate::validate::assign_shape_diag(a, collection) {
+        errors.push(error);
     }
 }
 
@@ -2097,21 +2118,18 @@ fn check_assign_type_match(
     env: &mut TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
+    if a.index.is_none() && env.is_collection(&a.name) {
+        let var_type = env.var_type(&a.name);
+        check_collection_value(&a.value, &a.name, var_type, span, env, errors);
+        env.declare(&a.name, var_type);
+        return;
+    }
     if !env.bound.contains(&a.name) {
         let rtype = expr_type(&a.value, env);
         env.declare(&a.name, rtype);
         return;
     }
-    let ltype = env.var_type(&a.name);
-    if ltype == VarType::Int
-        && a.index.is_none()
-        && env.collections.contains(&a.name)
-        && matches!(a.value.kind, ExprKind::Array(_) | ExprKind::AssocArray(_))
-    {
-        check_int_collection_elements(&a.value, &a.name, span, env, errors);
-    } else {
-        check_type_match(ltype, &a.value, &a.name, span, env, errors);
-    }
+    check_type_match(env.var_type(&a.name), &a.value, &a.name, span, env, errors);
 }
 
 /// The single place a scalar string↔int mismatch is diagnosed.
@@ -2176,9 +2194,7 @@ fn is_collection_decl(d: &Declaration) -> bool {
     d.flags.iter().any(|f| f == "-a" || f == "-A")
 }
 
-/// Type-check one assignment of a declaration: an int-collection element
-/// (numeric), or a scalar (int↔string). A string collection's elements are
-/// unconstrained strings.
+/// Declarations and reassignments share collection and scalar value checks.
 fn check_one_decl_assignment(
     d: &Declaration,
     a: &crate::ir::DeclAssignment,
@@ -2193,8 +2209,8 @@ fn check_one_decl_assignment(
     };
     if !is_collection {
         check_type_match(d.var_type, value, &a.name, span, env, errors);
-    } else if d.var_type == VarType::Int {
-        check_int_collection_elements(value, &a.name, span, env, errors);
+    } else {
+        check_collection_value(value, &a.name, d.var_type, span, env, errors);
     }
 }
 
@@ -2209,30 +2225,80 @@ fn track_collection_names(d: &Declaration, env: &mut TypeEnv) {
     }
 }
 
-/// DD#76: every element of an `int array`/`int map` literal must be an integer
-/// (a numeric literal, an int var, `$(( … ))`, or an int-returning `$(f)`).
-fn check_int_collection_elements(
+fn check_collection_value(
     value: &Expr,
     name: &str,
+    var_type: VarType,
     span: Span,
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
+    if let Some(source) = crate::validate::any_splat_source(value) {
+        check_map_conversion_types(source, name, var_type, span, env, errors);
+        return;
+    }
+    if env.is_slot(name) {
+        return;
+    }
     let elems: Vec<&Expr> = match &value.kind {
         ExprKind::Array(es) => es.iter().collect(),
         ExprKind::AssocArray(pairs) => pairs.iter().map(|(_, v)| v).collect(),
         _ => return,
     };
     for e in elems {
-        if !is_numeric_literal(e) && expr_type(e, env) != VarType::Int {
-            errors.push(TypeError {
-                message: format!(
-                    "non-numeric element in int collection `{}` — an int array/map holds integers",
-                    name,
-                ),
-                span,
-            });
-        }
+        check_collection_element(e, name, var_type, span, env, errors);
+    }
+}
+
+fn check_collection_element(
+    value: &Expr,
+    name: &str,
+    var_type: VarType,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if var_type == VarType::String {
+        check_type_match(var_type, value, name, value.span, env, errors);
+    } else if !is_numeric_literal(value) && expr_type(value, env) != VarType::Int {
+        errors.push(TypeError {
+            message: format!(
+                "non-numeric element in int collection `{name}` — an int array/map holds integers"
+            ),
+            span,
+        });
+    }
+}
+
+fn check_map_conversion_types(
+    source: &str,
+    target: &str,
+    var_type: VarType,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if var_type != VarType::String {
+        errors.push(TypeError {
+            message: format!(
+                "array-to-map conversion produces strings, not the integers required by `{target}`"
+            ),
+            span,
+        });
+    }
+    if env.is_slot(source) {
+        return;
+    }
+    if !env.is_collection(source)
+        || env.assoc_arrays.contains(source)
+        || env.var_type(source) != VarType::String
+    {
+        errors.push(TypeError {
+            message: format!(
+                "array-to-map conversion requires a string array source, not `{source}`"
+            ),
+            span,
+        });
     }
 }
 

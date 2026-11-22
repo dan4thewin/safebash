@@ -54,10 +54,10 @@ run_sash 'fn get { echo "${A[0]}" }; array _a=($(get =_a)); echo "${_a[0]}"'
 [[ $rc != 0 && $err == *SB5104* && $err == *'`_a`'* ]]; chk scratch.15
 
 # Passing identity to an unused slot does not read its value.
-run_sash 'fn get -> int { return 7 }; array _a=($(get =_a)); echo "${_a[0]}"'
+run_sash 'fn get -> int { return 7 }; array _a=("$(get =_a)"); echo "${_a[0]}"'
 [[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk scratch.16
 
-run_sash 'fn get -> int { A[0]=changed; return 7 }; array _a=($(get =_a)); echo "${_a[0]}"'
+run_sash 'fn get -> int { A[0]=changed; return 7 }; array _a=("$(get =_a)"); echo "${_a[0]}"'
 [[ $rc != 0 && $err == *SB5103* && $err == *'`_a`'* ]]; chk scratch.17
 
 run_sash 'str switch=yes; fn get { if [[ $switch == yes ]] { keys _m k; echo "${k[0]}" } }; map _m=([key]=$(get)); echo "${_m[key]}"'

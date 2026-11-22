@@ -1718,7 +1718,7 @@ run_sash 'x=$(- arg 1); array z=($(( ${x:-0} ))); if [[ ${z[0]} == 7 ]]; then ec
 # atint.16 the new arm must not OVER-reject: clean arithmetic into a
 # collection is still legal, and still computes. A taint arm that rejects
 # everything passes atint.13-15 and is useless.
-run_sash 'int n=5; array z=($(( n + 1 ))); echo "${z[0]}"'
+run_sash 'int n=5; int array z=($(( n + 1 ))); echo "${z[0]}"'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk atint.16
 # ── The SB4030 shield ────────────────────────────────────────────────
 # `check_arith_taint` has no arm for a BARE name in arithmetic

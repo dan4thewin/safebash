@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=487
+plan=506
 echo "1..$plan" >&3
 
 set +e
@@ -2834,6 +2834,102 @@ readline n
 echo "${n:!}"'
 [[ $rc != 0 && -z $out && $err == *':2:1: error [SB4030]'* \
    && $err == *'cannot fill int variable `n` with `readline`'* ]]; chk gtype.1
+
+# DD99: pairwise conversion also replaces an existing map.
+run_sash 'map m
+fn fill {
+text=$(/bin/echo "ONE=one TWO=two")
+- matchall $text:! "(\w+)=([^ ]+)" a
+m=@a:~
+}
+fill
+echo "${m[ONE]} ${m[TWO]} $(len m)"'
+[[ $rc = 0 && $out = 'one two 2' && -z $err && -z $rerr ]]; chk mapassign.1
+
+run_sash 'map m=([old]=stale)
+array a=(key first key last odd)
+m=@a:~
+echo "${m[key]} ${m[old]:-gone} $(len m) $(len a)"
+array empty=()
+m=@empty:?unused
+echo $(len m)'
+[[ $rc = 0 && $out = $'last gone 1 5\n0' && -z $err && -z $rerr ]]; chk mapassign.2
+
+run_sash 'map m=([old]=stale)
+array a=(key value orphan)
+m=@a:-tail
+echo "$(len m) ${m[tail]} ${m[old]:-gone}"'
+[[ $rc = 0 && $out = '2 orphan gone' && -z $err && -z $rerr ]]; chk mapassign.3
+
+run_sash 'map m=([old]=kept)
+array a=(new candidate odd)
+m=@a:?odd-pairs
+echo unexpected
+ERR { - echo "$(len m):${m[old]:!}:${m[new]:!}" }'
+[[ $rc = 1 && $out = '1:kept:' && -z $err && $rerr == *odd-pairs* ]]; chk mapassign.4
+
+run_sash 'array a=(new candidate odd)
+map m=@a:?odd-pairs
+echo unexpected
+ERR { - echo "$(len m):${m[new]:!}" }'
+[[ $rc = 1 && $out = '0:' && -z $err && $rerr == *odd-pairs* ]]; chk mapassign.5
+
+run_sash 'array a=(key value); map m; m=@a; echo $(len m)'
+[[ $rc = 1 && $err == *SB5058* && $err == *'odd element count'* ]]; chk mapassign.6
+
+run_sash 'array a=(key value); array b; b=@a:~; echo $(len b)'
+[[ $rc = 1 && $err == *SB5025* ]]; chk mapassign.7
+
+run_sash 'array a=(key value); map m; m[key]=@a:~; echo ${m[key]}'
+[[ $rc = 1 && $err == *SB5025* ]]; chk mapassign.8
+
+run_sash 'array a=(key value); map m; m+=@a:~; echo $(len m)'
+[[ $rc = 1 && $err == *SB5091* ]]; chk mapassign.9
+
+run_sash 'map a=([key]=value); map m=@a:~; echo $(len m)'
+[[ $rc = 1 && $err == *SB4030* && $err == *'requires a string array source'* ]]; chk mapassign.10
+
+run_sash 'int array a=(1 2); map m=@a:~; echo $(len m)'
+[[ $rc = 1 && $err == *SB4030* && $err == *'requires a string array source'* ]]; chk mapassign.11
+
+run_sash 'array a=(key 7); int map m=@a:~; echo $(len m)'
+[[ $rc = 1 && $err == *SB4030* && $err == *'produces strings'* ]]; chk mapassign.12
+
+run_sash 'int n=7; array a=($n); echo $(len a)'
+[[ $rc = 1 && $err == *SB4030* && $err == *'cannot assign int value to string'* ]]; chk mapassign.13
+
+run_sash 'argv 1 a; map m; m=@a:~; echo ${m[key]}' key value
+[[ $rc = 1 && $err == *SB5020* ]]; chk mapassign.14
+
+SASH_CFLAGS=--no-taint-cst run_sash 'argv 1 input
+map m=@input:~
+array a=(key replacement)
+m=@a:~
+echo ${m[key]}' key original
+[[ $rc = 1 && $err == *'tainted array m[...]'* && $err == *'SSA taint backstop'* ]]; chk mapassign.15
+
+run_sash 'argv 1 a; map m=([old]=stale); m=@a:!~; echo ${m[key]}' key value
+[[ $rc = 0 && $out = value && -z $err && -z $rerr ]]; chk mapassign.16
+
+SASH_CFLAGS=--no-taint-cst run_sash 'argv 1 a; map m; m=@a:~; echo ${m[key]}' key value
+[[ $rc = 1 && $err == *'tainted array m[...]'* && $err == *'SSA taint backstop'* ]]; chk mapassign.17
+
+run_sash 'array a=(key first)
+for phase in good bad {
+if [[ $phase == bad ]] { a=(key second odd) }
+map _m=@a:?odd-pairs
+echo ${_m[key]}
+}
+ERR { - echo "$(len _m):${_m[key]:!}" }'
+[[ $rc = 1 && $out = $'first\n0:' && -z $err && $rerr == *odd-pairs* ]]; chk mapassign.18
+
+# A direct replacement on the failed-attest path may resolve its subject.
+SASH_CFLAGS=--no-taint-cst run_sash 'array clean=(key fallback)
+argv 1 input
+map m=@input:~
+if ! attest k v in m [[ $k == key && $v == accepted ]] { m=@clean:~ }
+echo ${m[key]}' key rejected
+[[ $rc = 0 && $out = fallback && -z $err && -z $rerr ]]; chk mapassign.19
 
 set -e
 tally
