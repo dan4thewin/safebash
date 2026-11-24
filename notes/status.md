@@ -1,5 +1,5 @@
 title: Status
-modified: 2026-11-22
+modified: 2026-11-24
 
 # Current status
 
@@ -110,6 +110,13 @@ limitation with its guard and the combined-attest guidance.
 
 ## Just completed
 
+- **Unexpected capture-taint findings backlogged, not repaired.**
+  The existing P3 [buffer-eligibility task](tasks/q-buffer-capture-eligibility.md)
+  now includes outer-negated tests represented as one-command pipelines.
+  A separate P2 [read-source lowering bug](tasks/bug-read-source-capture-unlowered.md)
+  records the unmaterialized substitution behind the resolver's SSA errors.
+  [Journal 669](journal/669-capture-buffer-and-read-source-backlog.md)
+  records the evidence; this task made no compiler or user-script edits.
 - **Existing-map conversion and whole-collection slot assignment delivered.**
   Shared type/shape checks and private conversion publication cover direct,
   forwarded and permuted slots without relaxing readonly or taint rules.
