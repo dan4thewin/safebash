@@ -3,21 +3,36 @@ status: accepted
 
 1. Filename redirect targets must be string-typed and provably non-empty.
    Nonempty literals qualify; each string-variable or string-cell read needs
-   its own nonempty-guaranteeing disposition.
+   its own nonempty-guaranteeing disposition unless the direct immutable
+   scalar exemption below applies.
 2. Integer variables and cells qualify when explicitly quoted as strings.
    Concatenation does not let literal neighbors excuse an unguarded string read.
-3. Direct command captures and intrinsics are not redirect-target operands.
+3. A directly tested immutable scalar binding instance may omit its
+   disposition when success holds on every reaching path in the same body.
+   Only simple unary tests qualify: `-n`, `cpath?`, `p?`, `g?`, `-e`, `-f`,
+   `-d`, `-r`, `-w`, `-x`, `-s`, `-L`, `-h`. Scalar attest shorthand and an
+   equivalent full predicate follow the same rule.
+4. That exemption permits exactly one read of the proved binding, with
+   optional literal text added only at the redirect site. Quotes and braces
+   preserve the read; copies, derived bindings, helper boundaries, collections
+   and cells do not transfer the proof. Compound predicates, comparisons and
+   deductions from a false test do not establish it. Fresh lifetimes need
+   their own proof.
+5. Direct command captures and intrinsics are not redirect-target operands.
    Bind an eligible value first and satisfy the same target rules.
    Cell indices may contain otherwise-legal captures: selecting a cell is
    distinct from using a capture directly as the filename.
-4. Empty defaults and elision do not prove a usable filename. Target operand
-   evaluation retains its own taint and failure checks.
+6. Empty defaults, elision, forced reads and taint-disable switches do not
+   establish nonemptiness. Target operand evaluation retains its own taint
+   and failure checks; an ordinary test does not attest tainted data.
 
 ---
 
 Settled with DG (2026-09-26). DG's framing: *"what if we require any variable
 that is a redirect target to use a disposition, save perhaps an observably
 non-empty const, and excluded direct use of commands or intrinsics"*.
+On 2026-11-25 DG selected the narrowly bounded direct-test exemption below,
+explicitly rejecting transitive property tracking.
 
 ## How it started
 
@@ -47,7 +62,7 @@ possibly be empty.
 
 A target is provably non-empty when it is:
 
-1. **A non-empty constant** — a literal or quoted string with at least one
+1. **A non-empty literal** — a literal or quoted string with at least one
    character. `> out.log`, `> "/tmp/x"`. An empty `> ""` is rejected: it is
    observably the bug.
 2. **A string variable read carrying a non-empty-guaranteeing disposition** —
@@ -60,8 +75,10 @@ A target is provably non-empty when it is:
    operands). DG: *"exempt but still needs quotes to make a string"*.
 4. **An array cell read with a disposition** — `${a[1]:?msg}`. A cell is a
    string read like any other, so it carries the same obligation.
-5. **A concatenation of the above**, with each variable part satisfying its own
-   obligation independently.
+5. **A directly tested immutable scalar**, under the bounded rule below.
+6. **A concatenation** of disposition-bearing or quoted-integer parts, with
+   each variable part satisfying its own obligation independently; or exactly
+   one directly proved immutable scalar with literal neighbors at this use.
 
 DG clarified on 2026-11-17: **allow captures in guarded cell indices; keep
 direct capture targets forbidden.** For example,
@@ -74,7 +91,8 @@ an unguarded string-cell read.
 
 Everything else is rejected, in particular:
 
-- a bare `$p` on a string — the empty case is exactly the bug;
+- a bare `$p` on a string without the direct immutable proof — the empty
+  case is exactly the bug;
 - a command substitution `$(cmd)` — not provable, and DG's 2026-08-30
   reasoning stands verbatim: the compiler cannot know what filename a command
   would produce;
@@ -83,12 +101,70 @@ Everything else is rejected, in particular:
 - `${p:~}` — the elide disposition yields *nothing*, which is the bug itself.
   (Already SB5046 in the redirect position; the rule now explains why.)
 
-## Why dispositions are the right gate
+## Direct immutable proof
 
-They are not ceremony. A disposition is the **proof mechanism** — the only
-construct in the language that makes emptiness accountable at the point of use.
+DG's requirement is deliberately local:
+
+> Only the proven nonempty immutable value can be used sans dispositon as
+> the redirection target, with optional concatenation of literals.
+
+He clarified that the concatenation belongs **only at the redirect site**,
+and limited the predicates to obvious unary tests in simple usage. This is
+an ergonomic allowance, not an attempt to recognize every logical proof of
+nonemptiness.
+
+```sash
+_dir=$(- arg 1)
+attest _dir cpath?
+echo message > $_dir/log
+```
+
+The whole predicate must directly test the scalar with one of:
+
+```text
+-n cpath? p? g? -e -f -d -r -w -x -s -L -h
+```
+
+A simple ordinary `[[ ... ]]`, a scalar attest shorthand, and its equivalent
+full unary predicate qualify. The redirect must be reached only after a
+successful test of that same immutable binding instance in the same body.
+Ordinary consts qualify as well as scratch; an immutable initializer known
+to be nonempty does not qualify without the direct test.
+
+Quoting, braces and empty literal wrappers do not change the tested value.
+Testing `$_dir/suffix`, `${_dir:-fallback}` or `${_dir:?message}` does not
+test the binding alone. Negated `-z`, comparisons, compound predicates and
+unlisted unary operators confer no new proof.
+
+At the redirect, `$_dir/log` and `"prefix${_dir}/log"` qualify. There must be
+exactly one dynamic read: even two reads of the same proved binding do not
+qualify together. Assigning `_file=$_dir/log` does not transfer the proof;
+`_file` needs its own qualifying test or a disposition. Copies in either
+direction, function arguments/results, helper calls, collection attests and
+cell reads similarly confer no certificate on another binding or body.
+Revisiting scratch construction starts a new instance that must be tested
+again. These restrictions do not replace the existing per-part disposition
+route for multipart targets.
+
+The retained property is **nonemptiness only**. A file may disappear after
+`-f`; appended literal text may cease to satisfy `cpath?`. Neither continued
+existence, authorization nor conservative-path spelling is promised for the
+resulting target.
+
+Taint and DD132's caught-scratch read permission remain independent.
+An ordinary test does not declassify its operand. A transparent `:!` read
+may explicitly override taint while testing or using the same bytes, but
+does not itself prove nonemptiness. The taint switches cannot manufacture
+this proof either.
+
+## Why dispositions remain the general gate
+
+They are not ceremony. A disposition is the general **proof mechanism** that
+makes emptiness accountable at the point of use.
 Requiring one is requiring the author to say what happens when the value is not
-there, which is the question the old rule never asked.
+there, which is the question the old rule never asked. The direct immutable
+exemption instead makes the successful test visible earlier in the same body,
+without propagating facts through a chain of values.
 
 This is also why `:-` with an empty default and `:~` must be excluded even
 though both *are* dispositions: the test is not "did you write a disposition"
@@ -97,8 +173,9 @@ but "does the result prove non-empty". A rule phrased the first way would admit
 
 ## Strictness in concatenations
 
-DG chose **strict**: every variable part needs its own disposition regardless of
-its literal neighbours. The lenient reading — a non-empty literal anywhere
+DG chose **strict**: literal neighbors do not discharge a variable's obligation.
+Except for the single directly proved immutable read above, each string part
+needs its own disposition. The lenient reading — a non-empty literal anywhere
 discharges the proof for the whole target — was rejected. Under lenient,
 `> $p.log` with an empty `p` writes to `.log`: not the empty-filename bug, but a
 silent hidden file in the working directory, which is its own surprise. Strict
@@ -131,16 +208,18 @@ filed as its own task and explicitly **not** decided here.
 
 ## Diagnostics
 
-The rejection is **SB4030**. That is not a free choice: the rule needs
-`env.var_type` for the int exemption, so it lives in `type_check.rs`, and
-`lib.rs:387` prints every `TypeError` under the single code SB4030. The message
-names the specific failure (bare variable, empty default, elide, empty
-constant, unquoted int) and gives the remedy for that shape.
+The rejection remains **SB4030**. `type_check.rs` handles string typing,
+integer quoting and the literal/disposition rules. It defers eligible
+one-string-binding shapes to the shared pre-fold SSA proof analysis.
+Original predicate and redirect metadata retain the source shape, body
+identity and target span before Boolean lowering or temporary spills can
+erase them. Unused definitions and unvisited targets after a terminal
+command do not silently escape the deferred obligation.
 
-This is a known wart — "the target is not provably non-empty" is not really a
-*type* error — but inventing an SB5xxx here would mean either duplicating the
-type environment into `validate.rs` or teaching `type_check` per-error codes.
-Both are larger than this rule and neither is decided here.
+The message names the failure and gives its remedy: a nonempty-guaranteeing
+disposition, or the bounded direct immutable test where applicable. Moving
+that part of the check later does not introduce a new diagnostic code or
+relax taint, caught-read permission or operand failure handling.
 
 A command substitution or intrinsic target is rejected earlier still, at parse,
 by the existing SB4049 scalar rule — DD#119 does not weaken it.

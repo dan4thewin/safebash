@@ -320,6 +320,7 @@ fn lower_function_stmt(
     state.class_in_force = classify(&state.exits_in_force, Absent::Status);
     report_arity_defects(f, stmt, state);
     let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
+    ssa.function_templates.push(fn_entry);
     let fn_exit = lower_fn_template(&f.name, &f.body, ssa, state, fn_entry);
     ssa.block_mut(fn_exit).terminator = Terminator::Return;
     block
@@ -594,32 +595,43 @@ pub(super) fn spill_scalar_redirect_targets(
 ) -> Vec<Redirect> {
     let mut out = Vec::with_capacity(redirects.len());
     for redir in redirects {
-        if target_needs_spill(&redir.target.kind) {
-            let val = expr_to_value(&redir.target, state);
-            let val = super::functions::unsuppressed(state, |state| {
-                lift_int_func_calls(val, ssa, state, block)
-            });
-            let name = state.reserve_temp_name(
-                format!("__redir_target_{}_{}", ssa.blocks.len(), out.len()),
-                VarType::String,
-            );
-            let target = state.define(&name);
-            ssa.block_mut(*block)
-                .insts
-                .push(SsaInst::Assign { target, value: val });
-            out.push(Redirect {
-                fd: redir.fd,
-                op: redir.op,
-                target: Expr {
-                    kind: ExprKind::SimpleExpansion(name),
-                    span: Span::default(),
-                },
-            });
-        } else {
+        let needs_proof = crate::redirect_proof::record_target(&redir.target, ssa, state, *block);
+        // Bare proof-carrying reads also need their actual reaching taint version.
+        if !needs_proof && !target_needs_spill(&redir.target.kind) {
             out.push(redir.clone());
+            continue;
         }
+        out.push(spill_redirect_target(redir, ssa, state, block, out.len()));
     }
     out
+}
+
+fn spill_redirect_target(
+    redir: &Redirect,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+    index: usize,
+) -> Redirect {
+    let val = expr_to_value(&redir.target, state);
+    let val =
+        super::functions::unsuppressed(state, |state| lift_int_func_calls(val, ssa, state, block));
+    let name = state.reserve_temp_name(
+        format!("__redir_target_{}_{index}", ssa.blocks.len()),
+        VarType::String,
+    );
+    let target = state.define(&name);
+    ssa.block_mut(*block)
+        .insts
+        .push(SsaInst::Assign { target, value: val });
+    Redirect {
+        fd: redir.fd,
+        op: redir.op,
+        target: Expr {
+            kind: ExprKind::SimpleExpansion(name),
+            span: Span::default(),
+        },
+    }
 }
 
 /// Simple command + redirects: attach the redirects directly to the last

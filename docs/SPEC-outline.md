@@ -364,9 +364,12 @@
         1. Stop on first redirect failure; do not run the body or undo earlier argument/file effects.
         2. Restore scoped descriptors before continuing after a handled failure.
     2. Filename targets are strings and provably nonempty.
-        1. Every string variable/cell component needs its own nonempty default or require disposition; neighboring literals do not suffice.
+        1. Each string variable/cell component needs its own nonempty default or require disposition, except for the direct immutable-scalar proof below; neighboring literals alone do not suffice.
         2. Explicitly quoted integers qualify; direct captures/intrinsics must be bound before use as targets.
-        3. Empty defaults and elision do not establish nonemptiness.
+        3. An immutable scalar directly tested by simple `-n`, `cpath?`, `p?`, `g?`, `-e`, `-f`, `-d`, `-r`, `-w`, `-x`, `-s`, `-L` or `-h` may omit its disposition when success holds on every reaching path in the same body.
+        4. Exactly one read of that binding may have literal neighbors added at the redirect site; quotes/braces preserve identity, but copies, derived values, helpers and cells do not transfer the proof.
+        5. Compound predicates, comparisons, false-test deductions and nonempty initializers do not establish this proof; fresh lifetimes need a new test.
+        6. Empty defaults, elision, forced reads and taint-disable switches do not establish nonemptiness; ordinary tests do not declassify tainted input.
     3. Redirect/close descriptor numbers are literal integers in `0..2147483647`; `close FD` closes one descriptor.
     4. Descriptor-only `exec` changes descriptors persistently; `exec PROGRAM ...` replaces the process and does not return on success.
     5. Each descriptor-backed `echo`/`write` invocation emits one complete write request after arguments and redirects.

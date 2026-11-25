@@ -1,4 +1,4 @@
-//! DD132: immutable regex witnesses and lexical caught-scratch read permissions.
+//! DD132 regex witnesses, caught-scratch reads and DD119 direct redirect proofs.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -122,6 +122,7 @@ impl Permission {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Facts {
     proofs: Vec<(Place, Certificates)>,
+    nonempty: BTreeSet<(Option<usize>, String)>,
     equal: Vec<(Place, Place)>,
     present: Vec<Place>,
     sizes: BTreeMap<String, usize>,
@@ -194,6 +195,7 @@ impl Facts {
     }
 
     fn kill(&mut self, name: &str) {
+        self.nonempty.retain(|(_, binding)| binding != name);
         self.proofs.retain(|(place, _)| !place.reads(name));
         self.equal.retain(|(a, b)| !a.reads(name) && !b.reads(name));
         self.present.retain(|place| !place.reads(name));
@@ -213,6 +215,9 @@ impl Facts {
 
     fn meet(&self, other: &Self) -> Self {
         let mut result = self.clone();
+        result
+            .nonempty
+            .retain(|proof| other.nonempty.contains(proof));
         result.proofs.clear();
         for (place, proofs) in &self.proofs {
             result.add(place.clone(), require_both(proofs, &other.raw(place)));
@@ -313,11 +318,13 @@ struct Checker<'a> {
     program: &'a SsaProgram,
     inputs: BTreeMap<BlockId, Flow>,
     pending: VecDeque<BlockId>,
+    pending_redirects: BTreeSet<usize>,
     diagnostics: Vec<Diagnostic>,
     reporting: bool,
     check_reads: bool,
     main_blocks: BTreeSet<BlockId>,
     exit_blocks: BTreeSet<BlockId>,
+    executable: std::collections::HashSet<BlockId>,
 }
 
 pub(crate) fn check(program: &SsaProgram, check_reads: bool) -> Vec<Diagnostic> {
@@ -325,9 +332,11 @@ pub(crate) fn check(program: &SsaProgram, check_reads: bool) -> Vec<Diagnostic> 
         program,
         inputs: BTreeMap::new(),
         pending: VecDeque::new(),
+        pending_redirects: program.redirect_targets.keys().copied().collect(),
         diagnostics: Vec::new(),
         reporting: false,
         check_reads,
+        executable: program.reachable(),
         main_blocks: program
             .process_blocks(&[program.entry])
             .into_iter()
@@ -343,16 +352,20 @@ pub(crate) fn check(program: &SsaProgram, check_reads: bool) -> Vec<Diagnostic> 
             })
             .unwrap_or_default(),
     };
-    for root in program.roots() {
+    for root in program
+        .roots()
+        .into_iter()
+        .chain(program.function_templates.iter().copied())
+    {
         checker.enqueue(root, Flow::new(Facts::default()));
     }
     while let Some(id) = checker.pending.pop_front() {
         checker.block(id, true);
     }
-    checker.reporting = true;
     for id in checker.inputs.keys().copied().collect::<Vec<_>>() {
         checker.block(id, false);
     }
+    checker.unvisited_redirects();
     checker.diagnostics
 }
 
@@ -374,15 +387,19 @@ impl Checker<'_> {
     }
 
     fn block(&mut self, id: BlockId, propagate: bool) {
+        // Deferred redirect obligations still apply in unused definitions.
+        // Existing regex and caught-read rules retain their executable scope.
+        self.reporting = !propagate && self.executable.contains(&id);
         let block = self.program.block(id);
         let mut flow = self.inputs[&id].clone();
         let mut origin = block.origin;
         flow.map(|facts| facts.at_origin(self.program, origin));
         let mut failure = None;
         for (index, inst) in live_insts(block).iter().enumerate() {
-            if block.checked_failure_at(index).is_some() {
-                failure = Some(flow.clone());
-            }
+            failure = block
+                .checked_failure_at(index)
+                .map(|_| flow.clone())
+                .or(failure);
             self.instruction_at(block, index, inst, &mut origin, &mut flow, propagate);
         }
         if propagate {
@@ -403,6 +420,9 @@ impl Checker<'_> {
         if let SsaInst::SourceOrigin(next, _) = inst {
             *origin = *next;
             flow.map(|facts| facts.at_origin(self.program, *origin));
+        }
+        if !propagate {
+            self.redirect_target(inst, &flow.facts);
         }
         let deferred = block.signal_deferred.contains(&index);
         if propagate {
@@ -541,6 +561,7 @@ impl Checker<'_> {
             SsaInst::Attest { source, test, .. } => {
                 flow.facts.permissions.remove(&source.name);
                 flow.facts = self.test(test, origin, &flow.facts)[1].clone();
+                self.nonempty_witness(test, origin, &mut flow.facts);
                 flow.reset(None);
             }
             SsaInst::AttestAll {
@@ -599,11 +620,64 @@ impl Checker<'_> {
                 .insert(name.clone(), Permission::Within(BTreeSet::from([*scope])));
         }
         let mut outcomes = self.test(test, origin, &input);
+        self.nonempty_witness(test, origin, &mut outcomes[1]);
         if let Some((_, name)) = caught {
             outcomes[0].permissions.insert(name, Permission::Blocked);
         }
         flow.facts = outcomes[0].meet(&outcomes[1]);
         flow.outcomes = outcomes.map(Some);
+    }
+
+    fn nonempty_witness(&self, test: &SsaTest, origin: Option<usize>, facts: &mut Facts) {
+        if !origin.is_some_and(|id| self.program.origins[id].nonempty_test) {
+            return;
+        }
+        let SsaTest::Unary { operand, .. } = test else {
+            return;
+        };
+        let Some(place) = place_of(operand, true) else {
+            return;
+        };
+        if matches!(place.selection, Selection::Scalar)
+            && self.program.immutable_bindings.contains(&place.name)
+        {
+            facts
+                .nonempty
+                .insert((self.program.source_body(origin), place.name));
+        }
+    }
+
+    fn redirect_target(&mut self, inst: &SsaInst, facts: &Facts) {
+        let SsaInst::SourceOrigin(Some(origin), true) = inst else {
+            return;
+        };
+        let Some(name) = self.program.redirect_targets.get(origin) else {
+            return;
+        };
+        self.pending_redirects.remove(origin);
+        let proof = (self.program.source_body(Some(*origin)), name.clone());
+        if !facts.nonempty.contains(&proof) {
+            self.unproved_redirect(*origin);
+        }
+    }
+
+    fn unvisited_redirects(&mut self) {
+        // Moving a source typing rule into CFG analysis must not exempt dead code.
+        for origin in std::mem::take(&mut self.pending_redirects) {
+            self.unproved_redirect(origin);
+        }
+    }
+
+    fn unproved_redirect(&mut self, origin: usize) {
+        let name = &self.program.redirect_targets[&origin];
+        let diagnostic = Diagnostic::error_span(
+            self.program.origins[origin].span,
+            "SB4030",
+            crate::redirect_proof::missing_proof(name),
+        );
+        if !self.diagnostics.contains(&diagnostic) {
+            self.diagnostics.push(diagnostic);
+        }
     }
 
     fn caught(&self, enabled: bool, origin: Option<usize>) -> Option<(usize, String)> {
@@ -1208,4 +1282,63 @@ fn element_count(value: &SsaValue, facts: &Facts) -> Option<usize> {
     };
     let size = *facts.sizes.get(&array.name)?;
     Some(size.max(usize::from(splat_default(disposition.as_ref()).is_some())))
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use crate::ir::{Span, VarType};
+
+    #[test]
+    fn fresh_lifetime_invalidates_direct_redirect_proof() {
+        let mut program = SsaProgram::new();
+        let block = program.new_block("entry");
+        let source = VarRef {
+            name: "_path".into(),
+            version: 1,
+            var_type: VarType::String,
+        };
+        program.source_bindings.insert(source.name.clone());
+        program.immutable_bindings.insert(source.name.clone());
+        program.enter_source(Span::new(1, 1), None, false, block);
+        program.origins[0].nonempty_test = true;
+        program.block_mut(block).insts.push(SsaInst::Attest {
+            target: VarRef {
+                version: 2,
+                ..source.clone()
+            },
+            source: source.clone(),
+            test: SsaTest::Unary {
+                op: "-n".into(),
+                operand: SsaValue::Var(source.clone()),
+            },
+        });
+        program.leave_source(None, block);
+        let before_use = program.block(block).insts.len();
+        let span = Span::new(2, 14);
+        program.enter_source(span, None, false, block);
+        program.redirect_targets.insert(1, source.name.clone());
+        program.leave_source(None, block);
+        assert!(check(&program, true).is_empty());
+
+        // Source loop merges also lose this fact; isolate the lifetime boundary.
+        program.block_mut(block).insts.insert(
+            before_use,
+            SsaInst::LifetimeStart {
+                target: VarRef {
+                    version: 3,
+                    ..source.clone()
+                },
+                collection: false,
+            },
+        );
+        assert_eq!(
+            check(&program, true),
+            vec![Diagnostic::error_span(
+                span,
+                "SB4030",
+                crate::redirect_proof::missing_proof(&source.name),
+            )],
+        );
+    }
 }

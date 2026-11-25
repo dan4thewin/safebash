@@ -939,9 +939,15 @@ pub(super) fn lower_body(
     block: BlockId,
 ) -> BlockId {
     check_body_returns(body, state);
+    let parent = ssa.enter_source(state.stmt_span, None, false, block);
+    let origin = ssa
+        .current_origin
+        .expect("the body just entered its origin");
+    ssa.origins[origin].body = true;
     let inherited = initialize_body_locals(body, ssa, state, block);
     let exit = lower_stmts(body, ssa, state, block);
     state.live_locals = inherited;
+    ssa.leave_source(parent, exit);
     exit
 }
 

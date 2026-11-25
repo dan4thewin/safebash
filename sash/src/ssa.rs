@@ -1960,6 +1960,8 @@ pub(crate) struct SourceOrigin {
     pub(crate) parent: Option<usize>,
     pub(crate) attest: Option<crate::ir::Span>,
     pub(crate) for_binding: bool,
+    pub(crate) body: bool,
+    pub(crate) nonempty_test: bool,
 }
 
 /// How a basic block ends.
@@ -2137,6 +2139,8 @@ pub struct SsaProgram {
     pub(crate) source_bindings: std::collections::HashSet<String>,
     pub(crate) immutable_bindings: std::collections::HashSet<String>,
     pub(crate) caught_scratch: HashMap<usize, String>,
+    pub(crate) redirect_targets: HashMap<usize, String>,
+    pub(crate) function_templates: Vec<BlockId>,
     pub(crate) taint_predecessors: HashMap<VarRef, VarRef>,
     pub(crate) resolutions: std::collections::HashSet<VarRef>,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
@@ -2290,6 +2294,8 @@ impl SsaProgram {
             source_bindings: std::collections::HashSet::new(),
             immutable_bindings: std::collections::HashSet::new(),
             caught_scratch: HashMap::new(),
+            redirect_targets: HashMap::new(),
+            function_templates: Vec::new(),
             taint_predecessors: HashMap::new(),
             resolutions: std::collections::HashSet::new(),
             blocks: BTreeMap::new(),
@@ -2346,6 +2352,8 @@ impl SsaProgram {
             parent,
             attest,
             for_binding,
+            body: false,
+            nonempty_test: false,
         });
         self.current_origin = Some(id);
         self.block_mut(block)
@@ -2359,6 +2367,16 @@ impl SsaProgram {
         self.block_mut(block)
             .insts
             .push(SsaInst::SourceOrigin(parent, false));
+    }
+
+    pub(crate) fn source_body(&self, mut origin: Option<usize>) -> Option<usize> {
+        while let Some(id) = origin {
+            if self.origins[id].body {
+                return Some(id);
+            }
+            origin = self.origins[id].parent;
+        }
+        None
     }
 
     pub(crate) fn install_signal_checkpoints(&mut self) {

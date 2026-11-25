@@ -1541,29 +1541,23 @@ fn check_int_redirect_target(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<T
 /// The old rule asked "is this a scalar?", which is a syntactic proxy for the
 /// property actually wanted and leaks both ways — it admitted an empty `$p`
 /// (which reached runtime as `: No such file or directory`) and excluded a
-/// `$(getpid)` that cannot possibly be empty. A disposition is the proof
-/// mechanism: it is the one construct that makes emptiness accountable at the
-/// point of use. `:?` proves non-empty by aborting otherwise; `:-X` proves it
-/// when `X` is a non-empty constant. `${p:-}` and `${p:~}` are dispositions
-/// that prove *nothing*, so the test is "does the result prove non-empty", not
-/// "did you write a disposition".
+/// `$(getpid)` that cannot possibly be empty. A disposition makes emptiness
+/// accountable at the point of use. `:?` proves non-empty by aborting otherwise;
+/// `:-X` proves it when `X` is a non-empty constant. `${p:-}` and `${p:~}` are
+/// dispositions that prove *nothing*, so the test is "does the result prove
+/// non-empty", not "did you write a disposition".
+///
+/// A single string binding with optional literal neighbors is deferred to the
+/// source-local immutable proof check; no other target shape gains that exemption.
 ///
 /// An int needs no disposition — it is non-empty by type, always at least one
 /// digit — but still needs double quotes, because that is how an int becomes a
 /// string everywhere else in sash (DD#80 map keys, string-intrinsic operands).
 fn check_one_redirect_target(target: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    if let ExprKind::SimpleExpansion(name) = &target.kind {
-        if env.var_type(name) == VarType::Int {
-            errors.push(TypeError {
-                message: format!(
-                    "redirect target `${0}` is an int variable — a target is a path \
-                     (string). Convert with `\"${{{0}}}\"`",
-                    name
-                ),
-                span: target.span,
-            });
-            return;
-        }
+    if crate::redirect_proof::target_binding(target)
+        .is_some_and(|name| env.var_type(name) == VarType::String)
+    {
+        return;
     }
     match redirect_target_proof(target, env, false) {
         Ok(true) => {}
@@ -1687,23 +1681,17 @@ fn plain_read_proof(
     if index.is_some() {
         return Err(cell_read_message(name));
     }
-    if env.var_type(name) == VarType::Int {
-        return if quoted {
-            Ok(true)
-        } else {
-            Err(format!(
-                "redirect target `${0}` is an int — it is non-empty by type but \
-                 is not text. Double-quote it to convert: `\"${{{0}}}\"`",
-                name
-            ))
-        };
+    if env.var_type(name) != VarType::Int {
+        return Err(crate::redirect_proof::missing_proof(name));
     }
-    Err(format!(
-        "redirect target `${0}` may be empty — a redirect to an empty filename \
-         fails at runtime. Say what happens when it is absent: `${{{0}:?message}}` \
-         to abort, or `${{{0}:-default}}`",
-        name
-    ))
+    if !quoted {
+        return Err(format!(
+            "redirect target `${0}` is an int — it is non-empty by type but \
+             is not text. Double-quote it to convert: `\"${{{0}}}\"`",
+            name
+        ));
+    }
+    Ok(true)
 }
 
 /// Is this `:-` default itself a non-empty constant? A default that is another

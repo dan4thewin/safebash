@@ -55,7 +55,7 @@ safebash source (.sb)
     AST -> SSA, once, using CheckedTypes
     scratch-write checks
     signal planning
-    immutable regex-proof + caught-scratch read checks
+    immutable regex / direct redirect proofs + caught-scratch read checks
     terminal/entry checks + dead-variable checks
         +-- --emit-ir / --manifest: inspection output
         `-- SSA taint verification
@@ -482,6 +482,25 @@ SSA taint analyses share pending-signal tracking. Fresh zero initialization
 does not finish an acquisition guard; a caught scratch predicate finishes it
 on either outcome, without cleaning failed data or deferring signals forever.
 These analyses add no runtime storage or compiled-regex cache.
+
+The same worklist carries a separate, deliberately nontransitive
+[DD119 redirect certificate](../notes/decisions/DD119-redirect-target-provably-non-empty.md).
+A successful supported simple unary test of an immutable scalar records
+only nonemptiness for that binding instance and source body. Meets intersect
+certificates; writes and lifetime starts invalidate them. Unlike regex
+facts, these certificates do not transfer through equality, copies, cells or
+helper boundaries. Exactly one proved binding may have literal neighbors
+added at the redirect site.
+
+[`redirect_proof.rs`](../sash/src/redirect_proof.rs) classifies the original
+predicate and target shapes before Boolean lowering or spilling. Inert source
+origins retain those obligations and body boundaries. The proof pass checks
+function templates too, without widening existing regex/caught-read reporting,
+and rejects obligations left unvisited after terminal commands. Eligible
+targets use the existing scalar spill path to retain their actual reaching
+SSA version, keeping caught-attest taint checks independent and precise at
+that use. A failed proof is SB4030; no runtime check or general nonempty type
+is added.
 
 Scalar regex `match`, `sub` and `gsub` carry text and a matched/no-match
 Boolean. Direct capture-conditions consume both;

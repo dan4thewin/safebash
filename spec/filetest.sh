@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup filetest
-plan=74
+plan=109
 echo "1..$plan" >&3
 
 set +e
@@ -428,5 +428,271 @@ run_sash 'str path=/tmp
 attest path [[ cpath? "$path$(write /child)" ]]
 echo $path'
 [[ $rc != 0 && $err == *SB5098* ]]; chk cpath.17
+
+# DD119: only a directly tested immutable scalar gets the redirect exemption.
+run_sash '_path=$(- arg 1)
+attest _path -n
+echo direct > $_path' redir-direct
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-direct) = direct ]]; chk redirproof.1
+
+mkdir redir-dir
+run_sash '_dir=$(- arg 1)
+attest _dir cpath?
+echo literal > $_dir/log' "$PWD/redir-dir"
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-dir/log) = literal ]]; chk redirproof.2
+
+run_sash 'const path=redir-quoted
+attest path [[ -n ""${path}"" ]]
+echo quoted > "${path}"'
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-quoted) = quoted ]]; chk redirproof.3
+
+# Each whitelisted predicate must independently authorize its success arm.
+good=1
+for op in -n 'cpath?' 'p?' 'g?' -e -f -d -r -w -x -s -L -h; do
+    case $op in
+        -d) path="$PWD/adir" ;;
+        -x) path="$PWD/execf" ;;
+        -L|-h) path="$PWD/slink" ;;
+        *) path="$PWD/plain" ;;
+    esac
+    rm -f "$path.redir"
+    run_sash "const path='$path'
+if [[ $op \"\$path\" ]] { echo checked > \$path.redir } else { echo wrong }"
+    [[ $rc = 0 && -z $err && -z $rerr && -z $out && $(<"$path.redir") = checked ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.4
+
+run_sash '_path=redir-and
+[[ -n $_path ]] && echo short > $_path'
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-and) = short ]]; chk redirproof.5
+
+run_sash '_path=$(- arg 1)
+if attest _path -n { echo caught > $_path } else { echo empty }' redir-caught
+[[ $rc = 0 && -z $err && -z $rerr && -z $out && $(<redir-caught) = caught ]]; chk redirproof.6
+
+run_sash '_path=$(- arg 1)
+attest _path -n
+echo wrong > $_path' ""
+[[ $rc = 1 && -z $err && -z $out && $rerr == *"attest: _path"* && $rerr == *"failed the gate"* ]]; chk redirproof.7
+
+run_sash '_path=$(- arg 1)
+if attest _path cpath? { echo wrong > $_path } else { echo empty }' ""
+[[ $rc = 0 && -z $err && -z $rerr && $out = empty ]]; chk redirproof.8
+
+run_sash 'const path=redir-continuing
+if [[ -n $path ]] { echo success } else { exit 1 }
+echo continued > $path'
+[[ $rc = 0 && -z $err && -z $rerr && $out = success && $(<redir-continuing) = continued ]]; chk redirproof.9
+
+run_sash 'for name in redir-loop-a redir-loop-b {
+    _path=$name
+    attest _path -n
+    echo $name > $_path
+}'
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-loop-a) = redir-loop-a && $(<redir-loop-b) = redir-loop-b ]]; chk redirproof.10
+
+run_sash 'fn writefile {
+    _path=$1
+    attest _path -n
+    echo $1 > $_path
+}
+writefile redir-call-a
+writefile redir-call-b'
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-call-a) = redir-call-a && $(<redir-call-b) = redir-call-b ]]; chk redirproof.11
+
+run_sash 'fn unused {
+    _path=redir-unused-good
+    attest _path -n
+    echo unused > $_path
+}
+echo defined'
+[[ $rc = 0 && -z $err && -z $rerr && $out = defined && ! -e redir-unused-good ]]; chk redirproof.12
+
+run_sash '_text=$(
+    _path=redir-capture
+    attest _path -n
+    echo written > $_path
+    echo captured
+)
+attest _text -n
+echo $_text'
+[[ $rc = 0 && -z $err && -z $rerr && $out = captured && $(<redir-capture) = written ]]; chk redirproof.13
+
+# Attached calls, stages and parent readers share the original target obligation.
+run_sash 'const path=redir-forms
+attest path -n
+fn output { echo function }
+output > $path
+/bin/echo pipeline | /bin/cat > $path.pipe
+readline _line < $path
+attest _line -n
+echo $_line
+/bin/cat < $path.pipe'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'function\npipeline' && $(<redir-forms) = function && $(<redir-forms.pipe) = pipeline ]]; chk redirproof.14
+
+run_sash 'const path=redir-exec
+attest path -n
+exec > $path
+echo descriptor'
+[[ $rc = 0 && -z $err && -z $rerr && -z $out && $(<redir-exec) = descriptor ]]; chk redirproof.15
+
+run_sash '_dir=redir-dir
+attest _dir -n
+_file=$_dir/derived
+attest _file -n
+echo own > $_file'
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-dir/derived) = own ]]; chk redirproof.16
+
+run_sash 'str path=redir-mutable
+attest path -n
+echo wrong > $path'
+[[ $rc != 0 && $err == *SB4030*"redirect target"* && $err == *'`$path`'* ]]; chk redirproof.17
+
+run_sash 'const path=redir-untested
+echo wrong > $path'
+[[ $rc != 0 && $err == *SB4030*"redirect target"* && $err == *'`$path`'* ]]; chk redirproof.18
+
+# Neither exact copies (in either direction) nor precomputed paths inherit proof.
+good=1
+for source in \
+    '_path=redir-copy; attest _path -n; _copy=$_path; echo wrong > $_copy' \
+    '_path=redir-copy; _copy=$_path; attest _path -n; echo wrong > $_copy' \
+    '_path=redir-copy; _copy=$_path; attest _copy -n; echo wrong > $_path' \
+    '_path=redir-dir; attest _path -n; _copy=$_path/derived; echo wrong > $_copy'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.19
+
+good=1
+for target in '$_path$_other' '$_path$_path' '$_path${_other:?missing}'; do
+    run_sash "_path=redir-multi; _other=tail
+attest _path -n
+attest _other -n
+echo wrong > $target"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.20
+
+# Source-level compound tests must not become simple witnesses after lowering.
+good=1
+for source in \
+    '_path=redir-compound; if [[ -n $_path && -n $_path ]] { echo wrong > $_path }' \
+    '_path=redir-compound; if [[ -n $_path || -n $_path ]] { echo wrong > $_path }' \
+    '_path=redir-compound; attest _path [[ -n $_path && -n $_path ]]; echo wrong > $_path' \
+    '_path=redir-compound; if attest _path [[ -n $_path && -n $_path ]] { echo wrong > $_path }'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.21
+
+good=1
+for op in -a -N -c 'r?' 'i?' '0?' -z; do
+    run_sash "const path=123
+if [[ $op \$path ]] { echo wrong > \$path }"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.22
+
+# A test of derived or disposition-protected bytes is not a direct binding test.
+good=1
+for test in '-d $_path/suffix' '-n ${_path:?missing}' '-n ${_path:-fallback}'; do
+    run_sash "_path=redir-operand
+attest _path [[ $test ]]
+echo wrong > \$_path"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.23
+
+good=1
+for test in '! -z $_path' '$_path == redir-deduction' '$_path != ""'; do
+    run_sash "_path=redir-deduction
+if [[ $test ]] { echo wrong > \$_path }"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.24
+
+good=1
+for source in \
+    '_path=redir-flow; if [[ -n $_path ]] { echo yes } else { echo wrong > $_path }' \
+    '_path=redir-flow; if [[ -n $_path ]] { echo yes }; echo wrong > $_path' \
+    '_path=redir-flow; echo wrong > $_path; attest _path -n'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.25
+
+good=1
+for source in \
+    'const path=redir-body; fn prove { attest path -n }; prove; echo wrong > $path' \
+    'const path=redir-body; attest path -n; fn use { echo wrong > $path }; use' \
+    'fn pathvalue { _path=redir-body; attest _path -n; echo $_path }; _result=$(pathvalue); echo wrong > $_result'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.26
+
+good=1
+for source in \
+    'array _paths=(redir-cell); attest p in _paths -n; echo wrong > ${_paths[0]}' \
+    'array _paths=(redir-cell); attest p in _paths -n; _path=${_paths[0]}; echo wrong > $_path' \
+    'array _paths=(redir-cell); if [[ -n ${_paths[0]} ]] { echo wrong > ${_paths[0]} }'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.27
+
+run_sash 'fn unused {
+    _path=redir-unused-bad
+    echo wrong > $_path
+}
+echo defined'
+[[ $rc != 0 && $err == *:3:18:*SB4030* && $err == *'`$_path`'* ]]; chk redirproof.28
+
+# Read permission and taint are independent of the redirect certificate.
+run_sash '_path=$(- arg 1)
+if attest _path -n { echo success } else { exit 1 }
+echo wrong > $_path' redir-permission
+[[ $rc != 0 && $err == *SB5107* ]]; chk redirproof.29
+
+run_sash '_path=$(- arg 1)
+if [[ -n ${_path:!} ]] { echo trusted > ${_path:!} }' redir-trusted
+[[ $rc = 0 && -z $err && -z $rerr && $(<redir-trusted) = trusted ]]; chk redirproof.30
+
+run_sash '_path=$(- arg 1)
+if [[ -n ${_path:!} ]] { echo wrong > $_path }' redir-tainted
+[[ $rc != 0 && $err == *SB5020* ]]; chk redirproof.31
+
+run_sash '_path=$(- arg 1)
+if attest _path -n { echo success } else { exit 1 }
+echo trusted > ${_path:!}' redir-caught-trusted
+[[ $rc = 0 && -z $err && -z $rerr && $out = success && $(<redir-caught-trusted) = trusted ]]; chk redirproof.32
+
+good=1
+for flags in --no-taint --no-taint-cst; do
+    SASH_CFLAGS=$flags run_sash '_path=redir-bypass; echo wrong > ${_path:!}'
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.33
+
+run_sash 'for name in redir-fresh-a redir-fresh-b {
+    _path=$name
+    if [[ $name == redir-fresh-a ]] {
+        attest _path -n
+    } else {
+        echo wrong > $_path
+    }
+}'
+[[ $rc != 0 && $err == *SB4030*"redirect target"* ]]; chk redirproof.34
+
+# Deferred source obligations do not disappear after a terminal command.
+good=1
+for end in exit fail; do
+    run_sash "const path=redir-dead
+$end
+echo wrong > \$path"
+    [[ $rc != 0 && $err == *'SB4030'*'redirect target'* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.35
 
 tally

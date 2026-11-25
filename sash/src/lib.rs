@@ -12,6 +12,7 @@ pub(crate) mod diagnostic;
 #[path = "../../sash-rt/src/glob_pattern.rs"]
 pub(crate) mod glob_pattern;
 pub(crate) mod output_taint;
+pub(crate) mod redirect_proof;
 pub(crate) mod regex_proof;
 pub(crate) mod regex_validate;
 pub(crate) mod resolve;

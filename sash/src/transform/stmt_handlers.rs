@@ -126,6 +126,7 @@ fn handle_test_command(
     else {
         unreachable!("a selected [[ command requires exactly one Test operand");
     };
+    crate::redirect_proof::record_test(test_expr, ssa);
     lower_test_tree(test_expr, ssa, state, block)
 }
 
@@ -400,6 +401,7 @@ fn handle_attest_stmt(
     };
     match form {
         AttestForm::Scalar { var } => {
+            crate::redirect_proof::record_test(&test, ssa);
             let var = var.to_string();
             let source = state.lookup(&var);
             // Resolve the predicate's operands BEFORE defining the target

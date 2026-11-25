@@ -227,6 +227,7 @@ fn push_if_attest_condition(
 ) {
     match kind {
         AttestKind::Scalar(_) => {
+            crate::redirect_proof::record_test(test, ssa);
             ssa.block_mut(block).insts.push(SsaInst::Test(
                 test_to_ssa(test, state),
                 TestOrigin::AttestPredicate,
