@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup filetest
-plan=109
+plan=115
 echo "1..$plan" >&3
 
 set +e
@@ -694,5 +694,74 @@ echo wrong > \$path"
     [[ $rc != 0 && $err == *'SB4030'*'redirect target'* ]] || good=0
 done
 [[ $good = 1 ]]; chk redirproof.35
+
+# Captures inherit the enclosing immutable binding, not a copy of its value.
+printf 'captured\n' > redir-capture-input
+run_sash 'fn readfile {
+    _file=$1
+    attest _file cpath?
+    if [[ ! -r $_file ]] { return }
+    text=$(/bin/cat < $_file)
+    attest text -n
+    echo $text
+}
+_input=$(- arg 1)
+attest _input cpath?
+readfile $_input.absent
+readfile $_input' "$PWD/redir-capture-input"
+[[ $rc = 0 && -z $err && -z $rerr && $out = captured ]]; chk redirproof.36
+
+run_sash 'const path=redir-nested
+attest path -n
+text=$(
+    inner=$(echo nested > "${path}.log"; echo value)
+    attest inner -n
+    echo $inner
+)
+attest text -n
+echo $text'
+[[ $rc = 0 && -z $err && -z $rerr && $out = value && $(<redir-nested.log) = nested ]]; chk redirproof.37
+
+run_sash 'text=$(
+    _path=redir-inner
+    attest _path -n
+    inner=$(echo inherited > $_path; echo inner)
+    attest inner -n
+    echo $inner
+)
+attest text -n
+echo $text'
+[[ $rc = 0 && -z $err && -z $rerr && $out = inner && $(<redir-inner) = inherited ]]; chk redirproof.38
+
+good=1
+for path in "$PWD/redir-capture-input" ""; do
+    expected=captured
+    [[ -n $path ]] || expected=empty
+    run_sash '_path=$(- arg 1)
+if attest _path cpath? {
+    text=$(/bin/cat < $_path)
+    attest text -n
+    echo $text
+} else { echo empty }' "$path"
+    [[ $rc = 0 && -z $err && -z $rerr && $out = "$expected" ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.39
+
+# A proof established inside a capture does not escape to its parent or sibling.
+good=1
+for source in \
+    'const path=redir-local-proof; text=$(attest path -n; echo inspected); attest text -n; echo $text > $path' \
+    'const path=redir-sibling-proof; first=$(attest path -n; echo inspected); attest first -n; second=$(echo $first > $path; echo sibling); attest second -n; echo $second'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4030*"redirect target"* ]] || good=0
+done
+[[ $good = 1 ]]; chk redirproof.40
+
+run_sash '_path=redir-original
+attest _path -n
+text=$(_copy=$_path; echo wrong > $_copy; echo copied)
+attest text -n
+echo $text'
+[[ $rc != 0 && $err == *SB4030*"redirect target"* && $err == *'`$_copy`'* ]]; chk redirproof.41
 
 tally

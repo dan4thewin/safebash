@@ -8,16 +8,19 @@ status: accepted
 2. Integer variables and cells qualify when explicitly quoted as strings.
    Concatenation does not let literal neighbors excuse an unguarded string read.
 3. A directly tested immutable scalar binding instance may omit its
-   disposition when success holds on every reaching path in the same body.
+   disposition when success holds on every reaching path. A proof is
+   available in its source body and lexically nested captures that inherit
+   the same binding, not through named helper calls.
    Only simple unary tests qualify: `-n`, `cpath?`, `p?`, `g?`, `-e`, `-f`,
    `-d`, `-r`, `-w`, `-x`, `-s`, `-L`, `-h`. Scalar attest shorthand and an
    equivalent full predicate follow the same rule.
 4. That exemption permits exactly one read of the proved binding, with
    optional literal text added only at the redirect site. Quotes and braces
-   preserve the read; copies, derived bindings, helper boundaries, collections
-   and cells do not transfer the proof. Compound predicates, comparisons and
-   deductions from a false test do not establish it. Fresh lifetimes need
-   their own proof.
+   preserve the read; copies, derived bindings, named helper boundaries,
+   collections and cells do not transfer the proof. A capture's own proof
+   does not escape to its parent or siblings. Compound predicates,
+   comparisons and deductions from a false test do not establish it.
+   Fresh lifetimes need their own proof.
 5. Direct command captures and intrinsics are not redirect-target operands.
    Bind an eligible value first and satisfy the same target rules.
    Cell indices may contain otherwise-legal captures: selecting a cell is
@@ -127,9 +130,25 @@ The whole predicate must directly test the scalar with one of:
 
 A simple ordinary `[[ ... ]]`, a scalar attest shorthand, and its equivalent
 full unary predicate qualify. The redirect must be reached only after a
-successful test of that same immutable binding instance in the same body.
+successful test of that same immutable binding instance. The proof may
+come from the same body or a lexically enclosing body across capture
+boundaries, but never across a named helper call.
 Ordinary consts qualify as well as scratch; an immutable initializer known
 to be nonempty does not qualify without the direct test.
+
+```sash
+_file=$(- arg 1)
+attest _file cpath?
+text=$(/bin/cat < $_file)
+```
+
+The capture reads the same live `_file`, so no property is transferred to
+a new value. This also applies through nested captures. A proof established
+inside a capture stays there and in its own nested captures; it does not
+become available in the parent or a sibling capture. DG selected this
+lexical allowance after the initial body-local implementation rejected an
+otherwise qualifying captured redirect. The captured text still needs its
+ordinary taint validation before use.
 
 Quoting, braces and empty literal wrappers do not change the tested value.
 Testing `$_dir/suffix`, `${_dir:-fallback}` or `${_dir:?message}` does not
@@ -140,8 +159,8 @@ At the redirect, `$_dir/log` and `"prefix${_dir}/log"` qualify. There must be
 exactly one dynamic read: even two reads of the same proved binding do not
 qualify together. Assigning `_file=$_dir/log` does not transfer the proof;
 `_file` needs its own qualifying test or a disposition. Copies in either
-direction, function arguments/results, helper calls, collection attests and
-cell reads similarly confer no certificate on another binding or body.
+direction, function arguments/results, named helper calls, collection attests
+and cell reads similarly confer no certificate on another binding or body.
 Revisiting scratch construction starts a new instance that must be tested
 again. These restrictions do not replace the existing per-part disposition
 route for multipart targets.
@@ -163,8 +182,9 @@ They are not ceremony. A disposition is the general **proof mechanism** that
 makes emptiness accountable at the point of use.
 Requiring one is requiring the author to say what happens when the value is not
 there, which is the question the old rule never asked. The direct immutable
-exemption instead makes the successful test visible earlier in the same body,
-without propagating facts through a chain of values.
+exemption permits a visible earlier test of the same immutable binding,
+including use in its lexically nested captures, without propagating facts
+through a chain of values.
 
 This is also why `:-` with an empty default and `:~` must be excluded even
 though both *are* dispositions: the test is not "did you write a disposition"

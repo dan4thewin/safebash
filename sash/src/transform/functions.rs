@@ -922,7 +922,7 @@ pub(super) fn lower_inlined_body(
     let saved_condition = std::mem::take(&mut state.in_condition);
     let saved_suppressed = std::mem::take(&mut state.suppressed);
     let failed_attests = std::mem::take(&mut state.failed_attests);
-    let exit_block = lower_body(body, ssa, state, call_block);
+    let exit_block = lower_body(body, SourceBody::Function, ssa, state, call_block);
     state.failed_attests = failed_attests;
     state.suppressed = saved_suppressed;
     state.in_condition = saved_condition;
@@ -934,6 +934,7 @@ pub(super) fn lower_inlined_body(
 
 pub(super) fn lower_body(
     body: &[Statement],
+    kind: SourceBody,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -943,7 +944,7 @@ pub(super) fn lower_body(
     let origin = ssa
         .current_origin
         .expect("the body just entered its origin");
-    ssa.origins[origin].body = true;
+    ssa.origins[origin].body = Some(kind);
     let inherited = initialize_body_locals(body, ssa, state, block);
     let exit = lower_stmts(body, ssa, state, block);
     state.live_locals = inherited;

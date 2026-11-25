@@ -358,7 +358,7 @@ fn lower_fn_template(
     let header = ssa.new_checkpoint_block(&format!("call_{}", name));
     ssa.block_mut(fn_entry).terminator = Terminator::Goto(header);
     let saved_tail = state.enter_tail_loop(name, header);
-    let fn_exit = fns::lower_body(body, ssa, state, header);
+    let fn_exit = fns::lower_body(body, SourceBody::Function, ssa, state, header);
     state.tail_loop = saved_tail;
     state.args_counter = saved_counter;
     fns::exit_fn_body_scope(state, saved_ro);

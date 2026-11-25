@@ -1926,7 +1926,8 @@ pub(super) fn capture_body_into(
     // which stays in force for the commands the body runs.
     let saved_condition = std::mem::take(&mut state.in_condition);
     let failed_attests = std::mem::take(&mut state.failed_attests);
-    let exit_block = super::functions::lower_body(body, ssa, state, call_block);
+    let exit_block =
+        super::functions::lower_body(body, SourceBody::Capture, ssa, state, call_block);
     state.failed_attests = failed_attests;
     state.in_condition = saved_condition;
     state.tail_loop = saved_tail;

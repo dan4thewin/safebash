@@ -91,7 +91,7 @@ pub(crate) fn missing_proof(name: &str) -> String {
     format!(
         "redirect target `${name}` may be empty; use `${{{name}:?message}}` or \
          `${{{name}:-default}}`. Without dispositions, a target must contain \
-         only one immutable binding directly tested by a supported nonempty \
-         unary predicate in the same body, plus optional literal text"
+         only one immutable binding with an in-scope proof from a supported \
+         nonempty unary test, plus optional literal text"
     )
 }

@@ -655,10 +655,27 @@ impl Checker<'_> {
             return;
         };
         self.pending_redirects.remove(origin);
-        let proof = (self.program.source_body(Some(*origin)), name.clone());
-        if !facts.nonempty.contains(&proof) {
+        let scope = self.program.source_body(Some(*origin));
+        let proved = facts.nonempty.iter().any(|(proof_scope, binding)| {
+            binding == name && self.nonempty_scope_contains(*proof_scope, scope)
+        });
+        if !proved {
             self.unproved_redirect(*origin);
         }
+    }
+
+    fn nonempty_scope_contains(&self, proof: Option<usize>, mut scope: Option<usize>) -> bool {
+        while scope != proof {
+            let Some(id) = scope else {
+                return false;
+            };
+            let origin = &self.program.origins[id];
+            if origin.body != Some(SourceBody::Capture) {
+                return false;
+            }
+            scope = self.program.source_body(origin.parent);
+        }
+        true
     }
 
     fn unvisited_redirects(&mut self) {

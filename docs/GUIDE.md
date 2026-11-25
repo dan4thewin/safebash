@@ -489,14 +489,17 @@ A successful supported simple unary test of an immutable scalar records
 only nonemptiness for that binding instance and source body. Meets intersect
 certificates; writes and lifetime starts invalidate them. Unlike regex
 facts, these certificates do not transfer through equality, copies, cells or
-helper boundaries. Exactly one proved binding may have literal neighbors
-added at the redirect site.
+named helper boundaries. Lexically nested captures may use an enclosing
+certificate for the same inherited binding; their own proofs do not escape
+to a parent or sibling. Exactly one proved binding may have literal
+neighbors added at the redirect site.
 
 [`redirect_proof.rs`](../sash/src/redirect_proof.rs) classifies the original
 predicate and target shapes before Boolean lowering or spilling. Inert source
-origins retain those obligations and body boundaries. The proof pass checks
-function templates too, without widening existing regex/caught-read reporting,
-and rejects obligations left unvisited after terminal commands. Eligible
+origins retain those obligations and distinguish named bodies from captures.
+Proof lookup follows capture parents and stops at a named body. The proof
+pass checks function templates too, without widening existing regex/caught-read
+reporting, and rejects obligations left unvisited after terminal commands. Eligible
 targets use the existing scalar spill path to retain their actual reaching
 SSA version, keeping caught-attest taint checks independent and precise at
 that use. A failed proof is SB4030; no runtime check or general nonempty type

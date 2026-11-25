@@ -1954,13 +1954,19 @@ impl BasicBlock {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceBody {
+    Function,
+    Capture,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SourceOrigin {
     pub(crate) span: crate::ir::Span,
     pub(crate) parent: Option<usize>,
     pub(crate) attest: Option<crate::ir::Span>,
     pub(crate) for_binding: bool,
-    pub(crate) body: bool,
+    pub(crate) body: Option<SourceBody>,
     pub(crate) nonempty_test: bool,
 }
 
@@ -2352,7 +2358,7 @@ impl SsaProgram {
             parent,
             attest,
             for_binding,
-            body: false,
+            body: None,
             nonempty_test: false,
         });
         self.current_origin = Some(id);
@@ -2371,7 +2377,7 @@ impl SsaProgram {
 
     pub(crate) fn source_body(&self, mut origin: Option<usize>) -> Option<usize> {
         while let Some(id) = origin {
-            if self.origins[id].body {
+            if self.origins[id].body.is_some() {
                 return Some(id);
             }
             origin = self.origins[id].parent;
