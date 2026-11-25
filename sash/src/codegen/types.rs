@@ -172,6 +172,7 @@ pub(super) struct ExternFuncs {
     pub(super) is_int: cranelift_module::FuncId,
     pub(super) is_print: cranelift_module::FuncId,
     pub(super) is_graph: cranelift_module::FuncId,
+    pub(super) is_cpath: cranelift_module::FuncId,
     pub(super) has_nul: cranelift_module::FuncId,
     pub(super) is_regex: cranelift_module::FuncId,
     pub(super) atoi_or: cranelift_module::FuncId,

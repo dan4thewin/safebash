@@ -1762,6 +1762,16 @@ pub unsafe extern "C" fn sash_is_graph(s_ptr: *const u8, s_len: i64) -> i64 {
     is_graph_inner(bytes) as i64
 }
 
+/// DD#93: `cpath?` validates the complete counted pathname.
+#[no_mangle]
+pub unsafe extern "C" fn sash_is_cpath(s_ptr: *const u8, s_len: i64) -> i64 {
+    if s_len <= 0 || s_ptr.is_null() {
+        return 0;
+    }
+    let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+    is_cpath_inner(bytes) as i64
+}
+
 /// DD135: `0?` inspects counted bytes, never the storage terminator.
 #[no_mangle]
 pub unsafe extern "C" fn sash_has_nul(s_ptr: *const u8, s_len: i64) -> i64 {

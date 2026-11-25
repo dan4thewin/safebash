@@ -14,7 +14,7 @@ status: implemented
 4. Every unary filename test returns false on interior NUL before filesystem
    lookup. `-nt`, `-ot` and `-ef` return false if either operand contains NUL,
    before lookup or missing-file comparison rules.
-5. False `0?`, or true `i?`, `p?`, `g?` or filename tests, establishes
+5. False `0?`, or true `i?`, `p?`, `g?`, `cpath?` or filename tests, establishes
    NUL-freedom for the tested value, not taint clearance. The provisional
    DD136 trial retires mandatory static ERR NUL proofs; runtime argv guards
    remain terminal, including inside an attempted call.
@@ -106,7 +106,7 @@ those values.
 Thus a true filename test proves its operand or operands NUL-free.
 Its false outcome proves no such thing, including when negation makes
 that outcome satisfy a surrounding condition.
-True `i?`, `p?` and `g?` also exclude NUL by their existing definitions.
+True `i?`, `p?`, `g?` and DD93's `cpath?` also exclude NUL by definition.
 The `-t` descriptor test is not a filename test.
 
 These facts neither clear taint nor promise anything about filesystem

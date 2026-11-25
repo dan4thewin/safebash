@@ -82,11 +82,15 @@
         2. String operands must be strings; numerical comparisons use arithmetic.
         3. `-n`/`-z` test nonempty/empty; no implicit nonempty test or `=` equality.
         4. `i?` tests integer validity; `p?`/`g?` test nonempty ASCII printable/graphical strings. `0?` tests for NUL in counted contents, false on empty.
-        5. Filename predicates return false before lookup on NUL in any pathname operand, including either operand of `-nt`/`-ot`/`-ef`.
+        5. `cpath?` tests conservative absolute-path spelling, without normalization or filesystem lookup.
+            1. Exactly one leading `/`, single separators, ASCII letters/digits/`.`/`_`/`-` in components; no `.` or `..` component or component-leading `-`.
+            2. Root and one trailing slash are valid; all other bytes, including NUL, are rejected.
+            3. No existence, file-type, authorization, symlink-containment or arbitrary downstream-interpreter guarantee.
+        6. Filename predicates return false before lookup on NUL in any pathname operand, including either operand of `-nt`/`-ot`/`-ef`.
             1. File-age tests use strict nanosecond timestamps; `-ef` compares device/inode identity.
-        6. Written-static vacuous string tests reject; variables are not constant-propagated for this rule. File tests remain runtime tests.
-        7. Comparison operands absorb metacharacters as word text.
-        8. Glued comparison operators require a left operand beginning `$`; otherwise separate operands/operators.
+        7. Written-static vacuous string tests reject; variables are not constant-propagated for this rule. File tests remain runtime tests.
+        8. Comparison operands absorb metacharacters as word text.
+        9. Glued comparison operators require a left operand beginning `$`; otherwise separate operands/operators.
     2. `if COND { ... } [elif COND { ... }]* [else { ... }]`; `else if` nests another `if`.
         1. Next-line `else`/`elif` may cross blank/comment lines, not `;` or another statement.
     3. `while COND { ... }`, `until COND { ... }`, `for NAME in ITEMS { ... }`, `for ((INIT; COND; STEP)) { ... }`.

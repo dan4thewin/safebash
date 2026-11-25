@@ -1,5 +1,5 @@
 #!/bin/bash
-# spec/filetest.sh — [[ ]] file tests, NUL predicates and binary comparisons.
+# spec/filetest.sh — [[ ]] file/path tests, NUL predicates and binary comparisons.
 # NUL-free paths retain their existing semantics. Section A pins -N, which compares
 # WHOLE SECONDS with `>=` and ignores nanoseconds entirely (bash test.c);
 # sash previously used a strict `>` plus a nanosecond tiebreak and answered
@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup filetest
-plan=57
+plan=74
 echo "1..$plan" >&3
 
 set +e
@@ -305,5 +305,128 @@ if [[ ! 0? ${s:!} ]] { echo "$s" }'
 
 run_sash 'int n=0; if [[ 0? $n ]] { echo wrong }'
 [[ $rc != 0 && $err == *SB4030* && $err == *quote* ]]; chk nulcheck.10
+
+# DD93: cpath? checks spelling, not existence, type, authorization or symlinks.
+# /dev/null/child cannot exist; the predicate must not try to resolve it.
+run_sash_under 'array paths=(/ /a /a/ /A0_z/file-1 /a/.config /a/file..bak /... /.-name /dev/null/child)
+for p in @paths {
+    if [[ cpath? $p ]] { echo $p } else { echo wrong }
+}
+echo cpath?' strace -qq -e trace=%file,getcwd -o cpath.trace
+[[ $rc = 0 && $out = $'/\n/a\n/a/\n/A0_z/file-1\n/a/.config\n/a/file..bak\n/...\n/.-name\n/dev/null/child\ncpath?' && -z $err && -z $rerr ]] &&
+    ! grep -Eq '^(newfstatat|statx|stat|lstat|access|faccessat|faccessat2|open|openat|openat2|readlink|readlinkat|getcwd)\(' cpath.trace
+chk cpath.1
+
+run_sash $'array paths=("" relative a/b ./a ../a $\'\\x00/a\' $\'/a\\x00\' $\'/\\x00\')
+for p in @paths {
+    if [[ cpath? $p ]] { echo wrong }
+}
+echo checked'
+[[ $rc = 0 && $out = checked && -z $err && -z $rerr ]]; chk cpath.2
+
+run_sash 'array paths=(// /// //a /a//b /a// /./a /a/./b /a/. /a/./ /../a /a/../b /a/.. /a/../)
+for p in @paths {
+    if [[ cpath? $p ]] { echo wrong }
+}
+echo checked'
+[[ $rc = 0 && $out = checked && -z $err && -z $rerr ]]; chk cpath.3
+
+run_sash 'array paths=(/- /-a /-a/b /a/-b /a/b/-c/ /--help)
+for p in @paths {
+    if [[ cpath? $p ]] { echo wrong }
+}
+echo checked'
+[[ $rc = 0 && $out = checked && -z $err && -z $rerr ]]; chk cpath.4
+
+# Exercise every byte, including NUL, controls, shell punctuation and high bytes.
+# A slash between the two letters is a valid component separator.
+cpath_bytes=
+for (( byte=0; byte<256; byte++ )); do
+    printf -v cpath_byte '\\x%02x' "$byte"
+    cpath_bytes+=$cpath_byte
+done
+printf '%b' "$cpath_bytes" > cpath-bytes
+run_sash 'str bytes=$(<cpath-bytes)
+data=${bytes:!}
+echo "$(strlen $data)"
+int i=0
+for (( i=0; i<256; i+=1 )) {
+    b=${data:0:1}
+    if [[ cpath? "/a${b}z" ]] { echo "$i" }
+    data=${data:1}
+}'
+expected=$(printf '%s\n' 256 45 46 47 {48..57} {65..90} 95 {97..122})
+[[ $rc = 0 && $out = "$expected" && -z $err && -z $rerr ]]; chk cpath.5
+
+run_sash 'str bad="/tmp/a b" empty=""
+if [[ ! cpath? $bad && cpath? /tmp/good ]] { echo rejected }
+if [[ cpath? / || cpath? ${empty:?should-not-run} ]] { echo lazy }
+if [[ cpath? $bad && cpath? ${empty:?should-not-run} ]] { echo wrong } else { echo false }'
+[[ $rc = 0 && $out = $'rejected\nlazy\nfalse' && -z $err && -z $rerr ]]; chk cpath.6
+
+run_sash 'int calls=0
+fn sample { (( calls += 1 )); write /tmp/once }
+if [[ cpath? $(sample) ]] { echo "$calls" }'
+[[ $rc = 0 && $out = 1 && -z $err && -z $rerr ]]; chk cpath.7
+
+# Full and shorthand predicates validate acquired data without changing its bytes.
+run_sash 'path=$(- arg 1)
+attest path cpath?
+echo $path
+file=$(- arg 2)
+attest file [[ cpath? $file && -f $file ]]
+echo $file' /var/.cache/file-1 /proc/self/exe
+[[ $rc = 0 && $out = $'/var/.cache/file-1\n/proc/self/exe' && -z $err && -z $rerr ]]; chk cpath.8
+
+run_sash 'path=$(- arg 1)
+attest path cpath?
+echo $path' ../file
+[[ $rc = 1 && -z $out && -z $err && $rerr == *"attest: path"* && $rerr == *"failed the gate"* ]]; chk cpath.9
+
+run_sash 'path=$(- arg 1)
+if attest path cpath? { echo accepted } else { path=/fallback }
+echo $path' /tmp/../leaf
+[[ $rc = 0 && $out = /fallback && -z $err && -z $rerr ]]; chk cpath.10
+
+run_sash 'argv 1 paths
+attest p in paths cpath?
+echo $(join paths)' /alpha /.hidden/value-2/
+[[ $rc = 0 && $out = "/alpha /.hidden/value-2/" && -z $err && -z $rerr ]]; chk cpath.11
+
+run_sash 'argv 1 paths
+attest p in paths cpath?
+echo $(join paths)' /alpha /a//b
+[[ $rc = 1 && -z $out && -z $err && $rerr == *"attest: paths"* && $rerr == *"failed the gate"* ]]; chk cpath.12
+
+run_sash 'map paths
+paths[/src]=/dst
+attest k v in paths cpath?
+echo $paths[/src]'
+[[ $rc = 0 && $out = /dst && -z $err && -z $rerr ]]; chk cpath.13
+
+# Map shorthand tests both binders, not merely the value or merely the key.
+run_sash 'map paths
+paths[relative]=/dst
+attest k v in paths cpath?
+echo $paths[relative]'
+key_rc=$rc key_out=$out key_err=$err key_rerr=$rerr
+run_sash 'map paths
+paths[/src]=relative
+attest k v in paths cpath?
+echo $paths[/src]'
+[[ $key_rc = 1 && -z $key_out && -z $key_err && $key_rerr == *"attest: paths"* && $key_rerr == *"failed the gate"* &&
+   $rc = 1 && -z $out && -z $err && $rerr == *"attest: paths"* && $rerr == *"failed the gate"* ]]; chk cpath.14
+
+run_sash 'path=$(- arg 1)
+if [[ cpath? ${path:!} ]] { echo $path }' /tmp/good
+[[ $rc != 0 && $err == *SB5020* ]]; chk cpath.15
+
+run_sash 'int n=1; if [[ cpath? $n ]] { echo wrong }'
+[[ $rc != 0 && $err == *SB4030* && $err == *quote* ]]; chk cpath.16
+
+run_sash 'str path=/tmp
+attest path [[ cpath? "$path$(write /child)" ]]
+echo $path'
+[[ $rc != 0 && $err == *SB5098* ]]; chk cpath.17
 
 tally

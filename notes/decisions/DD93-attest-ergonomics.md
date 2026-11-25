@@ -10,8 +10,12 @@ status: accepted
    nonempty ASCII printable and graph bytes respectively. `0?` tests for
    NUL in counted contents, false on empty (DD135). `r?` tests actual-engine
    regex validity, with quiet false on malformed candidates (DD132).
-   They are ordinary
-   unary tests, subject to normal result-consumption rules.
+   `cpath?` tests conservative absolute-path spelling: one leading `/`,
+   single separators, ASCII alphanumeric/`.`/`_`/`-` components, no `.` or
+   `..` components and no component starting `-`. Root and one trailing
+   slash are valid. No normalization or filesystem lookup occurs.
+   They are ordinary unary tests, subject to normal result-consumption
+   rules; none implicitly attests its input.
 3. Predicates may read their attested subject but every other input must
    be clean. `[[ ... ]]` predicates contain no captures, intrinsic calls,
    sed-substitution sugar or arithmetic expansions, including in indices
@@ -102,7 +106,7 @@ safer than the full form, and still greppable (`attest` remains). Sugar only:
 it lowers to the existing `TestExpr::Unary`, so all validation/taint flows
 unchanged.
 
-### Part C — content-shape tests `i?` / `p?` / `g?` / `0?`
+### Part C — content-shape tests
 
 The sash-native unary tests inspect the **shape of a value's bytes**,
 spelled with a `?` suffix to distinguish them from bash's `-X`
@@ -117,6 +121,8 @@ rules still apply.
 | `p?` | non-empty and every byte is ASCII **printable** (0x20–0x7E) |
 | `g?` | non-empty and every byte is ASCII **graph** (0x21–0x7E, i.e. printable non-space) |
 | `0?` | contains a NUL byte within its counted contents; **false on empty** (DD135) |
+| `r?` | a valid complete sash regex (DD132) |
+| `cpath?` | a conservatively spelled absolute pathname, as defined below |
 
 - **`-i` → `i?` (hard rename).** `-i` was sash-native (bash has no `-i`, DD#77);
   folding it into the `?`-suffix family pulls it out of bash's `-X` namespace.
@@ -143,13 +149,64 @@ shape, ownership, input-read and result-consumption rule.
 
 DD135 also requires every filename predicate to return false before lookup
 on a NUL-bearing operand, including either operand of `-nt`/`-ot`/`-ef`.
-True filename tests and true `i?`/`p?`/`g?`, or false `0?`, can justify
-NUL-freedom at a specific ERR use. An ordinary predicate never implicitly
-attests its input; inherited taint still requires forced reads. The predicate
-and runtime guards are implemented
-([journal 639](../journal/639-counted-nul-and-filename-guards.md)); the
-dependent ERR proof is also implemented
-([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
+True filename tests and true `i?`/`p?`/`g?`/`cpath?`, or false `0?`, establish
+NUL-freedom for the tested value. An ordinary predicate never implicitly
+attests its input; inherited taint still requires forced reads. The `0?`
+predicate and filename guards were implemented
+([journal 639](../journal/639-counted-nul-and-filename-guards.md)).
+The provisional DD136 trial retires the static ERR proof requirement
+formerly implemented in
+[journal 640](../journal/640-readonly-err-and-local-nul-proofs.md);
+runtime argv guards remain terminal.
+
+#### `cpath?` — conservative absolute-path spelling (DG, 2026-11-25)
+
+DG requested a pathname predicate for both ordinary tests and attests,
+then selected `cpath?`: `path?` suggested all legal paths, and `cp?`
+suggested copy. There are no aliases.
+
+The predicate examines the **entire counted byte string**. It is true
+exactly when:
+
+1. The spelling starts with exactly one `/`.
+2. Components are nonempty, separated by single `/` bytes, and contain
+   only ASCII letters, digits, `.`, `_` and `-`.
+3. No complete component is `.` or `..`; a component never starts with `-`.
+4. `/` itself and one trailing `/` are allowed. Repeated separators,
+   including `//` and `/a//`, are not.
+
+Thus `/.config/file-1`, `/a/file..bak`, `/...` and `/a/` pass;
+relative/empty paths, `/a/../b`, `/a/-b`, whitespace, shell punctuation,
+controls, NUL and non-ASCII bytes do not. Interior dots and hyphens are
+ordinary characters. No path-length or filesystem-specific name limit
+is imposed.
+
+This is lexical validation, not normalization: invalid spelling is never
+repaired. It does not query the cwd or filesystem, require existence,
+select a file type, authorize a subtree, resolve symlinks or prevent
+filesystem races. A valid spelling such as `/etc/passwd` is not thereby
+an authorized operand. A separate file-type test can be combined with it:
+
+```sash
+attest file cpath?
+attest file [[ cpath? $file && -f $file ]]
+```
+
+These are alternative attests, not a requirement to perform both.
+The allowlist avoids ordinary shell word splitting under default `IFS`,
+globbing and shell-syntax bytes; rejecting component-leading `-` also
+protects a basename extracted by a downstream script. It cannot make
+arbitrary `eval`, `sh -c`, custom splitting or another embedded language
+safe. Downstream scripts still need correct argument quoting.
+
+A nonconforming value gives quiet false. Full and shorthand attests,
+including both map binders, use the existing validation, adjacency,
+ownership and caught-failure rules. Ordinary conditions do not clear
+taint. No path type, automatic glob-output validation or blanket
+external-argument restriction is introduced.
+
+Implemented in both backends; [journal 671](../journal/671-conservative-path-predicate.md)
+records the counted-byte implementation and its before/reversion evidence.
 
 #### `r?` (accepted 2026-11-18)
 

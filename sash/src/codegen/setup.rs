@@ -436,6 +436,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_is_graph", Linkage::Import, &is_graph_sig)
         .expect("declare sash_is_graph");
 
+    let is_cpath_func = module
+        .declare_function("sash_is_cpath", Linkage::Import, &is_int_sig)
+        .expect("declare sash_is_cpath");
     let has_nul_func = module
         .declare_function("sash_has_nul", Linkage::Import, &is_int_sig)
         .expect("declare sash_has_nul");
@@ -935,6 +938,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         is_int: is_int_func,
         is_print: is_print_func,
         is_graph: is_graph_func,
+        is_cpath: is_cpath_func,
         has_nul: has_nul_func,
         is_regex: is_regex_func,
         atoi_or: atoi_or_func,

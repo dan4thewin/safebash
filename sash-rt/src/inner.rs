@@ -73,10 +73,8 @@ pub fn is_int_inner(bytes: &[u8]) -> bool {
     parse_strict_i64(bytes).is_some()
 }
 
-/// True iff `bytes` is **non-empty** and every byte satisfies `pred`. Shared
-/// by the DD#93 content-shape tests, which are all of the form "non-empty and
-/// all bytes in a class" — adding a further class (`a?`, `d?`, `l?`, `s?`, …)
-/// is one line here plus one dispatch arm per backend.
+/// True iff `bytes` is **non-empty** and every byte satisfies `pred`.
+/// Shared by the DD#93 ASCII-class and path-component checks.
 fn all_bytes_match(bytes: &[u8], pred: fn(u8) -> bool) -> bool {
     !bytes.is_empty() && bytes.iter().copied().all(pred)
 }
@@ -94,6 +92,24 @@ pub fn is_print_inner(bytes: &[u8]) -> bool {
 /// `is_print_inner` only in excluding 0x20.
 pub fn is_graph_inner(bytes: &[u8]) -> bool {
     all_bytes_match(bytes, |b| (0x21..=0x7E).contains(&b))
+}
+
+/// DD#93: conservative absolute-path spelling, without normalization or lookup.
+pub fn is_cpath_inner(bytes: &[u8]) -> bool {
+    let Some(path) = bytes.strip_prefix(b"/") else {
+        return false;
+    };
+    if path.is_empty() {
+        return true;
+    }
+    let path = path.strip_suffix(b"/").unwrap_or(path);
+    path.split(|&b| b == b'/').all(|component| {
+        !matches!(component, b"." | b"..")
+            && !component.starts_with(b"-")
+            && all_bytes_match(component, |b| {
+                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')
+            })
+    })
 }
 
 /// Strict, range-checked parse of a complete integer: optional `+`/`-` sign,
