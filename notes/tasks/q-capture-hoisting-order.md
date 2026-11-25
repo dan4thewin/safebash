@@ -71,6 +71,17 @@ control `.40` distinguish an earlier safe read from a later NUL-bearing one.
 This is partial delivery, not completion of general argument-list ordering,
 the status rows above, or the independent redirect-timing task.
 
+The collection-key delivery ([journal 670](../journal/670-operand-word-collection-keys.md),
+2026-11-25) additionally repairs shared arithmetic lifting. `&&`, `||`
+and ternary alternatives lift only on their reached paths; earlier
+arithmetic operands are retained before a later lifted call can mutate
+their storage. Integer defaults carry their subject type and evaluate that
+subject once. Internal `TestValue` branches do not publish a new `$?`.
+`keyeval.1`-`.6`, `maparith.10` and independent lazy/retention/default/status
+reversions pin these routes in both backends. This does not close general
+argument-list ordering, the two status rows above, capture entry checking
+or attached-redirect timing.
+
 `[[ && || ]]` operands and DD66 dispatch patterns are already lazy, since
 F8 (B87, journal 550) and F9 (B86, journal 551): one that is never reached
 never runs. Preserve that while repairing the order inside each reached

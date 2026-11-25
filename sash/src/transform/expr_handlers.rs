@@ -247,6 +247,7 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         | BuiltinCmd::SetTestFromStatus
         | BuiltinCmd::SetTestFromPipe
         | BuiltinCmd::LetExit
+        | BuiltinCmd::TestValue
         | BuiltinCmd::StoreBgPid
         | BuiltinCmd::TrapSignal
         | BuiltinCmd::SignalFlag
@@ -676,17 +677,12 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
         ArithExpr::Comma(exprs) => comma_to_ssa(exprs, expr, state),
         ArithExpr::FuncCall { name, args } => funccall_to_ssa(name, args, expr, state),
         ArithExpr::Paren(inner) => arith_to_ssa(inner, expr, state),
-        // arith-subscript model B (Stage 2): a bare int-array cell read. The
-        // index is a full arith expr → lowered to an int; the read uses it as
-        // the integer key (lower_subscript_raw's is_integer_key path calls
-        // lower_value_as_int on the index).
         ArithExpr::Subscript { name, index } => subscript_read_to_ssa(name, index, expr, state),
     }
 }
 
-/// arith-subscript model B: lower a bare `a[i]` cell read to `SsaValue::
-/// Subscript`. The index is the arith-int value; `is_integer_key`/`_value`
-/// follow the array's declaration (a map is rejected earlier by type_check).
+/// Bare cells share the ordinary read path, with an arithmetic array index or
+/// an explicitly quoted map key (DD#79).
 fn subscript_read_to_ssa(
     name: &str,
     index: &ArithExpr,
@@ -698,7 +694,11 @@ fn subscript_read_to_ssa(
     // Without this, `$(( args[i] ))` reached codegen with the unresolved name
     // and tripped the defensive `find_array_slot` ICE
     // (arith-args-subscript-codegen); the SB5031 false-positive had masked it.
-    super::expressions::subscript_to_value(name, arith_to_ssa(index, expr, state), state)
+    let index = match index.quoted_subscript_key() {
+        Some(word) => expr_to_value(word, state),
+        None => arith_to_ssa(index, expr, state),
+    };
+    super::expressions::subscript_to_value(name, index, state)
 }
 
 /// DD#72: in arith context, a `${s:-LITERAL}` default is used as an int operand.
@@ -708,7 +708,12 @@ fn subscript_read_to_ssa(
 /// Arith-scoped, so a *string*-context
 /// `${s:-0xff}` keeps its literal "0xff" (that path never calls this).
 fn canonicalize_arith_default(v: SsaValue) -> SsaValue {
-    let SsaValue::DefaultValue { source, default } = v else {
+    let SsaValue::DefaultValue {
+        source,
+        default,
+        is_integer,
+    } = v
+    else {
         return v;
     };
     let SsaValue::Literal(default) = *default else {
@@ -717,7 +722,11 @@ fn canonicalize_arith_default(v: SsaValue) -> SsaValue {
     let default = crate::parse::parse_dd72_literal(&default)
         .expect("arithmetic default must be a validated DD#72 integer literal");
     let default = Box::new(SsaValue::Literal(default.to_string()));
-    SsaValue::DefaultValue { source, default }
+    SsaValue::DefaultValue {
+        source,
+        default,
+        is_integer,
+    }
 }
 
 /// In arithmetic context, a bare name is either a known int-typed
@@ -1296,6 +1305,7 @@ mod tests {
                 canonicalize_arith_default(SsaValue::DefaultValue {
                     source: Box::new(SsaValue::Literal("2".to_string())),
                     default: Box::new(default),
+                    is_integer: false,
                 })
             }));
             let msg = ice_text(&caught.expect_err("malformed arithmetic default must ICE"));

@@ -474,16 +474,10 @@ enum ATok {
     BadLit(String),
     Var(String),
     DollarVar(String),
-    /// `${name[index]}` inside `$(( ))` — a normal-parse subscript rvalue
-    /// (name, raw index text). The parser builds the ordinary `Subscript` Expr
-    /// (so a map's string key works) and wraps it as `ArithExpr::Expansion`.
-    Subscript(String, String),
-    /// arith-subscript model B (Stage 2): a **bare** `name[index]` in `$(( ))`
-    /// (no `${}`) — an int-array cell, rvalue+lvalue. Carries the name and the
-    /// raw index text (a full arith expression, re-parsed by the arith parser).
+    /// Bare cell, rvalue+lvalue: an arithmetic array index or a wholly quoted
+    /// map key. Carries the name and raw index text.
     BareSubscript(String, String),
-    /// `${var:OP…}` inside `$(( ))` — any operator-bearing parameter expansion
-    /// (`:-`, `:?`, `#`, `%`, `:s/`, …). Carries the raw `${…}` body; the
+    /// A cell or operator-bearing `${...}` inside `$(( ))`. Carries its raw body; the
     /// parser routes it through the real parameter-expansion parser and wraps
     /// the result as `ArithExpr::Expansion` (DD#77). Before this, such bodies
     /// fell through to a bogus `DollarVar("var:OP…")` → undefined → silent 0
@@ -550,7 +544,6 @@ fn atok_to_text(tok: &ATok) -> String {
         ATok::Num(n) => n.to_string(),
         ATok::BadNum(s) | ATok::BadLit(s) | ATok::Var(s) | ATok::UnterminatedBrace(s) => s.clone(),
         ATok::DollarVar(name) => format!("${name}"),
-        ATok::Subscript(name, index) => format!("${{{name}[{index}]}}"),
         ATok::BareSubscript(name, index) => format!("{name}[{index}]"),
         ATok::ParamExpansion(body) => format!("${{{body}}}"),
         ATok::PlusPlus => "++".to_string(),
@@ -834,44 +827,17 @@ fn scan_arith_braced_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usiz
 /// parameter-expansion path and the real parser rejects it (`$(len x)` /
 /// `(len x)` is the sole length spelling). A bare `${name}` is a var read.
 fn braced_body_token(body: &str) -> ATok {
-    if let Some(sub) = try_braced_subscript(body) {
-        return sub;
-    }
     // A plain identifier stays a simple var read (the working path).
     if is_bare_ident(body) {
         return ATok::DollarVar(body.to_string());
     }
-    // Anything else carries a parameter-expansion operator (`:-`, `:?`, `#`,
-    // `%`, `:s/`, …) — route it through the real parser (DD#77) rather than the
-    // old bogus `DollarVar(body)` → silent 0.
+    // Cells and operators share the normal parser, including their key words.
     ATok::ParamExpansion(body.to_string())
 }
 
 /// True for a non-empty run of `[A-Za-z0-9_]` — a bare variable name.
 fn is_bare_ident(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
-/// `${a[i]}` / `${m[k]}` — a normal-parse subscript rvalue. Split `name[index]`;
-/// the parser builds the ordinary `Subscript` Expr, so the array-int-index vs
-/// map-string-key distinction (DD#33) is handled by the normal lowering.
-/// arith-subscript-values.
-fn try_braced_subscript(body: &str) -> Option<ATok> {
-    let open = body.find('[')?;
-    let name = &body[..open];
-    // The name must be a *variable* name, not merely a run of `[A-Za-z0-9_]`:
-    // `${1[0]}` used to become a subscript on a collection called `1`, which
-    // nothing declares, and codegen panicked ("ICE: undefined array: 1").
-    // Falling through here routes the body to the real parser, which rejects
-    // it with SB4047 (`try_subscript`, parse/expr.rs).
-    if !crate::ir::is_plain_identifier(name) || !body.ends_with(']') {
-        return None;
-    }
-    let index = &body[open + 1..body.len() - 1];
-    if index.is_empty() {
-        return None;
-    }
-    Some(ATok::Subscript(name.to_string(), index.to_string()))
 }
 
 /// Scan a bare `$name` (alphanumeric/`_`, including positional digits).
@@ -904,18 +870,26 @@ fn scan_arith_ident(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
 /// the balanced `[ … ]` run (handles nesting like `a[b[0]]`). `None` if
 /// unbalanced or empty (`a[]`).
 fn scan_balanced_brackets(bytes: &[u8], open: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (k, &b) in bytes.iter().enumerate().skip(open) {
-        match b {
-            b'[' => depth += 1,
-            b']' => depth -= 1,
-            _ => continue,
-        }
-        if depth == 0 {
-            return (k > open + 1).then_some(k + 1);
-        }
+    let close = super::expr::balanced_subscript_close(bytes, open)?;
+    (close > open + 1).then_some(close + 1)
+}
+
+fn parse_bare_subscript_index(index: &str, span: Span) -> Result<ArithExpr, Diagnostic> {
+    let trimmed = index.trim();
+    if !trimmed.starts_with(['"', '\'']) && !trimmed.starts_with("$'") {
+        return parse_arith_str(index, span);
     }
-    None
+    let origin = super::lexer::Origin::Within(span.line, span.col);
+    let word = super::expr::parse_subscript_index(index, span, origin)?;
+    let index = ArithExpr::Expansion(Box::new(word));
+    if index.quoted_subscript_key().is_none() {
+        return Err(Diagnostic::error_span(
+            span,
+            "SB4041",
+            "a bare map cell in arithmetic requires one wholly quoted string key".to_string(),
+        ));
+    }
+    Ok(index)
 }
 
 /// Match a three-byte arithmetic operator: `<<=` or `>>=`.
@@ -1215,26 +1189,10 @@ impl ArithParser {
     /// out of `parse_prefix_atom` to keep the dispatcher small.
     fn parse_expansion_atom(&mut self, tok: &ATok) -> Option<Result<ArithExpr, Diagnostic>> {
         match tok {
-            ATok::Subscript(name, idx) => {
-                // `${a[i]}` / `${m[k]}` — a normal-parse `Subscript` Expr imported
-                // as an rvalue value (arith-subscript-values).
-                self.advance();
-                let index = crate::parse::expr::subscript_index_expr(idx, self.span);
-                let expr = Expr {
-                    kind: ExprKind::Subscript {
-                        name: name.clone(),
-                        index: Box::new(index),
-                    },
-                    span: self.span,
-                };
-                Some(Ok(ArithExpr::Expansion(Box::new(expr))))
-            }
             ATok::BareSubscript(name, idx) => {
-                // Model B (Stage 2): bare `a[i]` — the index is a full arith
-                // expression, re-parsed here.
                 self.advance();
                 Some(
-                    parse_arith_str(idx, self.span).map(|index| ArithExpr::Subscript {
+                    parse_bare_subscript_index(idx, self.span).map(|index| ArithExpr::Subscript {
                         name: name.clone(),
                         index: Box::new(index),
                     }),
@@ -1431,7 +1389,6 @@ impl ArithParser {
                     | ATok::Var(_)
                     | ATok::DollarVar(_)
                     | ATok::LParen
-                    | ATok::Subscript(_, _)
                     | ATok::BareSubscript(_, _)
                     | ATok::ParamExpansion(_)
             )
@@ -1553,19 +1510,13 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
             index,
             op,
             value,
-        } => {
-            let index_expr = Expr {
-                kind: ExprKind::Arithmetic(index.clone()),
-                span,
-            };
-            arith_assign_stmt(
-                name,
-                Some(index_expr),
-                op.map_or(AssignOp::Set, AssignOp::Arith),
-                (**value).clone(),
-                span,
-            )
-        }
+        } => arith_assign_stmt(
+            name,
+            Some(arith_subscript_index(index, span)),
+            op.map_or(AssignOp::Set, AssignOp::Arith),
+            (**value).clone(),
+            span,
+        ),
         ArithExpr::Comma(exprs) => {
             let stmts: Vec<Statement> = exprs
                 .iter()
@@ -1594,6 +1545,16 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
              routes only Mutation here: {expr:?}"
         ),
     }
+}
+
+fn arith_subscript_index(index: &ArithExpr, span: Span) -> Expr {
+    index
+        .quoted_subscript_key()
+        .cloned()
+        .unwrap_or_else(|| Expr {
+            kind: ExprKind::Arithmetic(Box::new(index.clone())),
+            span,
+        })
 }
 
 /// Lower a test/comparison arithmetic expression to a Statement.
@@ -1709,7 +1670,13 @@ fn step_rparen(scanner: &mut Scanner, content: &mut String, depth: &mut i32) -> 
 }
 
 fn step_default_token(scanner: &mut Scanner, tok: &Tok, content: &mut String) -> bool {
-    let text = tok_to_text(tok);
+    let text = match tok {
+        Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
+            let span = scanner.peek().span;
+            scanner.source_slice(span.start, span.end).to_string()
+        }
+        _ => tok_to_text(tok),
+    };
     content.push_str(&text);
     scanner.next();
     if !scanner.next_is_adjacent() && needs_separator_space(&scanner.peek().token, &text) {
@@ -1740,11 +1707,8 @@ fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
 /// loop stops at EOF — but both arms state the *specified* rule rather than
 /// the shape the current scanner happens to deliver (DD#116, property 3).
 ///
-/// `DoubleQuoted` is rendered as the placeholder `"..."` rather than its
-/// parts. That is lossy but safe: `"` is never valid in sash arithmetic, so
-/// the shape is always rejected, and SB4035 names the real `"` the user typed
-/// rather than the fabricated ellipsis. Rendering the parts faithfully would
-/// mean re-entering the display-vs-semantic trap that made `argv "1" a` ICE.
+/// Quoted tokens retain their original source in `step_default_token`:
+/// rebuilding decoded parts would lose interpolation or decode C escapes twice.
 ///
 /// **Total over `Tok` on purpose — do not add a wildcard.**
 fn tok_to_text(tok: &Tok) -> String {
@@ -1823,9 +1787,9 @@ fn tok_to_text(tok: &Tok) -> String {
         Tok::DblSemi => ";;".to_string(),
         // Literals and values.
         Tok::Word(w) => w.clone(),
-        Tok::SingleQuoted(s) => format!("'{}'", s),
-        Tok::DoubleQuoted(_) => "\"...\"".to_string(),
-        Tok::AnsiCQuoted(s) => format!("$'{}'", s),
+        Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
+            unreachable!("quoted tokens retain their source in step_default_token")
+        }
         // Expansions.
         Tok::Dollar(v) => format!("${}", v),
         Tok::DollarBrace(c) => format!("${{{}}}", c),
@@ -1944,8 +1908,16 @@ mod tests {
     /// rendering them is depth-sensitive. A spelling here would be a second,
     /// already-disagreeing answer (DD#116, rival).
     #[test]
-    fn tok_to_text_rejects_every_paren_token() {
-        for tok in [Tok::LParen, Tok::RParen, Tok::DollarDblParen, Tok::DblParen] {
+    fn tok_to_text_rejects_intercepted_tokens() {
+        for tok in [
+            Tok::LParen,
+            Tok::RParen,
+            Tok::DollarDblParen,
+            Tok::DblParen,
+            Tok::SingleQuoted("key".into()),
+            Tok::DoubleQuoted(Vec::new()),
+            Tok::AnsiCQuoted("key".into()),
+        ] {
             let caught = std::panic::catch_unwind(|| tok_to_text(&tok));
             assert!(caught.is_err(), "{tok:?} should be unreachable here");
         }
@@ -1971,7 +1943,7 @@ mod tests {
     /// `found Amp` for a `&` they had typed.
     #[test]
     fn atok_to_text_spells_the_operand_and_prefix_tokens() {
-        let cases: [(ATok, &str); 16] = [
+        let cases: [(ATok, &str); 15] = [
             (ATok::Num(42), "42"),
             (
                 ATok::BadNum("99999999999999999999".into()),
@@ -1980,7 +1952,6 @@ mod tests {
             (ATok::BadLit("08".into()), "08"),
             (ATok::Var("x".into()), "x"),
             (ATok::DollarVar("x".into()), "$x"),
-            (ATok::Subscript("a".into(), "0".into()), "${a[0]}"),
             (ATok::BareSubscript("a".into(), "0".into()), "a[0]"),
             (ATok::ParamExpansion("x:-7".into()), "${x:-7}"),
             (ATok::PlusPlus, "++"),

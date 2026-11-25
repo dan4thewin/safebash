@@ -1,16 +1,42 @@
 title: "BUG: DD#80's key-type check (SB4030) runs on a private walker that misses most positions — a native ICE and a silent C miscompile"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
 gates:
-  - "type_check's key-type check is driven by the shared `ir` expression walker that SB4041 already uses; `check_subscript_types` and `check_subscripts_in_parts` are deleted"
-  - "every row of the first two What tables is SB4030 in both backends, with the message its operator-free twin draws today"
-  - "every row listed as already correct or masked keeps its verdict, and no diagnostic is reported twice"
-  - "no subscript index reaches codegen's non-integer-literal ICE"
-  - "reversion proof: restoring the private walker turns the new specs red"
+  - "after stable inference, the scoped `run_stmt_pass` drives `ir::walk_own_exprs`; `check_subscript_types` and `check_subscripts_in_parts` are deleted"
+  - "invalid array/map keys in previously skipped expression positions receive distinguishing SB4030 diagnostics in both backends"
+  - "executable child bodies are checked once under their actual lexical collection signature, without duplicate diagnostics"
+  - "integer-valued index calls and quoted numeric map keys remain legal; invalid keys never reach backend integer lowering"
+  - "removing the replacement key pass turns keytype.1-.9 red in both backends while keytype.10 remains green"
 
-## What
+## Resolution, 2026-11-25
+
+Implemented on `err-attempt-trial` with DG's operand-word key grammar.
+`check_subscript_keys` uses the canonical own-expression walker for both
+ordinary subscripts and indexed parameter expansions. The existing scoped
+statement pass supplies the inferred environment, including forwarded slots
+and executable child bodies. Assignment and unset targets keep their
+role-specific checks.
+
+`keytype.1`-`.9` pin the skipped positions, distinguishing messages and
+diagnostic counts; `.10` preserves integer index calls and quoted map keys.
+Removing the shared pass makes all nine refusal checks fail in both
+backends, alongside 21 existing/new key checks. The preservation still
+passes. This removes the replacement pass; it does not literally restore
+the old private walker.
+
+The final gate has 13086 checks, no failures and 13 existing skips.
+[Journal 670](../journal/670-operand-word-collection-keys.md) records the
+before-controls, independent reversions, diagnostic migrations and exact
+baseline comparison. DD80 now permits ordinary key words: its former
+SB4041 shape whitelist is not part of this repair's current contract.
+
+## What (historical)
+
+The following tables and their "today" wording describe the filing-time
+compilers. They are retained as evidence, not current results or a claim
+that the retired key-shape restrictions still apply.
 
 DD#80 types a subscript index by its collection: an indexed array is indexed
 by number, a map by string. type_check enforces that as SB4030 in
@@ -108,7 +134,7 @@ These positions could not be measured, because another rule fires first:
 
 They keep their verdicts.
 
-## Cause
+## Cause (historical)
 
 `check_subscript_types` in type_check.rs is a private walker. Its arms cover
 only `ExprKind::Subscript` and the parts of a `DoubleQuoted` or `Concat`, and
@@ -152,37 +178,32 @@ statement containers, which still holds. Its expression sweep used seven
 violating expressions, none of them a key-type mismatch, so the positions
 above were never probed.
 
-## Fix
+## Delivered fix
 
-Drive `check_subscript_key_kind` from the shared walker. Call it once per
-statement through `ir::walk_own_exprs`, for every `ExprKind::Subscript` and
-every parameter expansion that has an index. Use `walk_own_exprs`, not
-`walk_all_exprs`: `check_stmt` already visits nested statements, so the
-descending form would report each diagnostic once per enclosing level
-(journal 308). `walk_expr_tree` also leaves `$( … )` bodies to that
-recursion, which preserves the deliberate non-descent that
-`check_subscript_types` documents. Then delete `check_subscript_types` and
-`check_subscripts_in_parts`.
+After inference stabilizes, `run_stmt_pass` invokes `check_subscript_keys`
+once per statement. Its `ir::walk_own_exprs` callback checks every
+`ExprKind::Subscript` and parameter expansion with an index. The statement
+pass, rather than a second descending expression walker, owns function,
+capture and handler traversal and its scoped environment.
 
-Specs: one per row of the first two tables, in both modes. SB4030 is raised
-at many sites, so each spec asserts the distinguishing message text, not just
-the code. The C rows are the negative control, since each prints a value
-today.
+Both private helpers are deleted. The focused specs group related
+positions while asserting the distinguishing message and exact diagnostic
+count, not merely a bare SB4030. The independent pass-removal reversion
+shows that another diagnostic cannot silently satisfy those assertions.
 
 ## Related
 
-- `bug-arith-braced-subscript-index-second-grammar`: inside `$(( ))`, an
-  operator-free `${a[$(echo 1)]}` is SB4041 today, because of a second index
-  grammar. Fixing that grammar moves its key check onto this one, so that
-  task depends on this.
+- `bug-arith-braced-subscript-index-second-grammar` closes in the same
+  delivery. Removing its second grammar no longer exposes unchecked keys:
+  the unified imports use this scoped key check.
 - `bug-sed-index-capture-advice`: ic11's index is a sed expansion. After this
   fix it draws the capture message, which that task rewords.
-- B37 in `batch-531-findings`: command resolution keeps its own walk, which
-  skips a parameter expansion's index. It is the same shape in another pass.
+- B37 in `batch-531-findings` was the same private-walker failure in command
+  resolution, repaired separately.
 - B5 in `batch-531-findings` closed the END traversal gap (journal 565):
   `typeflow.10` pins the key check for `END { echo ${a[foo]} }`. The
-  position-specific omissions in this task remain separate; their eventual
-  repair will now reach both roots.
+  position-specific omissions in this task were separate. Those END examples
+  are historical; the current handler roots use the same scoped pass.
 
 Found during the batch-531 port (step F15), while probing the sed-index
 advice. Filed under DG's rule for the port that questions and uncovered cases

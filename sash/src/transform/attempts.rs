@@ -122,6 +122,7 @@ fn command_failure(kind: &BuiltinCmd, checked: bool, redirect: bool) -> Option<F
         | BuiltinCmd::SetTestFromStatus
         | BuiltinCmd::SetTestFromPipe
         | BuiltinCmd::LetExit
+        | BuiltinCmd::TestValue
         | BuiltinCmd::StoreBgPid
         | BuiltinCmd::TrapSignal
         | BuiltinCmd::SignalFlag

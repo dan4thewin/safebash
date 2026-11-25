@@ -1423,6 +1423,7 @@ fn check_value_use(
         | SsaValue::DefaultValue {
             source: left,
             default: right,
+            ..
         }
         | SsaValue::RequireValue {
             source: left,

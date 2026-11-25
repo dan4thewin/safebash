@@ -582,9 +582,9 @@ if (( a[(toupper x)] > 0 )) { echo y }'
 # asx.1 ${a[0]} literal index read
 run_sash 'int array a=(10 20 30); echo $(( ${a[0]} + 1 ))'
 [[ $rc = 0 && $out = "11" && -z $err ]]; chk asx.1
-# asx.2 ${a[$i]} dynamic index read
-run_sash 'int array a=(10 20 30); i=1; echo $(( ${a[$i]} + 1 ))'
-[[ $rc = 0 && $out = "21" && -z $err ]]; chk asx.2
+# wordkey.16 ${a[$i]} uses an integer-typed dynamic index.
+run_sash 'int array a=(10 20 30); int i=1; echo $(( ${a[$i]} + 1 ))'
+[[ $rc = 0 && $out = "21" && -z $err ]]; chk wordkey.16
 # asx.3 ${m[k]} map read (string key)
 run_sash 'int map m=([k]=5); echo $(( ${m[k]} + 1 ))'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk asx.3
@@ -623,8 +623,7 @@ run_sash 'f() { echo $(( args[0] + 1 )); }; f 5'
 [[ $rc != 0 && $err == *SB4030* && $err == *'string cell `args'* ]]; chk bsx.8
 run_sash 'f() { echo $(( args[0] + args[1] )); }; f 3 4'
 [[ $rc != 0 && $err == *SB4030* && $err == *'string cell `args'* ]]; chk bsx.9
-# bsx.6 bare `m[k]` on a MAP in arith → compile error (string key not
-# expressible under arith rules; use `${m[k]}` / `m[k]=`). Literal index so the
+# bsx.6 an arithmetic key on a MAP is not implicitly stringified. Literal index so the
 # error is the map rejection (SB4030), not a B2 undeclared-index one.
 # Mode-independent.
 run_sash 'int map m=([k]=5); int x=$(( m[0] + 1 ))'
@@ -644,8 +643,7 @@ run_sash 'echo $(( args[0] ))'
 # in assign position is caught earlier by the DD#105 int-key rule (bsx.7). So
 # the recursion — the part that reaches a second cell — was carrying the whole
 # of `(( b[0] = m[0] ))` unexercised. A missing recursion is silent: the
-# offending read compiles and the map cell is read under arithmetic rules that
-# cannot express its key.
+# offending read compiles with an unquoted arithmetic key instead of a string.
 # bsx.11 a bare map cell as the assigned VALUE
 run_sash 'int map m=([k]=5); int array b=(1 2); (( b[0] = m[0] ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"is a map"* ]]; chk bsx.11
@@ -672,10 +670,11 @@ run_sash 'int array a=(7 13 21); int i=2; echo $(( $a[$i] ))'
 # dsx.3 a stray bracket still rejects, and names all three spellings
 run_sash 'int array a=(7 13 21); echo $(( $a[1 ))'
 [[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'${a[i]}'* ]]; chk dsx.3
-# dsx.4 the braceless spelling inherits the BRACED index grammar exactly:
-# `i+1` is rejected by `${a[i+1]}` too, so the two agree rather than diverge
+# wordkey.10 the braceless spelling inherits the braced key grammar exactly:
+# `i+1` is a string word, not an integer index, just as in `${a[i+1]}`.
 run_sash 'int array a=(7 13 21); echo $(( $a[i+1] ))'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk dsx.4
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"non-integer index on indexed array 'a'"* ]]; chk wordkey.10
 # dsx.5 `${…}` is never an lvalue (model B), and `$a[i]` is not either
 run_sash 'int array a=(7 13 21); (( $a[0] = 5 )); echo $a[0]'
 [[ $rc != 0 && -z $out && -n $err ]]; chk dsx.5

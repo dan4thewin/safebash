@@ -458,13 +458,10 @@ run_sash 'x=$( ); echo "[$x]"'
 # cov.109 an unbalanced `${a[0}` — capture_balanced_subscript finds no close.
 run_sash 'int array a=(1 2); echo ${a[0}'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk cov.109
-# cov.110 a non-identifier dynamic subscript `$a[$i-]`. The read side no longer
-# has its own gather to back off from — the lexer desugars `$a[…]` to `${a[…]}`
-# — so this reaches the braced index reader and reports the ambiguous index
-# rather than falling out as a bare `$a`. (dynamic_subscript_var's own decline
-# arm is still exercised from the write side, `a[1]=…` — see assign.sh.)
+# wordkey.21 `$i-` is one string operand word, not an integer array index.
 run_sash 'int array a=(1 2); int i=1; echo $a[$i-]'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk cov.110
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"non-integer index on indexed array 'a'"* ]]; chk wordkey.21
 # cov.111 a BARE `@` is an ordinary word, not a splat (the `w.len() > 1` guard).
 run_sash 'echo @'
 [[ $rc = 0 && $out = "@" && -z $err ]]; chk cov.111
@@ -667,14 +664,13 @@ run_sash 'array a=(p q); echo $(join a , x)'
 run_sash 'array a=(p q); echo $(join)'
 [[ $rc != 0 && -z $out && $err == *SB5040* ]]; chk cov.145
 
-# cov.146-147 is_identifier_or_subscript's two rejection arms — a malformed
-# assignment target is neither an assignment nor a runnable command (SB5011).
-# cov.146 a name that is not an identifier, with a well-formed subscript
+# cov.146 a malformed name is neither an assignment nor a command (SB5011).
 run_sash '9x[0]=1; echo done'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.146
-# cov.147 a valid name with an EMPTY subscript
+# wordkey.22 a valid assignment name with an empty key reaches the key parser.
 run_sash 'a[]=1; echo done'
-[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.147
+[[ $rc != 0 && -z $out && $err == *SB4041* \
+   && $err == *"a subscript requires one operand word"* ]]; chk wordkey.22
 
 # cov.148-149 check_unset_args: `unset` is collection-only (DD#30), so a
 # scalar — declared or not — is redirected to `name=""`.

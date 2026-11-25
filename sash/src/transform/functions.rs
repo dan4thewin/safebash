@@ -301,9 +301,11 @@ pub(super) fn lift_int_func_calls(
         }
 
         // Source defaults are literal (SB4070); walk API values too.
-        SsaValue::DefaultValue { source, default } => {
-            lift_default_value(*source, *default, ssa, state, block)
-        }
+        SsaValue::DefaultValue {
+            source,
+            default,
+            is_integer,
+        } => lift_default_value(*source, *default, is_integer, ssa, state, block),
 
         // ── collections ───────────────────────────────────────────────
         SsaValue::Concat(parts) => lift_concat(parts, ssa, state, block),
@@ -360,24 +362,13 @@ pub(super) fn lift_int_func_calls(
 
         // ── multi-operand values ──────────────────────────────────────
         SsaValue::ArithBinOp { left, op, right } => {
-            let left = lift_boxed(*left, ssa, state, block);
-            let right = lift_boxed(*right, ssa, state, block);
-            SsaValue::ArithBinOp { left, op, right }
+            lift_arith_binary(*left, op, *right, ssa, state, block)
         }
         SsaValue::Ternary {
             cond,
             true_val,
             false_val,
-        } => {
-            let cond = lift_boxed(*cond, ssa, state, block);
-            let true_val = lift_boxed(*true_val, ssa, state, block);
-            let false_val = lift_boxed(*false_val, ssa, state, block);
-            SsaValue::Ternary {
-                cond,
-                true_val,
-                false_val,
-            }
-        }
+        } => lift_ternary(*cond, *true_val, *false_val, ssa, state, block),
         SsaValue::RegexMatch {
             subject,
             pattern,
@@ -479,6 +470,104 @@ fn lift_concat(
         })
         .collect();
     SsaValue::Concat(parts)
+}
+
+fn lift_arith_binary(
+    left: SsaValue,
+    op: ArithOp,
+    right: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    if matches!(op, ArithOp::And | ArithOp::Or) {
+        let right = SsaValue::ArithBinOp {
+            left: Box::new(right),
+            op: ArithOp::Ne,
+            right: Box::new(SsaValue::Expr("0".to_string())),
+        };
+        let (yes, no) = match op {
+            ArithOp::And => (right, SsaValue::Expr("0".to_string())),
+            ArithOp::Or => (SsaValue::Expr("1".to_string()), right),
+            _ => unreachable!(),
+        };
+        return lift_ternary(left, yes, no, ssa, state, block);
+    }
+    let mut left = lift_int_func_calls(left, ssa, state, block);
+    if needs_lift(&right) {
+        left = retain_arith_value(left, ssa, state, *block);
+    }
+    let right = lift_boxed(right, ssa, state, block);
+    SsaValue::ArithBinOp {
+        left: Box::new(left),
+        op,
+        right,
+    }
+}
+
+fn retain_arith_value(
+    value: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> SsaValue {
+    let name = state.reserve_temp_name("__arith_operand".to_string(), VarType::Int);
+    let target = state.define(&name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: target.clone(),
+        value,
+    });
+    SsaValue::Var(target)
+}
+
+fn lift_ternary(
+    cond: SsaValue,
+    yes: SsaValue,
+    no: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    let cond = lift_int_func_calls(cond, ssa, state, block);
+    ssa.block_mut(*block)
+        .insts
+        .push(SsaInst::internal(BuiltinCmd::TestValue, vec![cond], false));
+    let mut yes_block = ssa.new_block("arith_true");
+    let mut no_block = ssa.new_block("arith_false");
+    let merge = ssa.new_block("arith_merge");
+    ssa.block_mut(*block).terminator = Terminator::Branch {
+        condition: "__test_value".to_string(),
+        true_block: yes_block,
+        false_block: no_block,
+    };
+    let name = state.reserve_temp_name("__arith_result".to_string(), VarType::Int);
+    let before = state.snapshot();
+    lift_arith_branch(yes, &name, merge, ssa, state, &mut yes_block);
+    let after_yes = state.snapshot();
+    state.restore(&before);
+    lift_arith_branch(no, &name, merge, ssa, state, &mut no_block);
+    let after_no = state.snapshot();
+    super::helpers::insert_phis_two_branch(
+        state, ssa, merge, yes_block, &after_yes, no_block, &after_no,
+    );
+    *block = merge;
+    SsaValue::Var(state.lookup(&name))
+}
+
+fn lift_arith_branch(
+    value: SsaValue,
+    name: &str,
+    merge: BlockId,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) {
+    let value = lift_int_func_calls(value, ssa, state, block);
+    let target = state.define(name);
+    ssa.block_mut(*block)
+        .insts
+        .push(SsaInst::Assign { target, value });
+    ssa.block_mut(*block).terminator = Terminator::Goto(merge);
 }
 
 fn lift_glob_list(
@@ -637,7 +726,12 @@ pub(super) fn needs_lift(val: &SsaValue) -> bool {
         SsaValue::ParamExpansion { operator, .. } if operator == "glob" => true,
         SsaValue::IntFuncCall { .. }
         | SsaValue::FuncCall { .. }
-        | SsaValue::CmdSubstBody { .. } => true,
+        | SsaValue::CmdSubstBody { .. }
+        | SsaValue::Ternary { .. }
+        | SsaValue::ArithBinOp {
+            op: ArithOp::And | ArithOp::Or,
+            ..
+        } => true,
         SsaValue::CmdSubst { argv, .. } => {
             external_capture_head(argv).is_some()
                 || matches!(argv.first(), Some(SsaValue::Literal(name)) if name == "mkdtemp")
@@ -657,7 +751,6 @@ pub(super) fn needs_lift(val: &SsaValue) -> bool {
         | SsaValue::Subscript { .. }
         | SsaValue::ArraySplat { .. }
         | SsaValue::ArithBinOp { .. }
-        | SsaValue::Ternary { .. }
         | SsaValue::RegexMatch { .. }
         | SsaValue::RegexReplace { .. }
         | SsaValue::RequireValue { .. }
@@ -732,6 +825,7 @@ fn lift_str_func_call(
 fn lift_default_value(
     source: SsaValue,
     default: SsaValue,
+    is_integer: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
@@ -741,6 +835,7 @@ fn lift_default_value(
     SsaValue::DefaultValue {
         source: Box::new(source),
         default: Box::new(default),
+        is_integer,
     }
 }
 

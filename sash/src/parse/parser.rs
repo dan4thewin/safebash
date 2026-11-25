@@ -2560,34 +2560,16 @@ fn looks_like_assignment(scanner: &mut Scanner) -> bool {
     };
     let w = w.clone();
     let w_end = head.span.end;
+    let w_start = head.span.start;
+    if let Some((name, _)) = w.split_once('[') {
+        return is_identifier(name) && scanner.subscript_has_assign_op(w_start + name.len());
+    }
     let next = scanner.peek_n(1);
-    if matches!(next.token, Tok::Eq | Tok::PlusAssign) && is_identifier_or_subscript(&w) {
-        let eq = next.span;
-        if eq.start == w_end {
-            return true;
-        }
-        return scanner.peek_n(2).span.start != eq.end;
-    }
-    looks_like_dynamic_subscript_assign(scanner, &w)
-}
-
-/// `name[$var]=` / `name[${var}]=` (and `+=`): a subscript assignment
-/// whose `$var` index the lexer split off as its own token(s), leaving
-/// `name[` as the first word. The closed single-Word form `name[lit]=`
-/// is handled by the `is_identifier_or_subscript` path above.
-fn looks_like_dynamic_subscript_assign(scanner: &mut Scanner, w: &str) -> bool {
-    let Some(name) = w.strip_suffix('[') else {
-        return false;
-    };
-    if !is_identifier(name) {
-        return false;
-    }
-    // The index is no longer a single token (it may be `$(( … ))`, a
-    // disposition, or a quoted key), so look ahead for the `]` that closes it
-    // and require an assignment operator immediately after. The `name[` word is
-    // still unconsumed here, so the index starts one token later than it does
-    // in `parse_split_subscript_index` — hence the `base` of 1.
-    lhs_index_close_from(scanner, 1).is_some()
+    let has_operator = matches!(next.token, Tok::Eq | Tok::PlusAssign);
+    let eq = next.span;
+    has_operator
+        && is_identifier(&w)
+        && (eq.start == w_end || scanner.peek_n(2).span.start != eq.end)
 }
 
 /// `var =~ s/pat/rep/` shape probe. Returns the var name (cloned) if
@@ -2611,11 +2593,11 @@ fn looks_like_regex_mutation(scanner: &mut Scanner) -> Option<String> {
 }
 
 fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnostic> {
-    let name_tok = scanner.next();
+    let name_tok = scanner.peek().clone();
     let Tok::Word(raw_name) = name_tok.token else {
         // `parse_simple_or_assignment` reaches here only when
         // `looks_like_assignment` matched, and that returns false unless
-        // `scanner.peek()` is a `Tok::Word` — the very token consumed above.
+        // `scanner.peek()` is a `Tok::Word` — the very token inspected above.
         unreachable!(
             "looks_like_assignment guarantees a Tok::Word head, got {:?}",
             name_tok.token
@@ -2670,110 +2652,29 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Statement, Diag
     })
 }
 
-/// Parse the optional subscript on an assignment LHS. A bare `name[`
-/// means the `]` and a `$var` index were split into following tokens by
-/// the lexer (dynamic subscript, DD#33); the closed single-Word
-/// `name[lit]` form is handled by the `find('[')` branch; a plain
-/// `name` has no subscript.
+/// Read and write keys share their bracket extent and operand-word parser.
 fn parse_assignment_lhs(
     scanner: &mut Scanner,
     raw_name: String,
     span: Span,
 ) -> Result<(String, Option<Expr>), Diagnostic> {
-    if let Some(base) = raw_name.strip_suffix('[') {
-        let idx = parse_split_subscript_index(scanner, span)?;
-        return Ok((base.to_string(), Some(idx)));
-    }
-    let Some(bracket_pos) = raw_name.find('[') else {
+    let Some((name, _)) = raw_name.split_once('[') else {
+        scanner.next();
         return Ok((raw_name, None));
     };
-    let name = raw_name[..bracket_pos].to_string();
-    let rest = &raw_name[bracket_pos + 1..];
-    // The lexer's `braceless_subscript` returns `None` on unbalanced brackets,
-    // so `a[0=5` never becomes an assignment LHS at all — it stays a word and
-    // SB5011 rejects it. A `[` here therefore always has its `]`.
-    let close = rest.find(']').unwrap_or_else(|| {
-        unreachable!(
-            "an assignment LHS reaches here only through the lexer's balanced \
-             subscript scan, so `{raw_name}` must close its `[`"
-        )
+    let open = scanner.peek().span.start + name.len();
+    let (index, origin) = scanner.take_subscript(open).unwrap_or_else(|| {
+        unreachable!("looks_like_assignment guarantees `{raw_name}` must close its `[`")
     });
-    let idx = rest[..close].to_string();
-    Ok((
-        name,
-        Some(Expr {
-            kind: ExprKind::Literal(idx),
-            span,
-        }),
-    ))
-}
-
-/// Consume a dynamic subscript index that the lexer split into its own tokens,
-/// followed by the closing `]` word. Used for `name[IDX]=value` assignments
-/// (DD#33).
-///
-/// This used to accept only `$var`/`${var}`, which made the assignment LHS a
-/// strictly narrower surface than the read side: `${a[$(( … ))]}` read fine but
-/// `a[$(( … ))]=` was SB4014, even though `$(( … ))` is the conversion DD#80
-/// itself names. The two surfaces must accept the same index forms, so the raw
-/// index text is recovered from the token spans and handed to the *same*
-/// [`parse_subscript_index`] the read path uses — uniformity is then structural
-/// rather than two lists kept in step by hand.
-///
-/// Re-parsing the text, rather than running `parse_expr` on the live scanner,
-/// is what keeps the closing `]` out of the index: with no space before it the
-/// word parser glues it onto the last operand, so `a[$i]=` yielded `1]`.
-///
-/// DD#116: unreachable by construction, so it ICEs rather than returning a
-/// diagnostic. This is reached only from `parse_assignment_lhs`'s
-/// `strip_suffix('[')` branch, and `looks_like_assignment` commits to that
-/// branch only via [`looks_like_dynamic_subscript_assign`], which has already
-/// run [`lhs_index_close_from`] over the same absolute token window and found
-/// a `]`. When the probe's window comes up empty the statement is never an
-/// assignment at all — a 40-token index is SB5011 as a command name, not
-/// SB4014 — so an error here could only describe a *supported* index as
-/// unsupported, pointing the user at source that is fine.
-fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
-    let Some(close) = lhs_index_close_from(scanner, 0) else {
-        unreachable!(
-            "looks_like_dynamic_subscript_assign already found this `]` with \
-             lhs_index_close_from over the same window"
-        )
-    };
-    let start = scanner.peek().span.start;
-    let end = scanner.peek_n(close).span.start;
-    let text = scanner.source_slice(start, end).to_string();
-    let origin = scanner.origin_of(start);
-    for _ in 0..=close {
-        scanner.next();
-    }
-    parse_subscript_index(&text, span, origin)
+    let index = parse_subscript_index(&index, span, origin)?;
+    Ok((name.to_string(), Some(index)))
 }
 
 /// Consume the assignment operator, which is the token immediately after the
 /// LHS.
 ///
-/// Checked rather than assumed. This used to be a bare `scanner.next();
-/// // consume =` on the non-`+=` path — it did not consume the `=`, it
-/// consumed whatever stood there and called it the `=`. The comment stated an
-/// invariant the code never tested, and when the shape probe and
-/// `parse_split_subscript_index` disagreed about which `]` closed the index,
-/// `m[$s ] x ]=9` swallowed the ` x ` as the operator and assigned the literal
-/// `]=9`.
-///
-/// The error arm is unreachable while the probe and the LHS parser agree,
-/// which [`lhs_index_close_from`] now makes structural rather than a
-/// coincidence of two hand-matched lookahead windows.
-///
-/// DD#116: unreachable by construction, so it ICEs. Both of
-/// [`looks_like_assignment`]'s branches guarantee the operator token.
-/// `is_identifier_or_subscript` requires a `]` suffix, so a bare `name[` can
-/// never take the first branch — which means the plain and `name[lit]` shapes
-/// consume nothing past the name and land on the very token the probe checked
-/// at `peek_n(1)`; and the dynamic-subscript branch consumes through the `]`
-/// that [`lhs_index_close_from`] found *because it was followed by* `=`/`+=`.
-/// A diagnostic here could only tell a user their assignment lacks the `=` it
-/// visibly has.
+/// Both scalar lookahead and the shared subscript extent guarantee this
+/// token. Consuming an arbitrary token here previously discarded source.
 fn parse_assign_op(scanner: &mut Scanner) -> AssignOp {
     match scanner.peek().token {
         Tok::PlusAssign => {
@@ -2789,29 +2690,6 @@ fn parse_assign_op(scanner: &mut Scanner) -> AssignOp {
         ),
     }
 }
-
-/// Offset of the `]` token that closes an assignment-LHS subscript, or `None`
-/// if there is none within [`MAX_LHS_INDEX_TOKENS`].
-///
-/// `base` is the offset of the first index token, which differs by one between
-/// the two callers: the shape probe runs with the `name[` word still
-/// unconsumed, the parser after it. **Both must call this**, because the `]`
-/// they pick has to be the same one — the probe commits to the parse on the
-/// strength of a `]` followed by `=`/`+=`, so a parser that closed on a
-/// *different* `]` would leave the scanner somewhere the probe never checked.
-/// That is not hypothetical: when this was two searches with two predicates,
-/// `m[$s ] x ]=9` closed on the first `]` and the ` x ` was then consumed as
-/// if it were the `=`, silently assigning the literal `]=9`.
-fn lhs_index_close_from(scanner: &mut Scanner, base: usize) -> Option<usize> {
-    (base..base + MAX_LHS_INDEX_TOKENS).find(|&i| {
-        matches!(&scanner.peek_n(i).token, Tok::Word(rb) if rb == "]")
-            && matches!(scanner.peek_n(i + 1).token, Tok::Eq | Tok::PlusAssign)
-    })
-}
-
-/// How far the assignment-LHS subscript parser looks ahead for the `]` that
-/// closes the index. Bounded so a bare `name[` cannot walk the rest of the file.
-const MAX_LHS_INDEX_TOKENS: usize = 32;
 
 /// Parse regex mutation: `var =~ s/RE/SUB/[flags]`. Desugars to
 /// `var = $(sub|gsub "$var" RE SUB)` (DD#63) — RE/SUB are re-parsed as
@@ -4219,24 +4097,6 @@ fn reject_nonscalar_redirect_target(target: &Expr, span: Span) -> Result<(), Dia
 
 // ── Helpers ──────────────────────────────────────────────────
 
-/// A word that is an identifier or a subscripted one: `name` or `name[idx]`.
-///
-/// This used to be a flat character-set test (alphanumeric plus `_ [ ]`), which
-/// accepted `9x`, `123`, `][`, and `a]b[` as assignment targets — so `9x=1`
-/// parsed as an assignment to a name bash will not accept. It now checks the
-/// two parts separately: [`is_identifier`] for the name, and a single
-/// well-formed `[…]` for the subscript.
-fn is_identifier_or_subscript(s: &str) -> bool {
-    let Some(open) = s.find('[') else {
-        return is_identifier(s);
-    };
-    let Some(rest) = s.strip_suffix(']') else {
-        return false;
-    };
-    let subscript = &rest[open + 1..];
-    is_identifier(&s[..open]) && !subscript.is_empty() && !subscript.contains(['[', ']'])
-}
-
 /// A word that looks like a file descriptor number (1-2 digits).
 fn is_fd_number(s: &str) -> bool {
     s.len() <= 2 && !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
@@ -4636,28 +4496,13 @@ mod invariant_tests {
         let _ = parse_redirect(&mut sc, Span::new(1, 1));
     }
 
-    /// DD#116: `parse_assignment_lhs` reaches its `[` branch only through the
-    /// lexer's *balanced* subscript scan, which returns `None` on `a[0` and
-    /// leaves it a plain word for SB5011. The old `None => rest.to_string()`
-    /// answered the impossible case by silently reading `a[0=5` as index
-    /// `0=5`. Only a direct call can reach it.
+    /// Assignment lookahead and LHS consumption share the balanced scan;
+    /// only a direct call can supply an unclosed index here.
     #[test]
     #[should_panic(expected = "must close its `[`")]
     fn parse_assignment_lhs_rejects_an_unclosed_subscript() {
-        let mut sc = Scanner::new("=5");
+        let mut sc = Scanner::new("a[0=5");
         let _ = parse_assignment_lhs(&mut sc, "a[0".to_string(), Span::new(1, 1));
-    }
-
-    /// DD#116 ICE. `looks_like_dynamic_subscript_assign` runs
-    /// `lhs_index_close_from` over the same window before committing, so a
-    /// scanner with no `]` can only arrive here by calling this directly —
-    /// which is what makes the panic the claim rather than a prediction.
-    #[test]
-    #[should_panic(expected = "already found this `]`")]
-    fn parse_split_subscript_index_rejects_an_index_it_cannot_span() {
-        let long = "$i + ".repeat(MAX_LHS_INDEX_TOKENS + 4);
-        let mut sc = Scanner::new(&long);
-        let _ = parse_split_subscript_index(&mut sc, Span::new(1, 1));
     }
 
     /// DD#116 ICE. Both of `looks_like_assignment`'s branches land this

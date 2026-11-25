@@ -1,41 +1,37 @@
 #!/bin/bash
 # spec/subscript.sh — DD#80 braced subscript key/index discipline.
 #
-# `${a[K]}` / `${m[K]}` take a DIRECT, unambiguous key. `K` is one of: an
-# integer literal, a `$var`, an expansion (`${…}`/`$(…)`/`$(( … ))`), a quoted
-# string, or a clean bareword (identifier — maps only). Implicit / ambiguous
-# bare forms reject at parse (SB4041); a string key on an int-indexed array
-# rejects at type-check (SB4030, the string→int discipline). Computation uses an EXPLICIT nested context —
-# bare arithmetic lives in `(( ))` (DD#79), never implicitly inside `${ }`.
+# Direct cell keys are operand words, including mixed words and nested reads.
+# Array keys remain integers; map keys remain strings. Only bare array cells
+# in arithmetic implicitly parse arithmetic indices (DD#79); bare map cells
+# there take wholly quoted string keys.
 set -eu
 . common.sh
 setup subscript
-plan=189
+plan=228
 echo "1..$plan" >&3
 
 set +e
 
-# ── A. implicit / ambiguous bare index → SB4041 (parse, mode-independent) ──
+# Direct words do not implicitly become arithmetic.
 
-# 80.1 a bare nested subscript (brackets) — the canonical footgun
 run_sash 'int array a=(2 0 9); echo ${a[a[0]]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.1
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"non-integer index on indexed array 'a'"* ]]; chk wordkey.1
 
-# 80.2 a bare nested subscript on a map rejects too (quote it, or use $var)
-run_sash 'map m=([k]=v); echo ${m[a[0]]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.2
+run_sash 'map m; m["a[0]"]=value; echo ${m[a[0]]}'
+[[ $rc = 0 && $out = value && -z $err && -z $rerr ]]; chk wordkey.2
 
-# 80.3 an arithmetic operator in a bare index (no implicit arithmetic)
 run_sash 'int array a=(2 0 9); echo ${a[i+1]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.3
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"non-integer index on indexed array 'a'"* ]]; chk wordkey.3
 
-# 80.4 a mixed `$var` + operator is not a pure `$var`
 run_sash 'int array a=(2 0 9); i=0; echo ${a[$i+1]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.4
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"non-integer index on indexed array 'a'"* ]]; chk wordkey.4
 
-# 80.5 a `$var` carrying its own subscript is ambiguous → precompute it
-run_sash 'int array a=(2 0 9); echo ${a[$b[0]]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.5
+run_sash 'int array a=(2 0 9); int array b=(2); echo ${a[$b[0]]}'
+[[ $rc = 0 && $out = 9 && -z $err && -z $rerr ]]; chk wordkey.5
 
 # ── B. string key on an int-indexed array → SB4030 (type-check, string→int) ──
 
@@ -680,17 +676,15 @@ run_sash 'fn f { echo $1[0] }
 f a'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk 80.96
 
-# ── P. the index rule holds on the WRITE side too (SB4041) ──
+# ── P. writes also require one operand word ──
 #
-# DD#80's "all paths must agree" applied to `a[K]=v`. Section A rejects an
-# ambiguous index when it is READ; every one of those forms used to be
-# accepted when it was WRITTEN, because an assignment's LHS index is a bare
-# `Expr` in `Assignment.index` and is never wrapped in a `Subscript` node —
-# the expression walk reached it but could not tell it was an index.
+# DD#80's "all paths must agree" applies to `a[K]=v` too. Reads and writes
+# require one operand word. Historically the validator missed write indices:
+# `Assignment.index` holds a bare `Expr`, not a `Subscript` node.
 #
 # This was not merely a missing error. `m[ $s x ]=9` stored the UNEXPANDED
 # text `$s x` as the key (80.99), and `m[$s ] x ]=9` silently discarded the
-# ` x ` entirely (80.103): the shape probe committed to the parse on a `]`
+# ` x ` entirely (now wordkey.18): the shape probe committed to the parse on a `]`
 # followed by `=`, the LHS parser closed on the FIRST `]`, and the leftover
 # ` x ` was then consumed as if it were the `=`.
 
@@ -707,31 +701,27 @@ run_sash 'map m=( ); m["a b"]="z"; echo ${m[ a b ]}'
 run_sash 'map m=( ); s="k"; m[ $s x ]="z"; echo ${m["$s x"]}'
 [[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.99
 
-# 80.100 an operator in a bare write index (the 80.3 footgun, writing)
+# Punctuation is literal in a direct key word.
 run_sash 'map m=( ); m[a-b]="z"; echo ${m["a-b"]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.100
+[[ $rc = 0 && $out = z && -z $err && -z $rerr ]]; chk wordkey.6
 
-# 80.101 any non-identifier punctuation, not just arithmetic operators
 run_sash 'map m=( ); m[a.b]="z"; echo ${m["a.b"]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.101
+[[ $rc = 0 && $out = z && -z $err && -z $rerr ]]; chk wordkey.7
 
-# 80.102 the read twin of 80.100 — agreement again
 run_sash 'map m=( ); m["a-b"]="z"; echo ${m[a-b]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.102
+[[ $rc = 0 && $out = z && -z $err && -z $rerr ]]; chk wordkey.8
 
-# 80.103 the silent-discard shape: two `]` in the index, the second one
-# carrying the `=`. Before the fix this compiled clean and assigned the
-# literal string `]=9` to key `zz`, dropping ` x ` without a word.
+# A later `]=` cannot turn a completed bracket word into an assignment.
+# These are malformed command names, not assignment keys containing `]`.
 run_sash 'map m=( ); s="k"; m[$s ] x ]="z"; echo ${m[$s]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.103
+[[ $rc != 0 && -z $out && $err == *SB5011* \
+   && $err == *"a command name must be a literal path"* ]]; chk wordkey.18
 
-# 80.104 a bare `]` as the whole index
 run_sash 'map m=( ); m[ ] ]="z"; echo ${m["]"]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.104
+[[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"command 'm[' not found"* ]]; chk wordkey.19
 
-# 80.105 ... and with trailing text after it
 run_sash 'map m=( ); m[ ] x ]="z"; echo ${m["]"]}'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.105
+[[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"command 'm[' not found"* ]]; chk wordkey.20
 
 # 80.106 the check recurses into nested bodies, not just top-level statements
 run_sash 'array a=( p q ); fn f { a[ x y ]="z" }; f; echo ${a[0]}'
@@ -739,8 +729,7 @@ run_sash 'array a=( p q ); fn f { a[ x y ]="z" }; f; echo ${a[0]}'
 
 # ── Q. the legal write forms are untouched ──
 #
-# The rule rejects an ambiguous index, not a computed one — every spelling
-# that states its index directly still works.
+# Computed keys remain legal when expressed explicitly and correctly typed.
 
 # 80.107 an integer literal
 run_sash 'array a=( p q ); a[0]="z"; echo ${a[0]}'
@@ -848,10 +837,9 @@ run_sash 'int array a=(2 0 9); int i=1; echo ${a[${i}]}'
 run_sash 'int array a=(2 0 9); int i=2; echo $(( ${a[${i}]} )) $(( $a[${i}] )) $(( a[${i}] )) ${a[${i}]}'
 [[ $rc == 0 && $out == "9 9 9 9" ]]; chk 80.127
 
-# 80.128 a braced index that is not a plain identifier is a literal key, so
-# an int-indexed array rejects it as ambiguous rather than reading it
+# Arithmetic imports use the real expansion parser: this is a positional read.
 run_sash 'int array a=(2 0 9); echo $(( ${a[${1}]} ))'
-[[ $rc != 0 && $err == *"SB4041"* ]]; chk 80.128
+[[ $rc != 0 && $err == *SB5024* && $err == *"function-local"* ]]; chk wordkey.9
 
 # 80.129 a map's string key reads the same through a braced index in both
 # contexts — the arithmetic one is the spelling that used to truncate
@@ -866,14 +854,9 @@ run_sash 'int i=1; echo $(( ${i ))'
 # ── an explicit index that fails to parse reports its own error (DD#80,
 # 2026-10-24 addendum) ──
 #
-# A braced index is re-parsed as a value expression, and when that failed the
-# text fell back to a literal that the validator rejects as ambiguous (SB4041).
-# For an implicit form that is right: `(1+2)` has no construct of its own to
-# report (cov.125 pins that boundary with an empty index). For an explicit
-# form — `$var`, an expansion, a quoted key — SB4041's advice to write an
-# explicit form sends the author back to the one they wrote:
-# `${a[$(( 1 + ))]}` was told to open arithmetic explicitly. Now the explicit
-# form's own parse error wins.
+# A failed nested parse must not fall back to literal key text. That fallback
+# once told `${a[$(( 1 + ))]}` to open arithmetic explicitly. The nested form's
+# own error now wins; SB4041 is for an empty key or multiple operand words.
 
 # 80.131 the headline: an arithmetic index with a missing operand
 run_sash 'array a=(1 2)
@@ -1334,6 +1317,298 @@ run_sash 'int array a=(1)
 unset a[$(( 1+ ))]'
 [[ $rc != 0 && -z $out \
    && $err == *':2:9: error [SB4020] arithmetic expression ends where an operand is expected'* ]]; chk unsetkey.30
+
+# Operand words are shared by reads, writes and runtime-key unset.
+run_sash 'map m
+str prefix=node
+m[$prefix:foo]=hit
+echo $m[$prefix:foo] ${m[$prefix:foo]}
+unset m[$prefix:foo]
+echo $(len m)'
+[[ $rc = 0 && $out = $'hit hit\n0' && -z $err && -z $rerr ]]; chk wordkey.11
+
+run_sash 'map m
+m[a|b]=pipe
+m[(a+b)]=parens
+m[x!y]=bang
+m["x"y]=joined
+echo $m[a|b] ${m[(a+b)]} $m[x!y] $m[xy]'
+[[ $rc = 0 && $out = 'pipe parens bang joined' && -z $err && -z $rerr ]]; chk wordkey.12
+
+run_sash 'map inner=([k]=foo)
+map outer=([foo]=yes)
+echo $outer[$inner[k]] ${outer[$inner[k]]}'
+[[ $rc = 0 && $out = 'yes yes' && -z $err && -z $rerr ]]; chk wordkey.13
+
+run_sash 'map m
+str prefix=alpha
+int calls=0
+fn suffix { prefix=beta; (( calls++ )); write :tail }
+m[$prefix$(suffix)]=yes
+echo $m[alpha:tail] $prefix $calls'
+[[ $rc = 0 && $out = 'yes beta 1' && -z $err && -z $rerr ]]; chk wordkey.14
+
+run_sash 'map m=([foo:tail]=yes)
+str key=$(arg 1 foo)
+echo ${m[$key:tail]:!}'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB4041* ]]; chk wordkey.15
+
+# Dollar-prefixed arithmetic cells import the same word-keyed value.
+run_sash 'int map m=([foo]=7 [node:foo]=11)
+str prefix=node
+echo $(( $m["foo"] + 1 )) $(( ${m["$prefix:foo"]} + 1 ))'
+[[ $rc = 0 && $out = '8 12' && -z $err && -z $rerr ]]; chk maparith.1
+
+run_sash "$(cat <<'SASH'
+int map m=([foo]=7)
+str key=""
+echo $(( ${m['foo']} )) $(( $m[$'f\x6fo'] )) $(( ${m["${key:-foo}"]} ))
+SASH
+)"
+[[ $rc = 0 && $out = '7 7 7' && -z $err && -z $rerr ]]; chk maparith.2
+
+run_sash 'int map m=([node:foo]=11)
+map inner=([key]=node:foo)
+str prefix=node
+echo $(( $m[$prefix:foo] )) $(( ${m[$prefix:foo]} )) $(( ${m[$inner[key]]} ))'
+[[ $rc = 0 && $out = '11 11 11' && -z $err && -z $rerr ]]; chk maparith.3
+
+run_sash 'int map m=([foo]=7 [node:foo]=11)
+m["two words"]=13
+m[""]=3
+str prefix=node
+str key=""
+echo $(( m["foo"] )) $(( m["$prefix:foo"] )) $(( m["two words"] )) $(( m[""] )) $(( m["${key:-foo}"] )) $(( m["absent"] ))'
+[[ $rc = 0 && $out = '7 11 13 3 7 0' && -z $err && -z $rerr ]]; chk maparith.4
+
+run_sash "$(cat <<'SASH'
+int map m=([foo]=7)
+m["x]y"]=9
+echo $(( m['x]y'] )) $(( m[$'f\x6fo'] ))
+SASH
+)"
+[[ $rc = 0 && $out = '9 7' && -z $err && -z $rerr ]]; chk maparith.5
+
+run_sash 'int map m
+(( m["x"]=3; m["x"]+=4; m["x"]--; m["x"]*=2 ))
+echo $m[x]'
+[[ $rc = 0 && $out = 12 && -z $err && -z $rerr ]]; chk maparith.6
+
+run_sash 'int map m=([k]=5)
+str key=k
+int calls=0
+fn keytext { (( calls++ )); write $key }
+fn rhs -> int { m[k]=100; key=other; return 2 }
+(( m["$(keytext)"] += (rhs) ))
+echo $m[k] $key $calls'
+[[ $rc = 0 && $out = '7 other 1' && -z $err && -z $rerr ]]; chk maparith.7
+
+run_sash 'int array a=(10 20)
+int map m=([pick]=1)
+echo $(( a[m["pick"]] ))'
+[[ $rc = 0 && $out = 20 && -z $err && -z $rerr ]]; chk maparith.8
+
+run_sash 'fn bump { (( A["$1"] += 2 )); echo $(( A["$1"] )) }
+fn forward { bump $1 =A }
+int map m=([foo]=7)
+forward foo =m
+echo $m[foo]'
+[[ $rc = 0 && $out = $'9\n9' && -z $err && -z $rerr ]]; chk maparith.9
+
+run_sash 'int map m=([a]=1)
+int calls=0
+fn key { (( calls++ )); write a }
+int n=0
+if (( n != 0 && m["$(key)"] > 0 )) { echo wrong }
+echo $calls'
+[[ $rc = 0 && $out = 0 && -z $err && -z $rerr ]]; chk maparith.10
+
+run_sash 'map m=([foo]=7); echo $(( m["foo"] + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'string cell `m'* ]]; chk maparith.11
+
+run_sash 'int array a=(7); echo $(( a["0"] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"non-integer index on indexed array 'a'"* ]]; chk maparith.12
+
+run_sash 'int map m=([foox]=7); echo $(( m["foo"x] ))'
+[[ $rc != 0 && -z $out && $err == *SB4041* && $err == *'one wholly quoted string key'* ]]; chk maparith.13
+
+run_sash 'int map m=([foo]=7); (( ${m["foo"]} = 10 )); echo $m[foo]'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk maparith.14
+
+run_sash 'int map m=([foo]=7)
+str key=$(arg 1 foo)
+echo $(( m["$key"] ))'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk maparith.15
+
+run_sash 'int map m=([foo]=7)
+str key=$(arg 1 foo)
+echo $(( m["${key:!}"] ))'
+[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk maparith.16
+
+run_sash 'int map _m=([foo]=7); (( _m["foo"]++ )); echo $_m[foo]'
+[[ $rc != 0 && -z $out && $err == *SB5103* ]]; chk maparith.17
+
+# Key typing follows all expression positions, without duplicate diagnostics.
+run_sash 'array a=(10 20)
+echo ${a[foo]:-d}
+str v=${a[foo]:-d}
+echo $v $(( ${a[foo]:-0} + 1 ))
+int array b=(10 20)
+echo $(( ${b[foo]} + 1 ))
+int x=${b[foo]:-0}
+echo $x'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 5 \
+   && $(grep -cF 'non-integer index on indexed array' <<< "$err") = 5 ]]; chk keytype.1
+
+run_sash 'array a=(x)
+str value=x
+attest value [[ $value == ${a[foo]} ]]
+[[ ${a[foo]} == x ]] && echo t
+if [[ -n ${a[foo]} ]] { echo t }
+[[ $value == ${a[foo]} ]] && echo eq
+[[ ${a[foo]} == x { echo isx } ]]'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 5 \
+   && $(grep -cF "non-integer index on indexed array 'a'" <<< "$err") = 5 ]]; chk keytype.2
+
+run_sash 'array a=(x)
+array b=(${a[foo]})
+map m=([k]=${a[foo]})
+str v=$(<${a[foo]})
+echo $(join b) ${m[k]} "${v:!}"'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 3 \
+   && $(grep -cF "non-integer index on indexed array 'a'" <<< "$err") = 3 ]]; chk keytype.3
+
+run_sash 'array a=(10 20)
+echo ${a[$(echo 1)]:-d}
+v=${a[$(echo 1)]:-d}
+echo ${a[$(echo 1)]:?bad}
+echo ${a[$(echo 1)]:0:1}
+echo "${a[$(echo 1)]:-d}"
+[[ ${a[$(echo 1)]} == 20 ]] && echo eq
+echo $v $(( ${a[$(echo 1)]:-0} + 1 ))
+int n=$(( ${a[$(echo 1)]:?bad} + 1 ))
+echo $n
+(( ${a[$(echo 1)]:-0} > 5 )) && echo big'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 9 \
+   && $(grep -cF "capture as an index on indexed array 'a'" <<< "$err") = 9 ]]; chk keytype.4
+
+run_sash 'array a=(x y)
+str s=1
+echo ${a[$s]:-d}
+int array nums=(10 20)
+echo $(( ${nums[$s]} + 1 ))
+array b=(${a[$s]})
+echo $(join b)
+map m=([1]=value)
+int i=1
+echo ${m[$i]:-d}'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 4 \
+   && $(grep -cF 'is string-typed' <<< "$err") = 3 \
+   && $err == *"as a key on map 'm'"* ]]; chk keytype.5
+
+run_sash 'array a=(10 20)
+str key=x
+echo $(( ${a[${key:s/x/1/}]:-0} + 1 ))'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 1 \
+   && $err == *"capture as an index on indexed array 'a'"* ]]; chk keytype.6
+
+run_sash 'array source=(k)
+map target=([k]=v)
+target[${source[foo]:-k}]=z
+unset target[${source[foo]:-k}]
+echo ${target[k]}'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 2 \
+   && $(grep -cF "non-integer index on indexed array 'source'" <<< "$err") = 2 ]]; chk keytype.7
+
+run_sash 'fn readcell { echo ${A[foo]:-d} }
+fn forward { readcell =A }
+array a=(value)
+forward =a'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 1 \
+   && $err == *"non-integer index on indexed array 'A'"* ]]; chk keytype.8
+
+run_sash 'array a=(x)
+str v=$(echo $(echo ${a[foo]:-d}))
+EXIT { echo ${a[foo]:-d} }
+echo $v $(echo ${a[foo]})'
+[[ $rc != 0 && -z $out && $(grep -cF '[SB4030]' <<< "$err") = 3 \
+   && $(grep -cF "non-integer index on indexed array 'a'" <<< "$err") = 3 ]]; chk keytype.9
+
+run_sash 'fn index -> int { return 1 }
+array a=(p q)
+echo ${a[$(index)]:-missing}
+int map m=([1]=7)
+int i=1
+echo ${m["$i"]}'
+[[ $rc = 0 && $out = $'q\n7' && -z $err && -z $rerr ]]; chk keytype.10
+
+# Assignment recognition shares the raw bracket extent, not a token limit.
+_pieces=$(printf '"x"%.0s' {1..40})
+_key=$(printf 'x%.0s' {1..40})
+run_sash 'map m
+str prefix=node
+m[pre$prefix:foo]=one
+m[pre"$prefix":foo]+=two
+m['"$_pieces"']=long
+echo $m[prenode:foo] $m['"$_key"']'
+[[ $rc = 0 && $out = "onetwo long" && -z $err && -z $rerr ]]; chk wordkey.17
+
+# Lazy arithmetic must not lift a key call onto an untaken path.
+run_sash 'int array a=(1)
+int calls=0
+fn index -> int { (( calls++ )); return 0 }
+int n=0
+if (( n != 0 && a[(index)] > 0 )) { echo wrong }
+n=1
+if (( n != 0 || a[(index)] > 0 )) { echo taken }
+echo $calls'
+[[ $rc = 0 && $out = $'taken\n0' && -z $err && -z $rerr ]]; chk keyeval.1
+
+run_sash 'int array a=(4)
+int calls=0
+int decisions=0
+int n=1
+fn index -> int { (( calls++ )); return 0 }
+fn choose -> int { (( decisions++ )); return $n }
+echo $(( (choose) ? a[(index)] : a[(index)] ))
+n=0
+echo $(( (choose) ? a[(index)] : a[(index)] ))
+echo $calls $decisions'
+[[ $rc = 0 && $out = $'4\n4\n2 2' && -z $err && -z $rerr ]]; chk keyeval.2
+
+run_sash 'int map m=([a]=3)
+int calls=0
+fn key { (( calls++ )); write a }
+echo ${m[$(key)]:-7}
+m[a]=0
+echo ${m[$(key)]:-7}
+echo $(( ${m[$(key)]:-0x7} ))
+echo $calls'
+[[ $rc = 0 && $out = $'3\n7\n7\n3' && -z $err && -z $rerr ]]; chk keyeval.3
+
+run_sash 'int array a=(3)
+fn change -> int { a[0]=9; return 1 }
+echo $(( a[0] + (change) ))
+echo ${a[0]}'
+[[ $rc = 0 && $out = $'4\n9' && -z $err && -z $rerr ]]; chk keyeval.4
+
+# Laziness also protects checked operands that need no call lifting.
+run_sash 'int map m=([ok]=5)
+str key=""
+int n=0
+echo $(( n && m["${key:?unreached}"] ))
+n=1
+echo $(( n || m["${key:?unreached}"] ))
+echo $(( n ? 9 : m["${key:?unreached}"] ))'
+[[ $rc = 0 && $out = $'0\n1\n9' && -z $err && -z $rerr ]]; chk keyeval.5
+
+# Compiler-internal arithmetic branches must leave the caller's status alone.
+run_sash 'int map m=([7:a]=5)
+fn key { write a }
+int n=0
+/bin/sh -c "exit 7" || echo $(( n || m["$?:$(key)"] ))'
+[[ $rc = 0 && $out = 1 && -z $err && -z $rerr ]]; chk keyeval.6
 
 set -e
 tally

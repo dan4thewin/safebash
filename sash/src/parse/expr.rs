@@ -635,43 +635,6 @@ fn emit_string_part(
     })
 }
 
-/// Build the index expression for a subscript `name[idx]`. A `$var` or
-/// `${var}` index expands the variable at runtime (dynamic subscript,
-/// DD#33): for an indexed array it yields the integer index, for a map
-/// the string key. Any other text is a literal key (a bare integer for
-/// indexed arrays, a bare string for maps).
-pub(crate) fn subscript_index_expr(idx: &str, span: Span) -> Expr {
-    if let Some(var) = dynamic_subscript_var(idx) {
-        return Expr {
-            kind: ExprKind::SimpleExpansion(var.to_string()),
-            span,
-        };
-    }
-    Expr {
-        kind: ExprKind::Literal(idx.to_string()),
-        span,
-    }
-}
-
-/// If `idx` is `$name` or `${name}` with `name` a valid identifier,
-/// return `name`; otherwise `None`.
-fn dynamic_subscript_var(idx: &str) -> Option<&str> {
-    let rest = idx.strip_prefix('$')?;
-    let var = match rest.strip_prefix('{') {
-        Some(inner) => inner.strip_suffix('}')?,
-        None => rest,
-    };
-    let mut chars = var.chars();
-    let first = chars.next()?;
-    if (first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        Some(var)
-    } else {
-        None
-    }
-}
-
 /// `$(…)` content inside a double-quoted string.
 ///
 /// **This delegates to `parse_command_substitution` — the same entry the
@@ -1097,13 +1060,9 @@ fn step_close_depth(depth: &mut i32) -> bool {
 }
 
 /// Re-parse a captured subscript index as a full value expression (DD#80), so
-/// nested contexts survive. A leftover tail (a mixed/bare form the value parser
-/// cannot consume whole), or a parse failure of an implicit form, falls back to
-/// a `Literal` — which `validate::check_subscript_index` then rejects as
-/// ambiguous (SB4041). The index scanner's own fatal is an error, not a
-/// fallback ([`parse_whole_index`]), and so is an explicit form that fails to
-/// parse ([`opens_explicit_index`]). `origin` is where `idx` starts in the
-/// program.
+/// nested contexts survive. DD#80 keys are one complete operand word, never
+/// raw source text recovered after a failed parse. `origin` is where `idx`
+/// starts in the program.
 pub(super) fn parse_subscript_index(
     idx: &str,
     span: Span,
@@ -1111,68 +1070,28 @@ pub(super) fn parse_subscript_index(
 ) -> Result<Expr, Diagnostic> {
     let trimmed = idx.trim();
     let origin = origin.after(&idx[..idx.len() - idx.trim_start().len()]);
-    Ok(match parse_whole_index(trimmed, origin)? {
-        // The sub-scanner starts at the index's own position, so everything
-        // nested inside the index reports exactly where it is. The expression
-        // the caller reports on is still re-anchored to the whole
-        // `${name[…]}` (DD#114 Span).
-        Some(mut expr) => {
-            expr.span = span;
-            expr
-        }
-        None => Expr {
-            kind: ExprKind::Literal(trimmed.to_string()),
-            span,
-        },
-    })
-}
-
-/// The index text as a value expression, or `None` if it is not one the value
-/// parser can consume *whole* — a leftover tail means a mixed or bare form.
-///
-/// A bare dollar-subscript `$name[…]` is excluded even though it parses: it is
-/// ambiguous as an index (DD#80), because the explicit cell-read index form is
-/// the braced `${name[…]}`. Returning `None` for both cases leaves the caller
-/// holding a `Literal`, which `validate::check_subscript_index` then rejects as
-/// ambiguous (SB4041). The index scanner's own fatal is an error, not a
-/// fallback: it is the one thing only this scanner can see. An explicit form's
-/// parse failure is an error too ([`opens_explicit_index`]).
-fn parse_whole_index(trimmed: &str, origin: Origin) -> Result<Option<Expr>, Diagnostic> {
-    if is_bare_dollar_subscript(trimmed) {
-        return Ok(None);
+    if trimmed.is_empty() {
+        return Err(subscript_word_error(span));
     }
     let mut scanner = Scanner::with_origin(trimmed, origin);
-    let whole = match parse_expr(&mut scanner) {
-        Ok(expr) if scanner.at_eof() => Some(expr),
-        Err(d) if opens_explicit_index(trimmed) => return with_scanner_fatal(&scanner, Err(d)),
-        _ => None,
-    };
-    with_scanner_fatal(&scanner, Ok(whole))
+    let whole = parse_operand_word(&mut scanner).and_then(|mut expr| {
+        if !scanner.at_eof() {
+            return Err(subscript_word_error(span));
+        }
+        expr.span = span;
+        Ok(expr)
+    });
+    with_scanner_fatal(&scanner, whole)
 }
 
-/// DD#80's explicit forms 2-4 — `$var`, an expansion (`${…}`, `$(…)`,
-/// `$(( … ))`) and a quoted key — open with `$`, `"` or `'`. When one of them
-/// fails to parse, the failure is that form's own error: SB4041's advice is to
-/// write an explicit form, which would send the reader back to the one they
-/// wrote. `${a[$(( 1 + ))]}` used to get exactly that advice. An implicit form
-/// (`(1+2)`, an empty index) has no construct of its own to report, so its
-/// failure is still SB4041.
-fn opens_explicit_index(trimmed: &str) -> bool {
-    trimmed.starts_with(['$', '"', '\''])
-}
-
-/// `$name[…]` — a `$`-sigil identifier immediately followed by a `[` subscript,
-/// with no brace (`${…}` returns false). Ambiguous as a braced index.
-fn is_bare_dollar_subscript(s: &str) -> bool {
-    let Some(rest) = s.strip_prefix('$') else {
-        return false;
-    };
-    match rest.bytes().next() {
-        Some(b) if b.is_ascii_alphabetic() || b == b'_' => {}
-        _ => return false,
-    }
-    let after_ident = rest.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
-    after_ident.starts_with('[')
+fn subscript_word_error(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB4041",
+        "a subscript requires one operand word; quote a key containing spaces \
+         (or an empty key), and use `$(( ... ))` for an arithmetic index"
+            .to_string(),
+    )
 }
 
 /// Build the `${a[i]OP}` expansion. `:-`/`:?` attach the cell index to the

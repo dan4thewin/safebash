@@ -265,22 +265,34 @@ fn check_arith_bare_map_subscript(
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    crate::ir::walk_arith_subscripts(a, &mut |name| {
-        check_bare_cell(name, span, env, errors);
+    crate::ir::walk_arith_subscripts(a, &mut |name, index| {
+        check_bare_cell(name, index, span, env, errors);
     });
 }
 
-fn check_bare_cell(name: &str, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+fn check_bare_cell(
+    name: &str,
+    index: &ArithExpr,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
     if env.is_slot(name) {
         return;
     }
-    if env.assoc_arrays.contains(name) {
-        errors.push(bare_map_subscript_error(
-            name,
-            span,
-            env.var_type(name) == VarType::String,
-        ));
-    } else if env.is_collection(name) && env.var_type(name) == VarType::String {
+    match index.quoted_subscript_key() {
+        Some(key) => check_subscript_key_kind(name, key, span, env, errors),
+        None if env.assoc_arrays.contains(name) => {
+            errors.push(bare_map_subscript_error(
+                name,
+                span,
+                env.var_type(name) == VarType::String,
+            ));
+            return;
+        }
+        None => {}
+    }
+    if env.is_collection(name) && env.var_type(name) == VarType::String {
         errors.push(string_cell_error(name, span));
     }
 }
@@ -368,8 +380,8 @@ fn bare_map_subscript_error(name: &str, span: Span, string_valued: bool) -> Type
     TypeError {
         message: format!(
             "bare `{name}[…]` in arithmetic — `{name}` is a map, and a string key \
-             isn't expressible under arithmetic rules. Read with {read} \
-             and write with `{name}[k]=…` (statement form)."
+             requires a wholly quoted key such as `{name}[\"key\"]`. \
+             Alternatively read with {read} and write with `{name}[k]=…`."
         ),
         span,
     }
@@ -1070,6 +1082,7 @@ pub fn type_check(program: &Program) -> Result<CheckedTypes, Vec<Diagnostic>> {
     env.slot_signatures = infer_collection_signatures(program, &mut errors);
 
     check_body_types(program, &mut env, &mut errors);
+    run_stmt_pass(program, &env, &mut errors, check_subscript_keys);
 
     // DD#58/Option C: a string producer used in an arithmetic
     // sexpr `(f …)` is a type error — it belongs in a `$()` capture, not
@@ -1705,29 +1718,19 @@ fn operand_is_nonempty_const(d: &Expr) -> bool {
     }
 }
 
-/// DD#33: Check expressions for subscript key type mismatches.
-fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    match &expr.kind {
-        ExprKind::Subscript { name, index } => {
+/// Expression positions share one walk; target keys are checked with their writes.
+fn check_subscript_keys(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    crate::ir::walk_own_exprs(stmt, &mut |expr| match &expr.kind {
+        ExprKind::Subscript { name, index }
+        | ExprKind::ParameterExpansion(ParameterExpansion {
+            name,
+            index: Some(index),
+            ..
+        }) => {
             check_subscript_key_kind(name, index, expr.span, env, errors);
-            check_subscript_types(index, env, errors);
         }
-        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
-            check_subscripts_in_parts(parts, env, errors);
-        }
-        // Deliberately does NOT descend into `$( … )`. `check_stmt` walks
-        // `cmdsub_bodies()` unconditionally and runs the FULL per-statement
-        // check on each inner statement; descending here as well checked every
-        // substitution in a command argument twice, so a bad operand reported
-        // its diagnostic twice (and two bad arguments, four times).
         _ => {}
-    }
-}
-
-fn check_subscripts_in_parts(parts: &[Expr], env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    for p in parts {
-        check_subscript_types(p, env, errors);
-    }
+    });
 }
 
 /// A subscript index must already carry the collection's key type, on the read
@@ -2025,11 +2028,6 @@ fn check_stmt_bodies(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeE
 
 fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     record_bare_collection_value(a, env);
-    // The VALUE, not just the target's index. A command walks its arguments
-    // with `check_subscript_types` and an assignment walked nothing, so the
-    // same `${a[foo]}` was a clean SB4030 as `echo "${a[foo]}"` and an ICE in
-    // codegen as `v="${a[foo]}"`.
-    check_subscript_types(&a.value, env, errors);
     // DD#75 §4: a subscript index is a numeric literal or a `$`-sigilled
     // value; a bare word is a string key (map-only). Enforce on the write
     // path as on the read path (check_subscript_key_kind), so `a[i]=…` on an
@@ -2179,9 +2177,6 @@ fn check_declaration(d: &Declaration, span: Span, env: &mut TypeEnv, errors: &mu
     let is_collection = is_collection_decl(d);
     env.note_declared_str(d);
     for a in &d.assignments {
-        if let Some(v) = &a.value {
-            check_subscript_types(v, env, errors);
-        }
         check_one_decl_assignment(d, a, is_collection, span, env, errors);
         env.declare(&a.name, d.var_type);
     }
@@ -2318,16 +2313,11 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
         register_collection_target(c, span, env, errors);
     }
 
-    // DD#33: check subscript key types in command args
-    check_subscript_types(&c.name, env, errors);
     check_join_operand(c, span, env, errors);
     check_keys_operand(c, span, env, errors);
     check_len_operand(c, span, env, errors);
     check_string_intrinsic_operands(c, span, env, errors);
     check_int_sink_operands(c, span, env, errors);
-    for arg in &c.args {
-        check_subscript_types(arg, env, errors);
-    }
 }
 
 /// The same out-array role drives checking and signature inference.
@@ -2607,6 +2597,9 @@ fn attest_map_form_error(key: &str, val: &str, map: &str, env: &TypeEnv) -> Opti
 fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     for target in crate::ir::unset_targets(c).expect("SB5063 requires static unset targets") {
         check_unset_target(target.name, span, env, errors);
+        if let Some(index) = target.index {
+            check_subscript_key_kind(target.name, index, index.span, env, errors);
+        }
     }
 }
 
@@ -2622,12 +2615,6 @@ fn check_unset_target(name: &str, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
 
 fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     check_for_binding_type(f, env, errors);
-    // The for-in header words are expressions, not a child body — visit them so
-    // a `$(keys …)` / `$(join …)` splat source (or a bad subscript) in the
-    // header is type-checked (DD#75 §3), then descend into the loop body.
-    for w in &f.words {
-        check_subscript_types(w, env, errors);
-    }
     for s in &f.body {
         check_stmt(s, env, errors);
     }

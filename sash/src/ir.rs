@@ -1474,66 +1474,24 @@ pub(crate) fn walk_arith_imported_operands<'a>(a: &'a ArithExpr, f: &mut impl Fn
 /// sub-expr. The complement of [`walk_arith_var_reads`], which descends into a
 /// subscript's index but deliberately skips its subject.
 /// Visit the **bare** subscript cells (`a[i]`) in an arithmetic tree, handing
-/// `f` each collection name.
+/// `f` each collection name and index.
 ///
 /// Deliberately does **not** descend into [`ArithExpr::Expansion`]: a `${a[i]}`
-/// is the braced value-import, and its callers (the model-B bare-map reject,
-/// the bare string-cell reject) are about the *bare* spelling specifically. The
+/// is the braced value-import, and its callers (the bare-key and string-cell
+/// checks) are about the *bare* spelling specifically. The
 /// imported spelling is checked by `type_check::check_arith_expansion_string_cell`.
 ///
-/// **Total over `ArithExpr` on purpose — do not add a wildcard.** The `_ => {}`
-/// this replaces is what let `${s[0]}` evade DD#77 D1 for six weeks: the arm
-/// that swallowed `Expansion` read exactly like the arms that swallow
-/// `Literal`, so nothing distinguished "carries no cell" from "carries a cell
-/// we are not looking at". Spelling them out makes that distinction a comment
-/// rather than a silence.
-pub fn walk_arith_subscripts(a: &ArithExpr, f: &mut impl FnMut(&str)) {
-    match a {
-        ArithExpr::Subscript { name, index } => {
-            f(name);
-            walk_arith_subscripts(index, f);
+/// Descent uses the canonical total arithmetic walker; imports and the
+/// parser-eliminated prefix-mutation form remain explicit leaves.
+pub fn walk_arith_subscripts(a: &ArithExpr, f: &mut impl FnMut(&str, &ArithExpr)) {
+    walk_arith_nodes_pruned(a, &mut |node| {
+        if let ArithExpr::Subscript { name, index }
+        | ArithExpr::SubscriptAssign { name, index, .. } = node
+        {
+            f(name, index);
         }
-        ArithExpr::SubscriptAssign {
-            name, index, value, ..
-        } => {
-            f(name);
-            walk_arith_subscripts(index, f);
-            walk_arith_subscripts(value, f);
-        }
-        ArithExpr::BinOp { left, right, .. } => {
-            walk_arith_subscripts(left, f);
-            walk_arith_subscripts(right, f);
-        }
-        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
-            walk_arith_subscripts(operand, f)
-        }
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_subscripts(value, f)
-        }
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            walk_arith_subscripts(cond, f);
-            walk_arith_subscripts(true_val, f);
-            walk_arith_subscripts(false_val, f);
-        }
-        ArithExpr::Comma(exprs) | ArithExpr::FuncCall { args: exprs, .. } => {
-            for e in exprs {
-                walk_arith_subscripts(e, f);
-            }
-        }
-        // Carries a cell, skipped on purpose — see the doc comment. `${a[i]}`
-        // is the value-import, not a bare cell.
-        ArithExpr::Expansion(_) => {}
-        // Carry a `String` or an `i64`, never a subscript.
-        ArithExpr::Literal(_)
-        | ArithExpr::Var(_)
-        | ArithExpr::DollarVar(_)
-        | ArithExpr::PostIncDec { .. }
-        | ArithExpr::PreIncDec { .. } => {}
-    }
+        !matches!(node, ArithExpr::Expansion(_) | ArithExpr::PreIncDec { .. })
+    });
 }
 
 /// What justifies an `attest` — the thing the author offers as evidence.
@@ -2194,19 +2152,16 @@ pub enum ArithExpr {
     /// `${a[i]}` / `${m[k]}` (a subscript cell read). The inner `Expr` is
     /// parsed by NORMAL expansion rules (so a map's string key works) and
     /// lowered by the ordinary `expr_to_value` path; it is rvalue-only (never
-    /// an assignment target). See notes/tasks/arith-subscript-values.md.
+    /// an assignment target). Also carries a bare map cell's wholly quoted key.
     Expansion(Box<Expr>),
-    /// DD arith-subscript model B (Stage 2): a **bare** int-array cell in
-    /// arithmetic — `a[i]`, `a[i+1]`, `a[0]`, `a[$i]`. The index is a full
-    /// arithmetic expression (int-valued). Rvalue read here; the lvalue forms
-    /// (`a[i]++`, `a[i]=…`, `a[i] op= …`) are `SubscriptAssign`. A bare `m[k]`
-    /// on an associative array is a type error (string key not expressible
-    /// under arith rules — use `${m[k]}` to read).
+    /// Bare cell in arithmetic (DD#79): arrays take an arithmetic index; maps
+    /// take a wholly quoted string word carried by `Expansion`. Lvalue forms
+    /// are `SubscriptAssign`; dollar-prefixed cells remain value imports.
     Subscript { name: String, index: Box<ArithExpr> },
-    /// DD arith-subscript model B (Stage 2): a bare int-array cell as an
+    /// DD#79: a bare cell as an
     /// assignment target — `a[i] = v` (`op` None), `a[i] op= v` (`op` Some),
     /// and `a[i]++`/`a[i]--` (lowered to `op = Add/Sub`, `value = 1`). `index`
-    /// and `value` are arithmetic expressions.
+    /// uses the read's key grammar; `value` is an arithmetic expression.
     SubscriptAssign {
         name: String,
         index: Box<ArithExpr>,
@@ -2282,6 +2237,20 @@ pub(crate) const ARITH_TEST_HOISTABLE_INVARIANT: &str =
      transform runs, so only plain and compound assignments can be hoisted";
 
 impl ArithExpr {
+    pub(crate) fn quoted_subscript_key(&self) -> Option<&Expr> {
+        match self {
+            ArithExpr::Expansion(expr)
+                if matches!(
+                    expr.kind,
+                    ExprKind::SingleQuoted(_) | ExprKind::DoubleQuoted(_)
+                ) =>
+            {
+                Some(expr)
+            }
+            _ => None,
+        }
+    }
+
     /// The immediate sub-expressions of this node, in source order.
     ///
     /// Naming the children in one place rather than re-deriving the shape in
@@ -2726,7 +2695,7 @@ mod shadowed_arm_tests {
             }),
         };
         let mut seen = Vec::new();
-        walk_arith_subscripts(&tree, &mut |n| seen.push(n.to_string()));
+        walk_arith_subscripts(&tree, &mut |n, _| seen.push(n.to_string()));
         assert_eq!(
             seen,
             vec!["outer", "inner", "other"],

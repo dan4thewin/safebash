@@ -3,8 +3,9 @@ status: accepted
 
 1. A cell follows scalar value, type and disposition rules in every
    reading spelling. `$a[K]` desugars to `${a[K]}` even in arithmetic;
-   both retain DD#80's direct-index grammar and are never lvalues.
-   Bare arithmetic `a[EXPR]` retains DD#79's integer-index/lvalue rules.
+   both retain DD#80's operand-word key grammar and are never lvalues.
+   Bare arithmetic `a[EXPR]` uses an arithmetic array index; bare
+   `m["KEY"]` uses a wholly quoted map key. Both retain DD#79's lvalue role.
 2. Braceless cell dispositions use the same tight colon and word boundary
    as scalar dispositions. Interpolation requires the braced disposition
    form; no cell-specific parsing exception is introduced.
@@ -53,24 +54,27 @@ index survives the round trip verbatim. **The carve-out had outlived the defect
 it was protecting against** — the `arith_depth > 0` guard in
 `braceless_subscript` was the last thing holding it.
 
-Removing that guard is the whole change, and because the desugar routes the
-spelling onto the braced grammar, it inherits the braced *rejects* too:
+Removing that guard completed the original desugaring change. Since
+2026-11-24 both imports also use the ordinary key-word parser inside
+arithmetic. Their current type and location boundaries are:
 
 | in `$(( … ))`   | `a[i]` bare | `$a[i]` | `${a[i]}` |
 |-----------------|-------------|---------|-----------|
 | `a[1]`          | reads       | reads   | reads     |
 | `a[$i]`         | reads       | reads   | reads     |
-| `a[i+1]`        | reads       | SB4041  | SB4041    |
-| `a[a[0]]`       | reads       | SB4041  | SB4041    |
+| `a[i+1]`        | reads       | SB4030  | SB4030    |
+| `a[a[0]]`       | reads       | SB4030  | SB4030    |
 | as an lvalue    | yes         | **no**  | **no**    |
 
-The last two rows are agreement, not gaps. `$a[i]` is now *exactly* `${a[i]}`,
+The refusals are type errors: `i+1` and `a[0]` are ordinary string words,
+not implicit computations, when imported. `$a[i]` is *exactly* `${a[i]}`,
 including where `${a[i]}` says no — and `${…}` is never an lvalue (DD#79 model
 B's invariant), so `$a[i]` is not either. The bare form keeps the wider index
-grammar and the lvalue because that is the arith-native spelling; that
-asymmetry is model B and is unchanged.
+grammar and the lvalue because that is the arith-native spelling. Wholly
+quoted bare map keys extend that location grammar without making imports
+assignable.
 
-Specs `dsx.1`-`dsx.5`.
+Specs `dsx.1`-`.3`, `.5` and the migrated `wordkey.10`.
 
 ## 2. A cell takes a brace-less disposition
 
@@ -136,10 +140,10 @@ Specs `80.114`-`80.122`.
 DD#77 D1 says a string→int crossing must carry a disposition, and since
 2026-08-19 a *bare* string cell has been SB4030. The braced spelling never was.
 It arrives as an `ArithExpr::Expansion`, and `walk_arith_subscripts` — the
-walker the check runs on — yields only bare cells and swallowed `Expansion` in a
-`_ => {}` arm. So the one spelling that skipped the check was also the only
-spelling in which a **map** cell can be written at all (model B makes bare
-`m[k]` inexpressible), which is why no map cell had ever been checked.
+walker the check ran on — yielded only bare cells and swallowed `Expansion` in a
+`_ => {}` arm. At that time imported reads were also the only arithmetic
+map-cell spelling, which is why no map cell had been checked. The later
+wholly quoted bare-map form must obey the same element-type rule.
 
 Now all of these are SB4030, with `${…:-N}` / `${…:?msg}` as the escape hatch:
 
@@ -172,8 +176,9 @@ ${s:-5}` is `0`; the first diverges from bash and is meant to. Restated here
 only because this session re-derived it from behaviour and briefly mistook it
 for an undocumented accident.
 
-**Model B is untouched.** Bare `a[i]` keeps the arith index grammar and the
-lvalue; bare `m[k]` is still inexpressible; `${…}` is still never an lvalue.
+**Model B's import/location boundary remains.** Bare `a[i]` keeps arithmetic
+indexing, and bare `m["key"]` now supplies the quoted-map location form.
+`${...}` and its dollar-prefixed desugaring remain values, never lvalues.
 
 ## Where it lives
 
@@ -186,7 +191,8 @@ lvalue; bare `m[k]` is still inexpressible; `${…}` is still never an lvalue.
 - `sash/src/ir.rs` — `walk_arith_int_operands`, the single traversal of the
   int-operand positions, with `walk_arith_var_reads` (bare names) and
   `walk_arith_imported_operands` (`${…}` roots) as its two views.
-  `walk_arith_subscripts` is now total.
+  `walk_arith_subscripts` uses the canonical arithmetic walk, pruning
+  imported expressions so their normal expression walk owns those keys.
 - `sash/src/type_check.rs` — `check_arith_expansion_string_cell`, and
   `bare_map_subscript_error` made type-aware so a string map's author is not
   sent to `${m[k]}`, which would reject in turn.

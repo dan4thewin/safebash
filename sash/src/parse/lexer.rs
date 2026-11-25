@@ -425,6 +425,14 @@ impl Scanner {
         std::str::from_utf8(&self.source[start..end]).unwrap_or("")
     }
 
+    pub fn subscript_has_assign_op(&self, open: usize) -> bool {
+        let Some(close) = super::expr::balanced_subscript_close(&self.source, open) else {
+            return false;
+        };
+        let mut tail = Self::new(self.source_slice(close + 1, self.source.len()));
+        matches!(tail.peek().token, Tok::Eq | Tok::PlusAssign)
+    }
+
     /// The index parser owns the nested lexer modes, not outer command lookahead.
     pub fn take_subscript(&mut self, open: usize) -> Option<(String, Origin)> {
         let close = super::expr::balanced_subscript_close(&self.source, open)?;

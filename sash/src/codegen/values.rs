@@ -181,7 +181,16 @@ pub(super) fn lower_value(
             );
             super::types::emit_int_to_str(builder, module, externs, s_len)
         }
-        SsaValue::DefaultValue { source, default } => {
+        v @ SsaValue::DefaultValue {
+            is_integer: true, ..
+        } => {
+            let value =
+                lower_value_as_int(v, builder, module, vars, literals, externs, exit_status_var);
+            super::types::emit_int_to_str(builder, module, externs, value)
+        }
+        SsaValue::DefaultValue {
+            source, default, ..
+        } => {
             let (s_ptr, s_len) = lower_value(
                 source,
                 builder,
@@ -1311,7 +1320,35 @@ fn lower_disposition_as_int(
             exit_status_var,
         )),
         SsaValue::IntCell(_) => crate::ssa::int_cell_in_int_context("native codegen"),
-        SsaValue::DefaultValue { source, default } => {
+        SsaValue::DefaultValue {
+            source,
+            default,
+            is_integer: true,
+        } => {
+            let source = lower_value_as_int(
+                source,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            );
+            let default = lower_value_as_int(
+                default,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            );
+            let is_zero = builder.ins().icmp_imm(IntCC::Equal, source, 0);
+            Some(builder.ins().select(is_zero, default, source))
+        }
+        SsaValue::DefaultValue {
+            source, default, ..
+        } => {
             let (s_ptr, s_len) = lower_value(
                 source,
                 builder,

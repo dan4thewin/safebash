@@ -131,6 +131,7 @@ fn builtin_denotation(k: BuiltinCmd) -> Option<ArithDenotation> {
         | B::SetTestFromStatus
         | B::SetTestFromPipe
         | B::LetExit
+        | B::TestValue
         | B::StoreBgPid
         | B::TrapSignal
         | B::SignalFlag
@@ -680,6 +681,7 @@ mod shadowed_arm_tests {
             BuiltinCmd::SetTestFromStatus,
             BuiltinCmd::SetTestFromPipe,
             BuiltinCmd::LetExit,
+            BuiltinCmd::TestValue,
             BuiltinCmd::StoreBgPid,
             BuiltinCmd::TrapSignal,
             BuiltinCmd::SignalFlag,

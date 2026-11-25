@@ -1,15 +1,42 @@
 title: "BUG: inside `$(( ))`, an operator-free `${a[K]}` parses K with a second, smaller index grammar, so legal indexes are SB4041"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: [bug-subscript-key-check-skips-positions]
 gates:
-  - "inside `$(( ))`, the index of `${a[K]}` is parsed by `parse_subscript_index`, the grammar every other position uses; `subscript_index_expr` and `dynamic_subscript_var` are deleted if nothing else calls them"
+  - "inside `$(( ))`, dollar/braced cell imports use the ordinary parameter-expansion route and shared `parse_subscript_index`; the second token/parser route and both narrower helpers are deleted"
   - "every row of the first What table prints its expected value in both backends"
   - "every row of the second table draws its expected diagnostic, and none compiles"
-  - "ig11 and ig12 stay SB4041, and the rows that work today are unchanged"
+  - "under the accepted operand-word grammar, ig11 and ig12 reject string array indices with SB4030 rather than the retired SB4041 shape rule; existing legal imports remain legal"
 
-## What
+## Resolution, 2026-11-25
+
+Implemented on `err-attempt-trial` together with the prerequisite key-type
+repair. Operator-free cells now use `ATok::ParamExpansion`, just like cells
+with dispositions. Dollar imports take the same route. `ATok::Subscript`,
+`try_braced_subscript`, `subscript_index_expr` and `dynamic_subscript_var`
+are deleted; raw quoted token text is preserved rather than reconstructed
+through a smaller grammar.
+
+DG also selected ordinary operand-word keys for direct reads, assignments
+and unset. Thus `${a[i+1]}` now parses the literal string key `i+1` and
+receives SB4030 for an array. This deliberately supersedes the old
+ig11/ig12 SB4041 requirement below. Bare arithmetic `a[i+1]` still means
+arithmetic indexing; bare `m["key"]` admits a wholly quoted string map key.
+Dollar/braced imports remain values, never mutation locations.
+
+`maparith.1`-`.3` exercise the unified imports; `wordkey` and `keytype`
+pin word grammar and key typing. Disabling only bare quoted-map parsing
+leaves the import controls green while making 15 other checks fail per
+backend. The original compiler's changed-suite controls and the ten
+independent reversions are recorded in
+[journal 670](../journal/670-operand-word-collection-keys.md).
+The final 13086-check gate passes with 13 existing skips.
+
+## What (historical)
+
+The following measurements and "today" wording describe the original
+filing, before the operand-word ruling and this implementation.
 
 DD#80's 2026-10-03 amendment ("one grammar, three spellings") made its index
 grammar "the *only* subscript grammar in the compiler". One more remains.
@@ -57,10 +84,12 @@ Inside `$(( ))`, these work today and must keep working:
 - ig7 `${m[k]}`;
 - ig16 `${m[$k]}`, with `str k=k`.
 
-ig11, `$(( ${a[i+1]} + 1 ))`, is SB4041 at 3:6, and so is its outside twin
-ig12. That is DD#80's rule, not this bug: a subscript takes a direct key.
+At filing, ig11, `$(( ${a[i+1]} + 1 ))`, was SB4041 at 3:6, as was its
+outside twin ig12. That was DD80's then-current direct-key shape rule,
+not this bug. The accepted operand-word grammar now makes both SB4030
+string-array-index refusals instead.
 
-## Cause
+## Cause (historical)
 
 In parse/arith.rs, `braced_body_token` sends a `${…}` body that ends in `]`
 to `try_braced_subscript`, which yields `ATok::Subscript(name, index_text)`.
@@ -78,21 +107,17 @@ and the real parameter-expansion parser (DD#77). That is why
 `${a[$(echo 1)]:-0}` inside `$(( ))` gets a correctly parsed index, and then
 meets `bug-subscript-key-check-skips-positions` instead.
 
-## Fix
+## Delivered fix
 
-There are two ways to give this index the real grammar:
+The normal parameter-expansion route is shared, rather than maintaining
+another arithmetic-only cell parser. `parse_subscript_index` owns the
+operand-word grammar in either context. Only bare arithmetic locations
+have the arithmetic/wholly-quoted distinction.
 
-- parse it with `parse_subscript_index`;
-- or route every `${name[…]}` body through `ATok::ParamExpansion`, as the
-  operator forms already are.
-
-Either way, delete `subscript_index_expr` and `dynamic_subscript_var` if
-nothing else uses them.
-
-This must land after `bug-subscript-key-check-skips-positions`, hence the
-`depends`. Today SB4041 is the only thing stopping ig5 and ic2. Once they
-parse, nothing checks their key inside `$(( ))` until that task lands. They
-would compile, just as `$(( ${a[foo]} + 1 ))` already does (that task's ih1).
+The prerequisite scoped key pass is delivered in the same change.
+Historically, SB4041 was the only thing stopping ig5 and ic2; removing
+the smaller grammar without that pass would have exposed the same
+unchecked array keys already demonstrated by the prerequisite's ih1.
 
 Found during the batch-531 port (step F15), while probing the sed-index
 advice. Filed under DG's rule for the port that questions and uncovered cases

@@ -86,6 +86,8 @@ pub enum BuiltinCmd {
     /// Run a `let` expression for side-effects, propagate non-zero
     /// exit per DD#55.
     LetExit,
+    /// Test an integer value without changing the source-visible exit status.
+    TestValue,
     /// Capture the most recent background pid into a named variable. The
     /// fork itself is [`Terminator::Fork`], which leaves the pid in
     /// `test_result` for this to read.
@@ -319,6 +321,7 @@ impl BuiltinCmd {
             | Self::SetTestFromStatus
             | Self::SetTestFromPipe
             | Self::LetExit
+            | Self::TestValue
             | Self::StoreBgPid
             | Self::TrapSignal
             | Self::SignalFlag
@@ -406,6 +409,7 @@ impl BuiltinCmd {
             | Self::SetTestFromStatus
             | Self::SetTestFromPipe
             | Self::LetExit
+            | Self::TestValue
             | Self::StoreBgPid
             | Self::TrapSignal
             | Self::SignalFlag
@@ -429,6 +433,7 @@ impl BuiltinCmd {
             Self::SetTestFromStatus => "__set_test_from_status",
             Self::SetTestFromPipe => "__set_test_from_pipe",
             Self::LetExit => "__let_exit",
+            Self::TestValue => "__test_value",
             Self::StoreBgPid => "__store_bg_pid",
             Self::TrapSignal => "__trap_signal",
             Self::SignalFlag => "__signal_flag",
@@ -1464,14 +1469,12 @@ pub enum SsaValue {
     StrLen {
         subject: Box<SsaValue>,
     },
-    /// DD#65: `${var:-DEFAULT}` — `source` if set/non-empty, else the DEFAULT.
-    /// The default is a full interpolating value (unlike the literal-only
-    /// `ParamExpansion` operand), so `${foo:-$bar}` interpolates `bar`.
-    /// `source` is a plain `Var` for a scalar `${s:-…}`, or a `Subscript` for
-    /// an array/map cell `${a[i]:-…}` (DG: a cell behaves like a variable).
+    /// DD#65: evaluate the subject once, selecting the literal default for
+    /// its identity value: zero for an integer, empty for a string.
     DefaultValue {
         source: Box<SsaValue>,
         default: Box<SsaValue>,
+        is_integer: bool,
     },
     /// DD#77: `${var:?MESSAGE}` — `source` if set/non-empty, else abort
     /// (`<prog>: MESSAGE` on stderr, exit 1). The `:-`/`:?` abort/default pair;
@@ -1775,7 +1778,9 @@ impl SsaValue {
             Self::RegexMatch {
                 subject, pattern, ..
             } => vec![subject, pattern],
-            Self::DefaultValue { source, default } => vec![source, default],
+            Self::DefaultValue {
+                source, default, ..
+            } => vec![source, default],
             Self::RequireValue { source, message } => vec![source, message],
             Self::ArithBinOp { left, right, .. } => vec![left, right],
             Self::Ternary {
@@ -1851,7 +1856,9 @@ impl SsaValue {
             SsaValue::RegexMatch {
                 subject, pattern, ..
             } => vec![subject, pattern],
-            SsaValue::DefaultValue { source, default } => vec![source, default],
+            SsaValue::DefaultValue {
+                source, default, ..
+            } => vec![source, default],
             SsaValue::RequireValue { source, message } => vec![source, message],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
@@ -3177,11 +3184,12 @@ mod api_contract_tests {
 
     /// The compiler-internal opcodes: no source spelling reaches them, so a
     /// predicate's arm for them is pinned here or nowhere.
-    const INTERNAL_OPCODES: [BuiltinCmd; 10] = [
+    const INTERNAL_OPCODES: [BuiltinCmd; 11] = [
         BuiltinCmd::NegateTestResult,
         BuiltinCmd::SetTestFromStatus,
         BuiltinCmd::SetTestFromPipe,
         BuiltinCmd::LetExit,
+        BuiltinCmd::TestValue,
         BuiltinCmd::StoreBgPid,
         BuiltinCmd::TrapSignal,
         BuiltinCmd::SignalFlag,
@@ -3537,6 +3545,7 @@ mod value_walk_tests {
             SsaValue::DefaultValue {
                 source: word(),
                 default: word(),
+                is_integer: false,
             },
             SsaValue::RequireValue {
                 source: word(),

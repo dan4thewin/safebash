@@ -338,7 +338,9 @@ impl SsaInst {
                 let ready = builder.ins().uextend(I64, ready);
                 builder.def_var(ctx.test_result_var, ready);
             }
-            BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
+            BuiltinCmd::LetExit | BuiltinCmd::TestValue => {
+                return self.emit_arith_test(*kind, args, builder, module, ctx);
+            }
             BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
@@ -964,8 +966,9 @@ impl SsaInst {
         false
     }
 
-    fn emit_let_exit(
+    fn emit_arith_test(
         &self,
+        kind: BuiltinCmd,
         args: &[SsaValue],
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
@@ -976,10 +979,7 @@ impl SsaInst {
         let literals = ctx.literals;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
-        // let builtin / loop bound: exit status 0 if value != 0, 1 if == 0.
-        // The arg is any integer-valued SsaValue (a `(( ))` result, or a
-        // for-loop bound comparison `__ai < ${arr arrlen}`).
-        let [arg] = BuiltinCmd::LetExit.expect_ssa_args(args);
+        let [arg] = kind.expect_ssa_args(args);
         let int_val = super::values::lower_value_as_int(
             arg,
             builder,
@@ -992,9 +992,10 @@ impl SsaInst {
         let zero = builder.ins().iconst(I64, 0);
         let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
         let one = builder.ins().iconst(I64, 1);
-        let es = builder.ins().select(is_zero, one, zero);
-        builder.def_var(exit_status_var, es);
-        // Also set test_result_var for branch terminators (if/while/for).
+        if kind == BuiltinCmd::LetExit {
+            let es = builder.ins().select(is_zero, one, zero);
+            builder.def_var(exit_status_var, es);
+        }
         let tr = builder.ins().select(is_zero, zero, one);
         builder.def_var(test_result_var, tr);
         false
@@ -1622,6 +1623,7 @@ mod invariant_tests {
             (BuiltinCmd::SignalCheckpoint, 1),
             (BuiltinCmd::SetTestFromPipe, 1),
             (BuiltinCmd::LetExit, 1),
+            (BuiltinCmd::TestValue, 1),
             (BuiltinCmd::StoreBgPid, 1),
             (BuiltinCmd::TableDelete, 2),
             (BuiltinCmd::TableDeleteIdx, 2),

@@ -135,6 +135,12 @@ Non-executed function templates support lowering diagnostics and metadata
 but are excluded from executable analysis views. Void, status and integer
 function results remain distinct classifications.
 
+Arithmetic lazy values lower to actual branches in this shared graph, so
+unselected key calls and checks never execute. Internal `TestValue` sets
+branch truth without changing source-visible status. Earlier arithmetic
+operands are retained before later lifted effects; typed default carriers
+evaluate their subject once rather than duplicating it in a ternary.
+
 SSA versions describe data flow; they do not promise a separate runtime
 cell for every version. Source globals use actual static process storage in
 both backends, so separately generated handlers can observe completed

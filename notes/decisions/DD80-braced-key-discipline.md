@@ -1,10 +1,10 @@
-title: DD#80 — braced subscript key/index discipline (`${a[K]}` is direct, not arithmetic)
+title: DD#80 — operand-word collection keys (`${a[K]}` is direct, not arithmetic)
 status: accepted
 
-1. A direct subscript key is one explicit value: a decimal integer literal, a
-   variable expansion, an explicitly nested value/arithmetic expression,
-   a quoted string, or an ASCII identifier used as a literal map key.
-   Bare mixed words, operators and implicit nested subscripts are rejected.
+1. A direct subscript key is one ordinary operand word. Literal punctuation,
+   adjacent quoted/unquoted fragments, interpolation and nested expansions
+   follow normal word rules. Brackets delimit the key; they do not enable
+   implicit arithmetic or implicit variable/cell reads.
 2. Array indices must be integer-typed; a bare decimal index must be in
    `0..9223372036854775807`. Map keys must be strings; quote digit-only
    keys and integer values. A string disposition alone does not convert
@@ -12,11 +12,12 @@ status: accepted
 3. Reads, assignments and `unset NAME[K]` share the key grammar and type checks.
    `$a[K]` and its quoted spelling desugar to `${a[K]}`, including in
    arithmetic (DD#123); bare arithmetic subscripts retain DD#79's
-   separate rvalue/lvalue grammar.
+   separate rvalue/lvalue grammar: arithmetic array indices, wholly quoted
+   string map keys. Quoting the key does not convert the cell value.
 4. Nested explicit contexts obey sequential value evaluation without an
    arbitrary nesting cap, retaining earlier values in DD#86 order.
-   An explicit index's parse failure reports its own error; leftover
-   implicit text remains an ambiguous-index error.
+   A nested expression's parse failure reports its own error. An empty
+   unquoted key or more than one word is SB4041; quote spaces or an empty key.
 5. `unset` names its collection statically; only the key/index is evaluated.
    Evaluate and retain all keys once, left to right, before applying any
    deletion or whole-collection clear. A key-producing helper may mutate the
@@ -41,77 +42,69 @@ identity is not a read of its contents, but evaluating the key is an ordinary
 checked read. This extends the earlier literal-only `unset` implementation,
 not the scope of arithmetic subscripts.
 
-Settled with DG (2026-08-22).
+Originally settled with DG on 2026-08-22; DG replaced the special key-shape
+whitelist with ordinary operand words on 2026-11-24. This does not change
+the separate grammar of `[KEY]=VALUE` entries in map literals or add dynamic
+initializer keys.
 
 ## The principle
 
-`${…}` is the string-key / direct-access construct (it is how a map is read by
-a string key). Its index/key is therefore a **direct, unambiguous** value —
-never *implicitly* computed. Arithmetic and other computation are available,
-but only through an **explicitly opened** nested context; there is no implicit
-arithmetic inside `${ … }`.
+The contents of a direct cell's brackets are an **operand word**, just as in
+an ordinary value position. `${m[$prefix:foo]}` and `$m[$prefix:foo]` build the
+same key as the word `$prefix:foo`; enclosing the whole word in quotes is
+optional unless its contents require them. Bare text remains text:
+`${m[i+1]}` selects the literal key `i+1`, not a sum.
 
-The distinction is implicit-vs-explicit, not "no computation":
+Arithmetic and variable/cell reads require their ordinary explicit syntax.
+Only a **bare cell in arithmetic** has DD79's arithmetic-or-wholly-quoted
+key distinction; dollar/braced value imports keep this DD's word grammar
+even inside `$(( ... ))`.
 
-| bare (implicit) → **reject** | explicit (nested context) → **ok** |
-|------------------------------|------------------------------------|
-| `${a[i]}`                     | `${a[$i]}`                          |
-| `${a[i+1]}`                  | `${a[$(( i+1 ))]}`                  |
-| `${a[a[0]]}`                 | `${a[${a[0]}]}` / `${a[$(( a[0] ))]}` |
-| `${m[a[0]]}`                 | `${m["a[0]"]}` (literal) / `${m[${a[0]}]}` (computed) |
+| word | meaning |
+|---|---|
+| `${m[$prefix:foo]}` | interpolate a string key |
+| `${m[a[0]]}` | literal key `a[0]` |
+| `${m[$a[0]]}` / `${m[${a[0]}]}` | use the explicitly read cell value as a key |
+| `${a[i+1]}` | string key on an array: SB4030 |
+| `${a[$(( i+1 ))]}` | explicitly computed integer index |
+| `${m["two words"]}` / `${m[""]}` | a key containing space / an empty key |
 
 ## What a valid `${collection[K]}` key/index is
 
-`K` is exactly one of:
+`K` must parse completely as one ordinary operand word. Surrounding whitespace
+does not become key data. Adjacent fragments concatenate; whitespace between
+unquoted fragments instead supplies a second word and is SB4041.
 
-1. **integer literal** — `${a[5]}` (array index). On a **map** a bare integer
-   read is rejected (DD#33: it reads like an array index) — quote it: `${m["5"]}`.
-2. **`$var` / `${var}`** — a dynamic index/key (the value at runtime).
-3. **an expansion** — `${…}`, `$(…)`, `$(( … ))`. A value produced by an
-   explicitly-opened nested context. This is the sanctioned way to put a
-   *computed* index inside `${ }`.
-4. **a quoted string** — `"…"` / `'…'`. An explicit literal key; a double-quoted
-   string interpolates (`${m["p$s"]}` builds a key), so nested expansions are
-   allowed inside it.
-5. **a clean bareword** — `[A-Za-z_][A-Za-z0-9_]*` only. A literal string key
-   (maps). An identifier with no `$`, no `[`/`]`, no operators, no whitespace.
-
-Anything else — a bareword carrying `[`/`]`, arithmetic operators, an embedded
-`$`, or whitespace — is an **implicit/ambiguous** form and is rejected
-(**SB4041**). The fix is always to make it explicit: quote a literal
-(`"a[0]"`), interpolate a var (`$i`), or open arithmetic (`$(( … ))`).
+Single, double and C quotes retain their ordinary meanings. Nested `${...}`,
+`$name[...]`, `$(...)` and `$((...))` retain their own grammar and checks.
+Punctuation such as `a-b`, `a.b`, `a|b` and `(a+b)` is literal word data, not
+an operator evaluated by the brackets. A malformed nested expression is not
+recovered as literal key text.
 
 ### Type-aware (array vs map)
 
-> **Superseded in part, 2026-09-26.** The lists below enumerate accepted
-> *spellings*; the rule is now decided by **type** and applies to `a[K]=v` as
-> well as `${a[K]}`. See the amendment at the end of this file. The intent is
-> unchanged — the mechanism and the edge cases are not.
-
 Resolved at type-check, where the collection type is known:
 
-- **int-indexed array** `${a[K]}` — ~~`K` must be an **integer literal**, a
-  **`$var`**, or an **expansion** (which must yield a number).~~ `K` must
-  have integer type. A clean bareword
+- **int-indexed array** `${a[K]}` — `K` must have integer type, except for
+  the existing bare decimal-literal index spelling. A bare text word
   or a quoted string is a *string* key and does not index an int array →
   **SB4030** (the existing type-check "string key on indexed array" — the same
   string→int discipline as DD#77; type_check emits a uniform SB4030). A quoted
   numeric (`${a["5"]}`) is likewise rejected — use the unquoted integer
   `${a[5]}`.
-- **map** `${m[K]}` — ~~`K` may be a clean bareword, a quoted string, a `$var`,
-  or an expansion (string key building).~~ Any string is a valid key.
+- **map** `${m[K]}` — `K` must be a string. Quote a digit-only literal or
+  an integer-typed value to request its string form.
 
 ## The unrolling invariant (governing implementation)
 
 Any nested key/index is **semantically equivalent to its unrolled sequential
-form** — a series of temporary assignments, one per nested context. The
-compiler realizes this for free: AST→SSA lowering (`transform`) already lowers a
-subscript index with the same recursive `expr_to_value` it uses for every other
-operand, so each nested `${…}`/`$(…)`/`$(( … ))`/quoted-Concat becomes its own
-SSA temporary. Example — the (deliberately extreme)
+form** — a series of temporary assignments, one per nested context. Shared
+AST-to-SSA lowering evaluates and retains values in that order; merely
+visiting a read before hoisting a later call is not sufficient. Lazy
+arithmetic operands remain in their selected branches. For example:
 
 ```
-(( 5 > ${outermap[${innermap[":$s$(( (getpid) + 1)):"]}]} ))
+if (( 5 > ${outermap[${innermap[":$s$(( (getpid) + 1)):"]}]} )) { echo yes }
 ```
 
 unrolls to `t0=getpid(); t1=t0+1; t2=":"++$s++str(t1)++":"; t3=innermap[t2];
@@ -123,22 +116,22 @@ Consequences:
 - **No construct "needs disproportionate plumbing."** If one appears to, that
   is an implementation smell to **investigate** (a coupling that shouldn't
   exist), not an exception to carve out. Held to the bug policy.
-- The only genuinely new logic is the **surface classification** (rule above):
-  reject implicit/ambiguous bare `K` (SB4041) and type-check string-key-vs-int
-  (SB4030). The lowering is not new.
+- One operand-word parser handles direct keys on reads, writes and unset.
+  One balanced bracket scan supplies their extents, including quotes and
+  nested contexts; assignment recognition has no arbitrary token limit.
+- Key types are checked through the shared own-expression walk, after stable
+  inference, in each lexical body's actual collection-slot environment.
+  Target identities remain distinct from content reads.
 
-## New diagnostics
+## Diagnostics
 
-- **SB4041** (parse, new) — an implicit/ambiguous braced index/key. Directs to
-  the explicit form (quote / `$var` / `$(( ))`).
-- **SB4030** (type-check, reused) — a string key (clean bareword, quoted, or a
-  non-numeric expansion result) used to index an **int** array. type_check
-  emits a uniform SB4030; the "string key on indexed array" check already lived
-  there (it is why bare `${a[i]}` reported SB4030). This DD extends it to quoted
-  keys and sharpens the message. (A distinct SB4042 was considered but deferred:
-  it would require adding a per-error code to every `TypeError` site.)
+- **SB4041** (parse) — an empty unquoted direct key, more than one operand
+  word, or partial quoting where a bare arithmetic map cell requires a wholly
+  quoted key. Malformed nested constructs retain their own diagnostics.
+- **SB4030** (type-check) — the wrong key type for the collection, including
+  string array indices and integer map keys. Cell-value typing is independent.
 
-## Migration
+## Original migration (2026-08-22, historical)
 
 Behavior change: `${a[i]}` (bare non-numeric on an int array) and exotic
 unquoted map keys previously "worked" (silently coercing to `0`, or mis-parsing
@@ -153,7 +146,8 @@ is filed as a follow-up (`converter-braced-subscript-index`).
 - DD#33 — subscript key typing (integer-key-on-map / string-key-on-array). DD#80
   defers to it: an integer read on a map is quoted (`["5"]`).
 - DD#79 — bare arithmetic subscripts (model B). The two together fully specify
-  sash subscripts: **bare in `(( ))` = arithmetic; `${ }` = direct key.**
+  sash subscripts: **bare in `(( ))` = arithmetic or a wholly quoted map key;
+  dollar/braced forms = operand-word key.**
 - DD#77 — arith string→int discipline (a string cell/scalar in arith needs a
   disposition). A string *key* for an int-array index is the same crossing,
   here rejected at the braced surface (SB4030) rather than coerced.
@@ -161,6 +155,10 @@ is filed as a follow-up (`converter-braced-subscript-index`).
   (superseded by this DD's rule: `${a[a[0]]}` rejects, `${a[${a[0]}]}` works).
 
 ## Amendment (2026-09-26) — the key is a *type*, not a spelling; and both surfaces enforce it
+
+The measurements below are historical. The type and read/write parity rules
+remain; the 2026-11-24 word parser replaces the old shape whitelist and
+`parse_split_subscript_index` mechanism.
 
 Two changes, implemented in `761b3f4` and `0e23874`. The original rule was
 written as a list of accepted **spellings** and was enforced on the read
@@ -183,10 +181,10 @@ index* — could not be written on the left of an `=`. An author told to convert
 had nowhere to put the conversion, and the two failures did not even agree on
 a diagnostic.
 
-`parse_split_subscript_index` now recovers the raw index text from the token
+`parse_split_subscript_index` then recovered the raw index text from the token
 spans and hands it to **`expr::parse_subscript_index`, the same function the
-read path calls**. There is one list of accepted index forms and both surfaces
-call it, so the parity is structural rather than two lists kept in step by
+read path called**. Both surfaces used that parser, making parity structural
+rather than two lists kept in step by
 hand. **Every rule in this DD now reads "in `${a[K]}` and in `a[K]=v` alike."**
 
 Parity is the point, not permissiveness: it is what makes section 2 below
@@ -198,7 +196,7 @@ when the value is not an integer.
 
 ### 2. "must yield a number" is decided by type, not by spelling
 
-The type-aware section above enumerates spellings — "an **integer literal**, a
+The original type-aware section enumerated spellings — "an **integer literal**, a
 **`$var`**, or an **expansion** (which must yield a number)". A `$var` is not
 inherently a number and an expansion does not inherently yield one, so the
 list both over- and under-accepts. It is replaced by a single question:
@@ -220,7 +218,7 @@ elsewhere, rather than restating any of them:
   reason `$(( … ))` is required, and it now falls out instead of being listed.
 
 Only the bare integer literal is stated separately, because `expr_type` types
-`2` as String (bash does, and nothing else in the language wants a bare
+`2` as String (ordinary word literals are strings, and nothing else wants a bare
 literal to be an int by itself).
 
 A bare literal array index must also fit the runtime's signed 64-bit domain:
@@ -273,13 +271,17 @@ Journals 413 and 414.
 
 ## Addendum (2026-10-03) — a capture is not an index, in every position
 
+This records the original stdout-capture finding. The rule is type-based:
+DD58 integer-result captures are integer values and may index arrays;
+string-producing captures are not integer indices.
+
 DG, on the last position where this DD was not enforced:
 
 > I don't think `arr[$(f)]` is legal, but `arr[$((f))]` where `f` is an int
 > returning fn seems fine.
 
-This changes nothing in the rule above — it is section 2 applied. A `$( … )`
-types as String, so `expr_type` already answered "not `Int`" and
+This applied section 2 to a string-producing `$( ... )`, which types as
+String, so `expr_type` already answered "not `Int`" and
 `is_int_index` already returned false. The capture-as-index was accepted in
 exactly one place, and for a reason that had nothing to do with indices:
 **an assignment's and a declaration's VALUE were never walked by the subscript
@@ -331,8 +333,8 @@ surfaced was "you read the collection with the scalar sigil."
 
 **The resolution is a desugar, not a third implementation.** The lexer now
 rewrites `$a[K]` to `${a[K]}` (and the in-string form likewise) before
-anything downstream sees it, so this DD's grammar is the *only* subscript
-grammar in the compiler and the spellings cannot drift apart again. This is
+anything downstream sees it, so those spellings share this DD's direct-key
+grammar. Bare arithmetic cells retain DD79's separate rule. This is
 the mechanism DD#90 already uses for `$x:-foo`, and it is the project's
 standing "never fork a shared walker" convention applied to a parser.
 
@@ -375,6 +377,11 @@ carve-out: the braceless spelling is the braced value import in arithmetic too.
 
 ## Amendment 2026-10-04 — the rule is the index's, not the position's
 
+Historical shape-check repair: the table records the then-current whitelist,
+not the current operand-word contract. `a-b` and `a.b` are now valid map keys;
+unquoted multiple words still reject. The private key-type walker was a
+separate remaining omission, repaired on 2026-11-24.
+
 The desugar above made the three *read* spellings agree. It did nothing for
 the **write** side, and the write side was enforcing nothing at all: every
 form section A of `spec/subscript.sh` rejects when read was accepted when
@@ -393,8 +400,9 @@ lives in the `Assignment.index: Option<Expr>` struct field as a **bare
 keys on that wrapper, so the expression walk *reached* the index and could
 not tell it was one — it saw a `Literal` like any other. It takes two
 visitors to state one rule, because there are two IR shapes; `validate.rs`
-now has `flag_assignment_index` beside it, both calling the same
-`ambiguous_index_diag`.
+then gained `flag_assignment_index` beside it, both calling the same
+`ambiguous_index_diag`. Those whitelist visitors are now retired; the shared
+parser rejects invalid word boundaries, and the scoped type pass checks keys.
 
 **This is the third time DD#80's enforcement has proved position-dependent
 rather than rule-dependent** — after the write surface (2026-09-26) and the
@@ -422,7 +430,7 @@ stood there as if it were the operator. On a map — where a string key makes
 the extra text legal to the lexer — the first `]` closed the index, ` x ` was
 eaten as the `=`, and `]=9` became the value.
 
-Both halves are closed: `lhs_index_close_from(scanner, base)` is now the one
+The October repair used `lhs_index_close_from(scanner, base)` as the one
 search with the one predicate (the callers differ only by whether `name[` is
 still unconsumed), and the operator is consumed by an explicit `match` that
 returns SB4014 on anything else. That arm is unreachable while the probe and
@@ -430,34 +438,41 @@ the parser agree, which is now structural rather than a coincidence of two
 hand-matched lookahead windows — it is checked instead of assumed precisely
 because the previous version assumed and was wrong.
 
-Pinned by `spec/subscript.sh` sections P (`80.97`–`80.106`, the rejections
-and their read twins) and Q (`80.107`–`80.113`, the legal write forms that
-must not move).
+The 2026-11-24 implementation replaces that token search with the shared raw
+balanced extent. A later `]=` cannot turn an already closed bracket word
+into an assignment: the malformed examples now receive ordinary command-name
+SB5011, rather than swallowing intervening source as an index.
+Current regressions are `wordkey.18`-`.20`; unchanged valid writes remain
+in `80.107`-`80.113`.
 
 ## Addendum (2026-10-24, batch-531 port step F14) — an explicit index that fails to parse reports its own error
 
-An index is re-parsed as a value expression (`parse_whole_index`). When that
-parse failed, the text fell back to a literal, and a literal that is not a
-clean bareword is the ambiguous form SB4041 rejects. For an **implicit** form
-that is the right answer: `${a[(1+2)]}` and the empty `${a[]}` have no
-construct of their own to blame, and SB4041's advice — make the index
-explicit — is the fix.
+The parse-error preservation rule survives. The implementation and
+implicit/explicit fallback described below are historical: since
+2026-11-24 every key is parsed as an operand word, with no literal fallback
+after a failed parse.
 
-For an **explicit** form it is the wrong one. Forms 2–4 above (`$var`, an
+An index was re-parsed as a value expression (`parse_whole_index`). When that
+parse failed, the text fell back to a literal, and a literal that is not a
+clean bareword was the ambiguous form SB4041 rejected. For an **implicit**
+form that was the old policy. Today `${a[(1+2)]}` is a string-key type error
+(SB4030), while the empty unquoted `${a[]}` is SB4041.
+
+For an **explicit** form it was the wrong one. The old forms 2–4 (`$var`, an
 expansion, a quoted key) open with `$`, `"` or `'`, and when one of them fails
 to parse, the failure is that form's own error. The fallback discarded it,
 and SB4041 then told the author to write an explicit form — sending them back
 to the one they wrote. `${a[$(( 1 + ))]}` was advised to open arithmetic
 explicitly; its real error is the missing operand (batch-531 B39).
 
-**The rule.**
+**Current rule.**
 
 - An index that opens with `$`, `"` or `'` and fails to parse reports that
   parse error: `${a[$(( 1 + ))]}`, `a[$(( 1 + ))]=x` and `${a["$(( 1 + ))"]}`
   are SB4020, "ends where an operand is expected".
-- An index that parses but leaves text behind (`${m[$s x]}`) is still a mixed
-  form, SB4041: the leftover text is the implicit part (`80.4`, `cov.110`).
-- An implicit index that fails to parse is still SB4041.
+- An index containing more than one operand word (`${m[$s x]}`) is SB4041.
+  Adjacent fragments such as `${m[$s:tail]}` instead form one legal word.
+- An empty unquoted index is SB4041.
 
 It composes with DD#72's addendum of the same date, which makes a `$` that
 starts no variable a stray byte: `${a[$(( $ ))]}` used to read `a[0]`

@@ -2,11 +2,13 @@ title: DD#79 — arithmetic subscripts (model B) + undeclared-read strictness (B
 status: accepted
 
 1. In arithmetic, a bare integer-array cell `a[EXPR]` is an integer
-   rvalue or lvalue with a full arithmetic index. Maps use explicit
-   value imports for reads and ordinary keyed assignments for writes.
+   rvalue or lvalue with a full arithmetic index. A bare integer-map cell
+   uses a wholly quoted string key, such as `m["$prefix:foo"]`, for either
+   role. Quoting the key does not convert the cell's value.
 2. `${...}` imports a value and never denotes an assignable location.
    `$a[K]` desugars to `${a[K]}` even in arithmetic (DD#123), retaining
-   DD#80's direct-index grammar rather than bare arithmetic indexing.
+   DD#80's ordinary operand-word key grammar rather than bare arithmetic
+   indexing. Partial quoting does not select a string key in a bare cell.
 3. Missing integer cells read as zero; integer cells carry raw i64
    values. String cells require DD#77's conversion disposition.
 4. A name read in arithmetic must have a binding in its lexical scope,
@@ -28,18 +30,23 @@ Two decisions about names inside `(( ))` / `$(( ))`, settled with DG
 Inside `(( ))`, a **bare** identifier/subscript uses arithmetic rules
 (int-valued); a `${…}` is a normal-parse rvalue that *imports a value*. `${…}`
 NEVER denotes a location — it means "the value of" everywhere.
+DG extended the bare-cell form on 2026-11-24: wholly quoting the bracket
+contents selects an ordinary string key, not arithmetic. Single, double and
+C quotes work; interpolation follows the chosen quoting form.
 
 | form                 | in `(( ))`                       | notes |
 |----------------------|----------------------------------|-------|
 | bare `a[i]`          | int-array cell, **rvalue+lvalue**| index `i` is a full int arith expr; `a[i]++`, `a[i] op= …`, `a[i] = …`, `x = a[i]` |
-| bare `m[k]`          | **error** (SB4030)               | a string key isn't expressible under arith rules |
+| bare `m["K"]`        | int-map cell, **rvalue+lvalue**  | the entire key is one quoted word; interpolation is allowed |
+| bare `m[k]`          | **error** (SB4030)               | an arithmetic key is not implicitly stringified |
 | `${a[i]}`, `${m[k]}` | **rvalue only**                  | `${…}` parsed by NORMAL expansion (map string key works); value-import |
 | bare scalar `f`      | rvalue+lvalue                    | `$` optional (`f` ≡ `$f` for reads) |
 
-- The lvalue is always the bare form (`a[i]`) or the existing statement assign
+- The lvalue is always the bare form (`a[i]`, `m["K"]`) or the statement assign
   (`a[i]=`, `m[k]=`). `${…}` as an lvalue is redundant AND breaks the
-  value-import invariant → rejected. Map arith-mutation is
-  `m[k]=$(( ${m[k]} + 1 ))` (`${m[k]}` reads, `m[k]=` writes, `$(( ))` computes).
+  value-import invariant → rejected. `(( m["k"]++ ))` and
+  `(( m["$key"] += 2 ))` update integer-map cells. Ordinary keyed writes
+  remain available; their keys use DD#80's operand-word grammar.
 - Out-of-range index / absent key reads the DD#53 zero-value (0), uniform with
   an unset variable — **no bounds check** (arrays and maps are sparse
   table-backed; a missing index == a missing key). Decided, not a bug.
@@ -51,14 +58,15 @@ NEVER denotes a location — it means "the value of" everywhere.
 
 ### Implementation
 
-Stage 1 (`${a[i]}` reads) — `ArithExpr::Expansion(Box<Expr>)` value-import via
-the shared `expr_to_value`. Stage 2 (bare `a[i]`) — a `BareSubscript` arith-lexer
-token (balanced `[…]`, re-parsed as arith), `ArithExpr::Subscript{name,index}`
+`${a[i]}` reads use `ArithExpr::Expansion(Box<Expr>)` through the normal
+parameter parser and shared `expr_to_value`. A `BareSubscript` arith-lexer
+token retains balanced `[...]` source. Its key is re-parsed as arithmetic,
+or as an ordinary word when wholly quoted. `ArithExpr::Subscript{name,index}`
 (rvalue) and `SubscriptAssign{name,index,op,value}` (lvalue → reuses the
-statement subscript-assign write path). Bare `m[k]` on an associative array is a
-type error (`type_check`, both the read form and the lowered arith-indexed
-assignment). native+c; janet's arith VALUE path is a filed gap
-(`janet-arith-subscript-read`).
+statement subscript-assign write path) preserve that distinction.
+Both backends consume the same checked SSA. Quoted tokens retain raw source
+so interpolation and C escapes are not lost or decoded twice. The old
+in-tree Janet backend is retired by DD104.
 
 ### Indexed updates (2026-11-13)
 
@@ -71,9 +79,15 @@ then the old cell value for an update, before evaluating the RHS.
 Ordinary indexed `+=` uses the same path for integer addition and string
 concatenation. Plain indexed `=` saves the key but does not read the old
 cell. The compiler preserves the implicit read in semantic checking.
-These are applications of DD#86, not permission for arithmetic map mutation;
-maps still use ordinary keyed writes. [DD104](DD104-decoupled-janet-oracle.md)
+The same once-only ordering applies to the wholly quoted arithmetic map
+keys accepted on 2026-11-24. [DD104](DD104-decoupled-janet-oracle.md)
 records the corresponding inert-IR schema change.
+
+Arithmetic `&&`, `||` and `?:` evaluate only their selected operands.
+Lowering keeps calls and checked keys inside their owning branches and saves
+an earlier operand before lifting later effects. Internal branch decisions
+do not manufacture a source-visible command status. An integer-cell `:-`
+evaluates its subject once and selects its literal fallback on zero.
 
 ## Part 2 — B2: undeclared reads are strict in arithmetic (SB5031 consistency)
 

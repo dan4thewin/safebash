@@ -1567,8 +1567,15 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // left-fold the parts through sash_concat, mirroring native
         // lower_concat_value (codegen/values.rs:314).
         SsaValue::Concat(parts) => emit_concat_value(e, parts, types),
-        // DD#65: ${var:-DEFAULT} — var if set, else the interpolated default.
-        SsaValue::DefaultValue { source, default } => {
+        v @ SsaValue::DefaultValue {
+            is_integer: true, ..
+        } => {
+            let value = lower_value_as_int(e, v, types);
+            emit_itoa_temp(e, &value)
+        }
+        SsaValue::DefaultValue {
+            source, default, ..
+        } => {
             let (s_ptr, s_len) = disposition_source_c(e, source, types);
             let (d_ptr, d_len) = lower_value_as_str(e, default, types);
             emit_default_value_expr_c(e, &s_ptr, &s_len, &d_ptr, &d_len)
@@ -1739,7 +1746,20 @@ fn lower_disposition_as_int_c(e: &mut Emit, value: &SsaValue, types: &VarTypes) 
     match value {
         // DD#76: an int cell is a storage annotation — it cannot arrive here.
         SsaValue::IntCell(_) => crate::ssa::int_cell_in_int_context("the C backend"),
-        SsaValue::DefaultValue { source, default } => {
+        SsaValue::DefaultValue {
+            source,
+            default,
+            is_integer: true,
+        } => {
+            let source = lower_value_as_int(e, source, types);
+            let saved = e.fresh();
+            writeln!(e.out, "    i64 {saved} = {source};").unwrap();
+            let default = lower_value_as_int(e, default, types);
+            Some(format!("({saved} == 0 ? ({default}) : {saved})"))
+        }
+        SsaValue::DefaultValue {
+            source, default, ..
+        } => {
             let (s_ptr, s_len) = disposition_source_c(e, source, types);
             let d = lower_value_as_int(e, default, types);
             Some(format!("sash_atoi_or({}, {}, {})", s_ptr, s_len, d))
@@ -2293,11 +2313,7 @@ fn emit_command_body(
         BuiltinCmd::SetTestFromStatus => {
             writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
         }
-        // Phase 6: __let_exit — convert (( … )) result to status.
-        // Mirrors emit_let_exit (codegen/dispatch.rs:978). Reads
-        // first arg as int; if zero → status=1, test_result=0; else
-        // status=0, test_result=1.
-        BuiltinCmd::LetExit => emit_let_exit(e, args, types),
+        BuiltinCmd::LetExit | BuiltinCmd::TestValue => emit_arith_test(e, *kind, args, types),
         BuiltinCmd::SignalCheckpoint => {
             emit_signal_exit_check(e, BuiltinCmd::signal_deferred(args));
         }
@@ -2390,15 +2406,15 @@ fn emit_process_builtin(
 
 /// __let_exit: take the value of an arithmetic test (string holding
 /// an int, or int directly) and convert it to test_result + status.
-/// (( expr )) evaluates expr; if result is nonzero the test succeeded
-/// (status 0, test_result 1); if zero, the test failed (status 1,
-/// test_result 0).
-fn emit_let_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
-    let [arg] = BuiltinCmd::LetExit.expect_ssa_args(args);
+/// Set branch truth; only LetExit also publishes the arithmetic test's status.
+fn emit_arith_test(e: &mut Emit, kind: BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
+    let [arg] = kind.expect_ssa_args(args);
     let int_val = lower_value_as_int(e, arg, types);
     let t = e.fresh();
     writeln!(e.out, "    i64 {t}_v = {iv};", t = t, iv = int_val).unwrap();
-    writeln!(e.out, "    __exit_status = ({t}_v == 0) ? 1 : 0;", t = t).unwrap();
+    if kind == BuiltinCmd::LetExit {
+        writeln!(e.out, "    __exit_status = ({t}_v == 0) ? 1 : 0;", t = t).unwrap();
+    }
     writeln!(e.out, "    __test_result = ({t}_v == 0) ? 0 : 1;", t = t).unwrap();
 }
 
@@ -5295,6 +5311,7 @@ mod tests {
                 "outside 0..2147483647",
             ),
             (BuiltinCmd::LetExit, vec![], "exactly 1 SSA arguments"),
+            (BuiltinCmd::TestValue, vec![], "exactly 1 SSA arguments"),
             (BuiltinCmd::StoreBgPid, vec![], "exactly 1 SSA arguments"),
             (BuiltinCmd::TableDelete, vec![], "exactly 2 SSA arguments"),
             (

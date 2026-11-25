@@ -132,12 +132,13 @@
     3. Arrays may be sparse; `len COLLECTION` counts present entries. Missing cells yield their element-type zero.
         1. Known but unwritten collection paths receive an empty collection.
     4. `$a[K]`/`${a[K]}` read one cell; scalar dispositions apply unchanged.
-        1. Direct subscript keys are one explicit value: decimal integer, expansion, nested value/arithmetic expression, quoted string or identifier.
+        1. Direct subscript keys are one ordinary operand word, including adjacent fragments, interpolation, punctuation and nested expansions.
         2. Bare identifiers are literal map keys, not variable reads.
         3. Bare decimal indices are nonnegative and fit `int`; numeric map keys require quoting.
-        4. No mixed bare expressions or implicit nested subscripts; keys are not silently converted.
+        4. No implicit arithmetic or implicit variable/cell reads; `i+1` and `a[0]` are literal string keys. Quote spaces or an empty key.
         5. In arithmetic, bare `a[EXPR]` accesses an integer-array location using an arithmetic index; dollar-prefixed subscripts import values only.
-            1. Bare map subscripts reject; string cells follow the same conversion rules as string scalars.
+            1. Bare `m["KEY"]` accesses an integer-map location; the whole key must be quoted. Partial quoting does not select this grammar.
+            2. Dollar/braced imports keep their operand-word keys inside arithmetic; string cells still require explicit conversion.
     5. Assignment replaces; array `+=` appends an array-shaped value. No map append.
         1. Whole-value shape must match the target; scalar assignment cannot create a collection.
         2. `unset` clears a declared collection or removes a cell; missing cells are harmless. Scalars cannot be unset.

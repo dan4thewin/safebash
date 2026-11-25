@@ -296,27 +296,11 @@ fn source_carrying_value(
     match op {
         ":-" => {
             let default = pe_operand_value(pe, state);
-            if source_is_int(&source, pe, state) {
-                // DD#62 + DG: `:-` triggers on the *identity element* of the
-                // subject's type — `""` for strings, `0` for ints (zero stays a
-                // meaningful value; `:-` just means "fall back if identity"). So
-                // `${int:-d}` is `x == 0 ? d : x`, emitted as a ternary the SSA
-                // backends already handle (bug-cjanet-default-on-int-var).
-                Some(SsaValue::Ternary {
-                    cond: Box::new(SsaValue::ArithBinOp {
-                        left: Box::new(source.clone()),
-                        op: crate::ssa::ArithOp::Eq,
-                        right: Box::new(SsaValue::Expr("0".to_string())),
-                    }),
-                    true_val: Box::new(default),
-                    false_val: Box::new(source),
-                })
-            } else {
-                Some(SsaValue::DefaultValue {
-                    source: Box::new(source),
-                    default: Box::new(default),
-                })
-            }
+            Some(SsaValue::DefaultValue {
+                is_integer: source_is_int(&source, pe, state),
+                source: Box::new(source),
+                default: Box::new(default),
+            })
         }
         ":?" => Some(SsaValue::RequireValue {
             source: Box::new(source),
