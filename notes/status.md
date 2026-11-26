@@ -5,16 +5,18 @@ modified: 2026-11-26
 
 ## Focus
 
-The provisional [DD136 ERR-call trial](decisions/DD136-err-call-attempts.md)
-is implemented on `err-attempt-trial`, not adopted on main. ERR-owned
+DG accepted the complete `err-attempt-trial` branch and directed its main
+landing on 2026-11-26. [DD136 ERR-owned call attempts](decisions/DD136-err-call-attempts.md)
+are no longer provisional. ERR-owned
 `: void_helper` and caught status calls can abandon a recoverably failed
 helper chain; ordinary suppression and terminal guards retain their limits.
 Independent `_=` sinks replace colon's operand disposal. Named-predicate
 capture conditions, failed-path taint/adjacency and fatal-fork cleanup are
 included. The [trial owner](tasks/err-call-attempt-trial.md) and
 [journal 664](journal/664-err-owned-call-attempts.md) record the scope and
-evidence. The complete implementation and proof package is delivered on the
-trial branch; DG's evaluation and adoption decision remain separate.
+evidence. [Journal 676](journal/676-accept-err-attempts.md) records acceptance
+of all twelve branch commits and the main landing. The original trial
+branch is retained; the integrated owner is complete.
 
 DD101's symmetric `arg`/`getenv` contract is implemented in native and C.
 Bare lookups require explicit presence handling or source discard; defaults
@@ -27,7 +29,7 @@ Defaults now accept general string values, evaluated eagerly in source order
 before the lookup, including when the supplied input wins. Ordinary type,
 taint and failure checks remain; `:-`/`:?` are still literal-only.
 [Journal 674](journal/674-general-lookup-defaults.md) records that extension
-on `err-attempt-trial`.
+on main.
 The broader suppression and file-read capture work remain separately owned.
 
 The accepted DD131/DD132 selector, immutable-scratch, accumulating-filler and
@@ -44,7 +46,7 @@ separately owned, as does the
 [Bash-compatible assignment loader](tasks/sash-expand-bash-assignment-loader.md).
 [Runtime-key unset](tasks/runtime-indexed-unset.md) and the
 [map-iteration deletion repair](tasks/bug-map-iteration-deletion-skip.md)
-are implemented on `err-attempt-trial`. DG selected snapshot-at-entry for
+are implemented on main. DG selected snapshot-at-entry for
 direct key loops; body value lookups remain live. Unset evaluates and
 retains ordinary runtime keys before applying any deletion or clear.
 [Journal 667](journal/667-snapshot-key-loops-runtime-unset.md) records
@@ -55,7 +57,7 @@ through direct and forwarded collection slots. Well-typed whole-collection
 assignment updates the actual's contents without rebinding its identity.
 Conversion publishes only a complete result: failure preserves an existing
 map and leaves fresh construction empty. This is delivered on
-`err-attempt-trial`; [journal 668](journal/668-existing-map-and-slot-assignment.md)
+main; [journal 668](journal/668-existing-map-and-slot-assignment.md)
 records the implementation and the dependent converter/fixture repairs.
 The independently frontend-covered
 [SSA cell-write acquisition omission](tasks/ssa-taint-cell-write-acquisition.md)
@@ -65,19 +67,19 @@ Collection keys now use ordinary operand words in reads, assignments and
 unset, including dollar/braced imports inside arithmetic. Bare arithmetic
 cells retain arithmetic indices and admit wholly quoted map keys. Shared
 key checking and lazy, once-only arithmetic lowering repair the associated
-defects on `err-attempt-trial`;
+defects on main;
 [journal 670](journal/670-operand-word-collection-keys.md) records delivery.
 The [broader evaluation-order task](tasks/q-capture-hoisting-order.md)
 remains open.
 
 `cpath?` now validates conservative absolute-path spelling in ordinary
-tests and scalar/collection attests on `err-attempt-trial`. It checks
+tests and scalar/collection attests on main. It checks
 counted ASCII components without filesystem lookup or normalization;
 it does not establish authorization or downstream interpreter safety.
 [Journal 671](journal/671-conservative-path-predicate.md) records delivery.
 
 Directly tested immutable scalars now have a bounded DD119 redirect
-exemption on `err-attempt-trial`: one proved read, optionally with literal
+exemption on main: one proved read, optionally with literal
 neighbors added at the redirect site. Lexically nested captures can use
 the enclosing proof of that same binding. Copies, named helpers and cells
 do not transfer it, and capture proofs do not escape to parents or siblings.
@@ -108,8 +110,8 @@ Run `mk -p 1 tour` to build and launch the presentation, or
 Lookup examples now distinguish presence from validation and explain
 ordinary eager defaults; recorded converter output uses explicit presence
 discard.
-Three explicitly provisional examples cover checked disposal, void attempts
-and predicate attempts with partial output. They do not mark DD136 accepted.
+Three examples cover the accepted checked-disposal, void-attempt and
+predicate-attempt rules, including partial output.
 Keyboard/reload instructions are explicitly presenterm-only; intentional
 failures have terse comments on the responsible lines. Its map counter uses
 keyed `+=`; the new wholly quoted arithmetic map-cell syntax is not
@@ -142,6 +144,11 @@ limitation with its guard and the combined-attest guidance.
 
 ## Just completed
 
+- **The complete ERR-attempt branch is accepted on main.**
+  DD136 and its companion rules are no longer provisional. All twelve
+  branch commits are included, through the microsecond epoch clock.
+  The original branch is retained, and independent backlog work stays open.
+  [Journal 676](journal/676-accept-err-attempts.md) records the acceptance.
 - **Microsecond epoch clock delivered.**
   `int now=$(epochuseconds)` returns clean Unix wall-clock microseconds in
   native and C, with the same arithmetic and quoted-string forms as
@@ -515,9 +522,9 @@ twelve mode IDs, with no flips or retirements. The commit label `cdb1f051`
 is the pre-commit HEAD under which the working-tree sweep ran.
 
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
-## Current branch: err-attempt-trial
+## Current branch: main
 
-## Spec status: 13227 passing / 0 failing of 13240 (spec.db @ 4388dcfd)
+## Spec status: 13227 passing / 0 failing of 13240 (spec.db @ 74b95573)
 
 _Regenerated 2026-11-26 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._

@@ -126,7 +126,7 @@ Postfix `++`/`--` use `:add`/`:sub` with arithmetic literal 1. Ordinary
 assignment and `+=` keep `:set` and `:append`; scalar arithmetic mutations
 retain their existing expanded representation.
 
-The **provisional DD136 trial** advances it to **`:ir-version 4`**. Each
+**DD136** advances it to **`:ir-version 4`**. Each
 command has a `:best-effort` boolean: true for `: function args...`, false
 for ordinary commands, including bare colon. The command still names the
 actual function and retains its ordinary arguments and redirects. A consumer

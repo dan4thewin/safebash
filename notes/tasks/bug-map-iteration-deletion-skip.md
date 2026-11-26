@@ -33,8 +33,8 @@ and proved by a real counter-format allocation injection.
 
 The corrected 12931-check gate passes. [Journal 667](../journal/667-snapshot-key-loops-runtime-unset.md)
 records all controls and the two first-gate findings. DD75, GUIDE and the
-specification outline are aligned. Delivery is on `err-attempt-trial`;
-DD136 remains provisional and main is unchanged.
+specification outline are aligned. Delivery was on `err-attempt-trial`;
+DG accepted the complete branch on main on 2026-11-26 (journal 676).
 
 ## Historical reproducer and observed result
 

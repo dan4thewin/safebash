@@ -24,7 +24,7 @@ status: accepted
 7. An unchecked operational abort reports one contextual line on the
    invoker's stderr, prefixed by verbatim `argv[0]`, then exits with failure.
    Handled failures are silent; a child's exec-error report remains separate.
-8. The provisional DD136 trial adds ERR-owned call attempts, not broader
+8. DD136 adds ERR-owned call attempts, not broader
    source `-` suppression. A recovered abort has no automatic abort diagnostic;
    authored output and external stderr remain observable.
 
@@ -42,7 +42,7 @@ from **fatal faults**. The channels below concern result handling; a fatal
 fault is not a result to consume in either channel. A value-producing
 operation can encounter a fatal fault without changing its result kind.
 
-In the provisional [DD136 trial](DD136-err-call-attempts.md), an ERR-owned
+Under [DD136](DD136-err-call-attempts.md), an ERR-owned
 `: VOID_FUNCTION` or caught status-function call establishes an abandonment
 boundary around that invocation. It includes operands and redirects, but
 recovers only explicit `fail` and existing unchecked operational results.
@@ -295,7 +295,7 @@ justify otherwise pointless calculation. None of this changes DD130's
 failure classification or suppresses fatal faults in retained programs.
 
 **Explicit `:` remains the intentional no-op**, including its otherwise
-legal `- :` form and redirect-only uses. In the DD136 trial, arbitrary
+legal `- :` form and redirect-only uses. Under DD136, arbitrary
 operand disposal moves to DD98's `_` binder; colon operands instead name
 an ERR-only void-function attempt. Bare colon is permitted without effects,
 not classified as an effect that can rescue an enclosing `test || :`.

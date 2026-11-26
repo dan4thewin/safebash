@@ -15,8 +15,8 @@ status: implemented
    lookup. `-nt`, `-ot` and `-ef` return false if either operand contains NUL,
    before lookup or missing-file comparison rules.
 5. False `0?`, or true `i?`, `p?`, `g?`, `cpath?` or filename tests, establishes
-   NUL-freedom for the tested value, not taint clearance. The provisional
-   DD136 trial retires mandatory static ERR NUL proofs; runtime argv guards
+   NUL-freedom for the tested value, not taint clearance.
+   DD136 retires mandatory static ERR NUL proofs; runtime argv guards
    remain terminal, including inside an attempted call.
 6. Zero-argument `$(mkdtemp)` atomically creates a new owner-only directory
    under fixed `/tmp`, retries name collisions and returns its absolute
@@ -42,7 +42,7 @@ Readonly ERR imports and predicate-derived ERR proofs are also implemented
 ([journal 640](../journal/640-readonly-err-and-local-nul-proofs.md)).
 The direct `mkdtemp` constructor and tour cleanup migration complete the
 package ([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)).
-The provisional [DD136 trial](DD136-err-call-attempts.md) retires only the
+[DD136](DD136-err-call-attempts.md) retires only the
 mandatory ERR NUL-proof component, together with SB5101. Readonly imports,
 counted predicates, filename guards and the constructor remain implemented.
 
@@ -197,7 +197,7 @@ predicate-derived NUL proof.
   the counted-byte contract in both backends.
 - [Readonly ERR inputs and NUL proofs](../tasks/err-readonly-inputs-and-nul-proofs.md):
   the original delivery is complete. SB5102 still rejects inherited logical
-  writes; the DD136 trial retires its localized SB5101 proof query.
+  writes; DD136 retires its localized SB5101 proof query.
 - [mkdtemp value intrinsic](../tasks/mkdtemp-value-intrinsic.md):
   complete; native and C share exclusive creation and direct value/status
   handling, with independent clean provenance and NUL-free byte facts.

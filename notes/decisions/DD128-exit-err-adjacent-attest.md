@@ -9,7 +9,7 @@ status: accepted
    2. Uncaught failures, first fatal faults and `fail [N]` enter ERR;
       `fail` defaults to 1 and permits 0.
    3. Failure inside EXIT may enter ERR. `exit` in either handler terminates
-      directly. In ERR, `fail` terminates unless an eligible provisional
+      directly. In ERR, `fail` terminates unless an eligible
       DD136 call attempt owns the transfer. An absent handler means termination.
 3. Never resume interrupted code or re-enter a handler. Preserve the full
    entry status unless explicitly replaced; `$?` is available at entry's
@@ -20,7 +20,7 @@ status: accepted
    ERR requires forced reads of potentially tainted incoming values;
    inherited bindings are readonly under DD135. Fresh input acquired into
    writable handler-owned state may be attested there.
-6. In the provisional DD136 trial, ERR remains checked but may terminate
+6. Under DD136, ERR remains checked but may terminate
    on an unchecked failure. ERR-owned void/status call attempts can recover
    explicit `fail` and existing unchecked operational results from the
    full call chain. Other guards and explicit `exit` remain terminal.
@@ -61,10 +61,10 @@ On 2026-11-06 DG separated explicit orderly termination from explicit failure:
 
 DD130's later 2026-11-06 ruling distinguishes recoverable failures from
 fatal faults and makes fork failure fatal. Sections 7-8 incorporate that
-contract. The DD136 trial implements uniform fatal fork routing; broader
+contract. DD136 implements uniform fatal fork routing; broader
 classification and file-error handling remain separate work.
 
-The provisional [DD136 trial](DD136-err-call-attempts.md) replaces the
+[DD136](DD136-err-call-attempts.md) replaces the
 SB5101 prohibition on possible operational aborts with checked terminal
 failure and explicit ERR-owned call attempts. Its narrow recovery boundary,
 not the original no-failure-in-ERR guarantee, governs this branch.
@@ -87,7 +87,7 @@ Separate orderly termination from failure cleanup:
   EXIT signal.
 - **ERR is failure cleanup**, entered on an uncaught operational failure,
   explicit `fail [N]`, or a first fatal fault before ERR. It makes no
-  optimistic assumption that incoming data was attested. Under provisional
+  optimistic assumption that incoming data was attested. Under
   DD136, its own failures either use an eligible call attempt or ordinary
   local handling, or terminate cleanup.
 - **Taint is resolved beside acquisition.** A legal adjacent attest, or
@@ -124,9 +124,9 @@ And the original failure-handler rule:
 > the ERR block should require anything that could abort to instead be
 > caught or suppressed.
 
-DD136 provisionally replaces the latter requirement with narrow ERR-owned
+DD136 replaces the latter requirement with narrow ERR-owned
 attempts. Arithmetic faults and an exhausted heap remain terminal; neither
-the original rule nor the trial promises infallible cleanup.
+the original rule nor DD136 promises infallible cleanup.
 
 ## 1. Surface and scope
 
@@ -186,7 +186,7 @@ status. Neither builtin prints an implicit command-failure message merely
 because it was called.
 
 Both operations terminate the current execution path rather than returning a
-status. Neither resumes the interrupted program. In DD136's trial, an
+status. Neither resumes the interrupted program. Under DD136, an
 eligible ERR-owned attempted call can catch `fail` by abandoning the entire
 attempt, not by returning from the failing helper. `exit` stays terminal,
 and source `-` establishes no attempt. Operand evaluation happens before transfer;
@@ -522,7 +522,7 @@ Readonly imports make their values stable; immutability alone is not the
 proof. `:!` is still required for potentially tainted reads, including the
 predicate's own read. An ordinary predicate does not clear inherited taint.
 
-The DD136 trial retires SB5101 and its mandatory demand-driven ERR NUL
+DD136 retires SB5101 and its mandatory demand-driven ERR NUL
 proof query, not the runtime argv guard. A failed guard still terminates
 ERR and cannot abandon an attempt. DD135's `mkdtemp`
 constructor separately supplies a clean, NUL-free generated pathname,
@@ -533,11 +533,11 @@ These additions are implemented:
 its [predicate prerequisite](../tasks/nul-predicate-and-filename-tests.md),
 and [mkdtemp](../tasks/mkdtemp-value-intrinsic.md).
 
-## 7. Checked ERR and narrow call attempts (provisional DD136)
+## 7. Checked ERR and narrow call attempts (DD136)
 
 ERR is not an unchecked region. An unchecked failure with no eligible
 attempt terminates cleanup without re-entry. The former SB5101 static
-prohibition is retired on this trial branch.
+prohibition is retired.
 
 ERR's own `: VOID_FUNCTION ARG...` attempts one resultless call. A caught
 status-function call establishes a corresponding attempt whose normal
@@ -575,7 +575,7 @@ The fatal classes that no ERR attempt can recover are:
 - DD25 arithmetic faults: overflow, division by zero and negative shift
   counts.
 - Exhaustion of the runtime heap.
-- Fork failure (DD130; uniform routing is implemented in the DD136 trial).
+- Fork failure (DD130; uniform routing is implemented with DD136).
 
 They remain fatal, including inside ERR. Neither `if` nor `-` promises
 recovery from them. Do not ban an operation merely because those fatal
@@ -681,7 +681,7 @@ acquisition on only one branch does not permit an inherited-input attest
 on the other. The SSA backstop independently checks incoming versions and
 fresh acquisitions, including mapped collection slots.
 
-The DD136 trial removes the former SB5101 failure inventory and its local
+DD136 removes the former SB5101 failure inventory and its local
 NUL prover. Lexical attempt sites instead become compiler-visible
 exceptional SSA edges. Function summaries separately retain normal and
 abandoned taint effects; the SSA backstop and regex checker follow the
@@ -697,7 +697,7 @@ DD135's readonly-import enforcement remains. Handler inputs are seeded for
 all globals; a separate bound-source census identifies ERR imports.
 Filename predicates still reject NUL-bearing operands before lookup.
 Journal 640 records the original predicate-proof implementation; its
-mandatory static proof component is retired only by this provisional trial.
+mandatory static proof component is retired by DD136.
 
 Artifact schema 4 (DD104/DD136) retains optional `:exit-block` and `:err-block`
 fields and no `:end-block`; empty handlers remain distinct from absent ones.

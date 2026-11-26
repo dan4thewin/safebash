@@ -154,7 +154,7 @@ NUL-freedom for the tested value. An ordinary predicate never implicitly
 attests its input; inherited taint still requires forced reads. The `0?`
 predicate and filename guards were implemented
 ([journal 639](../journal/639-counted-nul-and-filename-guards.md)).
-The provisional DD136 trial retires the static ERR proof requirement
+DD136 retires the static ERR proof requirement
 formerly implemented in
 [journal 640](../journal/640-readonly-err-and-local-nul-proofs.md);
 runtime argv guards remain terminal.

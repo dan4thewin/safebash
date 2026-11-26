@@ -10,7 +10,7 @@ status: accepted
 3. `return` forwards only compatible producer results, including legal
    composites and redirects; it cannot forward a discarded or nonexistent result.
 4. Ordinary producer handling does not catch operand/body failures or fatal
-   faults. The provisional DD136 trial gives ERR-owned caught status calls a
+   faults. DD136 gives ERR-owned caught status calls a
    narrow full-call abandonment boundary, never a boundary inside a helper.
 5. Constant results are legal. Anonymous stdout bodies may return void, not
    explicit statuses; source `-` cannot prefix a return.
@@ -37,10 +37,10 @@ those consuming contexts: `if text=$(f)` binds text and tests f's explicit
 returned status. The function runs once, in the same process, with ordinary
 body/operand checks and taint rules. Direct and redirected calls follow the
 same rule. This extension was accepted on 2026-11-12 and is implemented
-on the DD136 trial branch, tracked in
+and accepted on main with DD136, tracked in
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md).
 
-Under provisional [DD136](DD136-err-call-attempts.md), an ERR-owned caught
+Under [DD136](DD136-err-call-attempts.md), an ERR-owned caught
 status call also recovers explicit `fail` and existing unchecked operational
 results from its complete attempted call chain. Normal returns still
 provide the ordinary status. An abnormal `fail 0` is false before authored

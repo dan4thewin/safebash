@@ -11,9 +11,8 @@ shipped: [status](../notes/status.md) and [tasks](../notes/tasks/) track that
 distinction. The [review checklist](REVIEW.md) describes what to verify
 when changing this implementation.
 
-This branch also implements the provisional
-[DD136 ERR-call trial](../notes/decisions/DD136-err-call-attempts.md).
-Its recovery and colon changes are not adopted on main.
+[DD136 ERR-owned call attempts](../notes/decisions/DD136-err-call-attempts.md)
+and checked value disposal are implemented and accepted on main.
 
 ## Tools and trust boundaries
 
@@ -115,7 +114,7 @@ the scope and lifetime contract.
 Each write-only `_` discard site gets a fresh identity. `_=$value` still
 evaluates and checks its RHS, but separate sinks may have different types
 and cannot read one another. Colon no longer disposes of operand values
-in the DD136 trial.
+under DD136.
 
 **Collections have checked signatures.** Each function has an inferred
 collection-argument count and array/map, string/int element signature,
@@ -324,8 +323,8 @@ paths and explicit argument vectors, not an implicit shell. Their failures
 are checked automatically unless handled or explicitly discarded.
 Non-void user-function results instead require consumption or a permitted
 explicit discard. A caller's condition or suppression does not turn off
-checks inside the called body or its operand captures. The explicit
-ERR-owned attempt boundary below is the provisional exception, not broader
+checks inside the called body or its operand captures. The
+ERR-owned attempt boundary below is the explicit exception, not broader
 source suppression.
 
 Function inlining must preserve lexical lifetimes, arguments, collection
@@ -335,7 +334,7 @@ stdout capture; `$()` is not universally a request to collect stdout.
 [DD58](../notes/decisions/DD58-int-function-capture.md) hold the contracts;
 their queued revisions must not be mistaken for delivered lowering.
 
-### ERR-owned call attempts (provisional)
+### ERR-owned call attempts
 
 ERR's own `: void_helper ARG...` establishes a resultless attempt.
 A caught status-function call establishes an attempt with a true/false
@@ -547,7 +546,7 @@ failure outside an eligible attempt terminates ERR.
 Inherited logical bindings are readonly in ERR, including through
 same-process helpers, captures and collection aliases. The bound source's
 global/call census identifies imports; it does not freeze every global or
-prevent ERR-only working state and fresh private locals. The trial also
+prevent ERR-only working state and fresh private locals. DD136 also
 removes mandatory static ERR NUL proofs. Runtime argv guards and authored
 `0?`/filename tests remain, independently of taint. A failed NUL guard
 terminates cleanup even inside an attempted call.
@@ -572,7 +571,7 @@ AST as inert Janet data, not executable Janet code; `--manifest` reports
 external dependencies collected during lowering. These inspection exits
 follow the frontend checks but do not run the executable backends' SSA
 taint gate. Neither inspection output is a proof of executable acceptance.
-The trial uses IR schema 4, with an explicit `:best-effort` marker on every
+IR schema 4 includes an explicit `:best-effort` marker on every
 command; an older consumer must refuse it rather than erase recovery semantics.
 
 The verified working native platform is x86-64 Linux. The syscall shim has

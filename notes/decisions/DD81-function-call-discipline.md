@@ -9,7 +9,7 @@ status: accepted
    check every call route. Literal positions are contiguous; DD84 governs
    optional trailing positions.
 4. Whole-argument access or dynamic indexing makes a signature variadic;
-   merely counting arguments does not. In the provisional DD136 trial,
+   merely counting arguments does not. Under DD136,
    `array _=(@args)` is an explicit whole-argument discard.
 5. Runtime-sized splats/elisions require a variadic callee and must guarantee
    every required position before later positions become indeterminate.
@@ -237,7 +237,7 @@ should controlled dynamic behaviour ever be wanted back).~~
   fixed signature must read `{0..max}` contiguously — a gap is **SB5044**
   (rule (a)). *(`$(len args)`/`$#` were in the variadic set until the
   2026-09-28 addendum below.)*
-- **The discard idiom** (DG 2026-08-25; spelling revised by provisional
+- **The discard idiom** (DG 2026-08-25; spelling revised by
   DD136): to acknowledge an argument a fixed-arity function *takes* but does
   not otherwise use, write `fn f { _=$1; echo $2; }`
   (reads index 0, no hole). To take a *variable* number (or
@@ -304,7 +304,7 @@ n a b
   — use @args to accept a variable number
 ```
 
-That is DD#81's explicit whole-argument read. The provisional DD136 trial
+That is DD#81's explicit whole-argument read. DD136
 spells its discard with DD98, rather than colon. A function that genuinely
 wants its own count declares that it takes any number:
 
@@ -315,7 +315,7 @@ n a b          # → 2
 
 The counting-rule change was **breaking**: a bare `$#`/`len args` counter
 needed an explicit whole-argument read. It was fail-closed, rejecting
-programs rather than accepting new ones. The trial changes the disposal
+programs rather than accepting new ones. DD136 changes the disposal
 spelling, not this arity rule.
 
 ### Why it is the right default
@@ -325,7 +325,7 @@ sash checks arity at compile time (SB5042/SB5043), so a hand-written runtime
 makes. Under the old rule *writing that guard silently removed the
 guarantee it was imitating*. Making the count contribute nothing means the
 only way to opt out of the compile-time ceiling is to say so —
-`array _=(@args)` in the trial —
+`array _=(@args)` —
 rather than to mention `$#` in passing.
 
 ### Cost, measured
@@ -335,7 +335,7 @@ body: types.sh 75.18/75.23/75.89/75.94/75.95/75.97/75.98, functions.sh
 sp.1/sp.8, optional_args.sh 84.50/84.51, argv.sh av.h1/av.h3, arithmetic.sh
 31.24, control_flow.sh cf.f13, subscript.sh 80.32, coverage.sh cov.241. All
 were migrated by adding `: @args`. No spec exercising a real variadic access
-moved. The DD136 trial migrates these former colon reads to discard binders.
+moved. DD136 migrates these former colon reads to discard binders.
 
 ### Not changed — "branch"
 

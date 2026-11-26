@@ -20,7 +20,7 @@ conditions, then directed: **"record this, update rules accordingly, add
 implementation to backlog"** (2026-11-12; journal 628).
 [DD88](../decisions/DD88-capture-condition.md) is authoritative.
 
-Delivered on the provisional `err-attempt-trial` branch (DD136), with
+Delivered on `err-attempt-trial` and accepted on main with DD136, with
 focused original/reversion controls and the corrected ordinary gate passing.
 [Journal 664](../journal/664-err-owned-call-attempts.md) records the 12853-check
 gate at rowids 7334622-7347474. This implementation owner closes on the trial
@@ -44,7 +44,7 @@ Ordinarily the condition does not handle failures inside operands or the functio
 command still aborts. `exit`/`fail` and fatal faults are not false returns.
 Attached redirects keep DD130's operation/failure contract.
 
-DD136 provisionally adds ERR-owned call attempts: recoverable abnormal
+DD136 adds ERR-owned call attempts: recoverable abnormal
 completion abandons the entire attempted chain, yielding false before
 authored negation even for `fail 0`. Preserve partial caller-capture output
 and numeric status separately; helpers' conditions do not create nested

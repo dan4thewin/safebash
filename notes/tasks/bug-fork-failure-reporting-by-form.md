@@ -17,10 +17,10 @@ DG requires fork failure to abort like heap exhaustion: an unpredictable
 mixture of progress and failure is worse than stopping. DD130 settles this
 for all forms, not only the `-` spelling. No handling branch resumes the
 process whose fork failed. Uniform fatal routing is implemented on
-`err-attempt-trial` (provisional DD136). Focused original/reversion controls
-and the corrected ordinary gate pass. This fork-fatality owner closes on
-the trial branch; [the integrated owner](err-call-attempt-trial.md) retains
-DG's evaluation and adoption decision, with main unchanged.
+main with the accepted DD136. Focused original/reversion controls
+and the corrected ordinary gate pass. This fork-fatality owner and
+[the integrated owner](err-call-attempt-trial.md) are complete; journal 676
+records DG's acceptance and the main landing.
 It does not implement direct-background-exec or broader I/O classification.
 
 The table below is historical evidence. Its END forms and some old

@@ -15,7 +15,7 @@ status: accepted
    taint or its owners. A fresh acquisition has fresh provenance and adjacency.
 6. Check each function through one independent summary, mapping actual global
    and collection identities at calls. Report inherited-use obligations there.
-   In the provisional DD136 trial, distinguish normal and abandoned outcomes;
+   Under DD136, distinguish normal and abandoned outcomes;
    a failure path cannot borrow a later write, attest or fresh acquisition.
 7. Isolate child-process effects; parent readers retain their own effects.
    EXIT and ERR are independent roots with DD128's incoming-data contracts;
@@ -112,7 +112,7 @@ single-use `$(f)` or `f | reader`:
 
 - after `y=$(f)`: the next statement;
 - `if y=$(f) {`: the first statement of each branch (named predicate,
-  accepted in DD88; implemented on the DD136 trial branch);
+  accepted in DD88; implemented and accepted on main with DD136);
 - ~~`for x in $(f) {`: the first statement of the body;~~
 - `f | while readline x {`: the first statement of the body;
 - after `f | readline x`: the next statement.
@@ -616,7 +616,7 @@ and slot uses and incoming-origin attest obligations. A partial fresh
 acquisition cannot excuse an inherited-input attest on the other path.
 DD#128's source analysis and SSA backstop enforce these contracts separately.
 
-### Abandoned call outcomes (provisional DD136)
+### Abandoned call outcomes (DD136)
 
 An ERR-owned attempt can expose a function's completed prefix rather than
 its normal return state. Keep independent normal and possible-abort effects

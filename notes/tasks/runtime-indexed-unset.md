@@ -47,8 +47,8 @@ quoted/indirect target controls remain. Original-binary controls,
 independent reversions and the corrected 12931-check gate pass.
 [Journal 667](../journal/667-snapshot-key-loops-runtime-unset.md) records
 the implementation, coupled snapshot-taint repair and complete accounting.
-DD80, GUIDE and the specification outline are aligned. DD136 remains
-provisional and main is unchanged.
+DD80, GUIDE and the specification outline are aligned. DG accepted the
+complete branch on main on 2026-11-26 (journal 676).
 
 ## Pre-change implementation and verification plan
 

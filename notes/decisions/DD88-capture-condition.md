@@ -15,8 +15,8 @@ status: accepted
    value-only captures, arbitrary expressions and multi-statement bodies gain
    no condition result; defaulted lookups are value-only (DD101).
 5. Ordinary handling-position, negation, taint and no-reach rules apply;
-   discarded statuses cannot also be consumed. In the provisional DD136
-   trial, ERR-owned named predicate captures establish narrow call attempts:
+   discarded statuses cannot also be consumed. Under DD136,
+   ERR-owned named predicate captures establish narrow call attempts:
    abnormal completion is false before authored negation, even for `fail 0`.
 6. Stdout captures must retain a possible connected writer after redirects;
    direct value intrinsics and integer captures do not capture stdout and
@@ -30,7 +30,7 @@ DG accepted direct file-read capture-conditions on 2026-11-10:
 **"yes to capture-condition"** (journal 610). That extension is not yet
 implemented; `recoverable-file-failures` owns it.
 DG accepted named predicate-function capture-conditions on 2026-11-12
-(journal 628). That extension is implemented on the DD136 trial branch;
+(journal 628). That extension is implemented and accepted on main with DD136;
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
 owns it.
 DD101's symmetric lookup decision (DG, 2026-11-13; journal 631) admits bare
@@ -147,7 +147,7 @@ its body or operands**. An unchecked command inside `f` still aborts;
 redirects retain DD130's failure rules. Fatal faults and `exit`/`fail`
 remain terminal outside DD136's explicit exception.
 
-In the provisional [DD136 trial](DD136-err-call-attempts.md), an ERR-owned
+Under [DD136](DD136-err-call-attempts.md), an ERR-owned
 named predicate capture establishes a call attempt. Explicit `fail` and
 existing unchecked operational results abandon its full helper chain and
 produce a false verdict, retaining the numeric status until authored
@@ -175,8 +175,8 @@ that source `-` discards.
 **Trial delivery:** `predicate-capture-conditions` tracks the implemented
 eligibility and native/C result plumbing. The shared result classifier
 preserves the distinction from integer-value captures and anonymous bodies.
-DD136 remains provisional; direct file-read capture-conditions remain
-separately pending.
+DD136 is accepted; direct file-read capture-conditions remain separately
+pending.
 
 ### Direct file-read capture-conditions (DG, 2026-11-10)
 

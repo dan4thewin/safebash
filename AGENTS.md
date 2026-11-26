@@ -523,7 +523,7 @@ parent sits in a later clone's syscall-entry stop therefore restarts that clone
 fork. A `when=N` with N ≥ 2 on a restartable syscall (clone, or a blocking
 read or wait4; pipe2 and dup2 never restart) is on target only if no earlier
 counted entry can overlap a child's exit. The exposed `pipeown.28` is replaced
-on the DD136 trial branch by `errmig.56`: it reaps the outer producer before
+by DD136's `errmig.56`: it reaps the outer producer before
 the inner forks and asserts the actual syscall order. The general detector
 and a fresh injection census remain open
 (`notes/tasks/bug-strace-count-injection-drifts-on-restart.md`).

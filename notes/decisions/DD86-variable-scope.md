@@ -297,7 +297,7 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    never disagree on what a read is; value-fn bare operands (`len`/`join`/
    `keys`) added on top. DG rulings (2026-09-02): (a) more-specific error wins
    — dead-var runs LAST, after taint/type/transform; (b) `read`/~~`mapfile`~~ targets and `for` variables ARE checked; (c) ~~`: $v` is the
-   acknowledgment escape hatch~~ — the DD136 trial uses `_=$v` instead,
+   acknowledgment escape hatch~~ — DD136 uses `_=$v` instead,
    still a real checked read (DD98). Filed
    `bare-collection-name-operand-asymmetry` (builtin bare-name vs user-fn
    splat).**
@@ -663,7 +663,7 @@ before that command's attached redirects. Do not move them to the parent.
 DD122's parent-process readers and lexical pipe ownership are unchanged.
 
 Failure during argument evaluation follows its own checks and no-reach
-rules, before any attached redirect runs. The provisional DD136 exception
+rules, before any attached redirect runs. The DD136 exception
 is an ERR-owned attempted invocation, which includes its argument evaluation.
 A later redirect failure does
 not undo completed argument effects; DD130 still governs recovery and
@@ -717,7 +717,7 @@ forbid status returns inside a named function called by that body.
 
 Use a named status function and explicit handling/discard when that result
 is needed. DD88 now includes `if text=$(status_f)` (accepted 2026-11-12,
-implemented on the DD136 trial branch, tracked in `predicate-capture-conditions`).
+implemented and accepted on main, tracked in `predicate-capture-conditions`).
 That consumes
 the named callee's result, not an anonymous body's return. It changes neither
 lexical scope nor enclosing-binding access: global effects persist on false
@@ -726,7 +726,7 @@ Enforcement is pending in `reject-anonymous-capture-status-returns`;
 journal 584 records the decision.
 
 An eligible ERR-owned named capture-condition also establishes DD136's
-provisional call attempt. Its enclosing capture survives abandonment and
+call attempt. Its enclosing capture survives abandonment and
 binds the bytes already emitted; incomplete captures inside the attempted
 chain do not. Global effects remain visible, private locals remain private,
 and each later body entry still initializes its newly owned bindings.

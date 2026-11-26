@@ -15,7 +15,7 @@ gates:
 
 ## Provisional successor
 
-DD136's `err-attempt-trial` retains the readonly-import enforcement but
+The accepted DD136 retains the readonly-import enforcement but
 retires SB5101 and its mandatory static NUL query. Runtime byte guards
 remain terminal, including inside an attempt. The original delivery below
 stays complete; the trial's implementation and evaluation belong to

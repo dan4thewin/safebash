@@ -30,7 +30,7 @@ or `@args:?` modifier for args in a command within a function when the arity che
 knows there's always at least one argument. … treat `fn f { tool @args }` as if
 it were `fn f { : $1; tool @args }`."
 
-The provisional DD136 trial spells that explicit fixed-position read
+DD136 spells that explicit fixed-position read
 `_=$1`, not `: $1`. `array _=(@args)` reads the whole array and makes the
 signature variadic without itself adding a required position.
 

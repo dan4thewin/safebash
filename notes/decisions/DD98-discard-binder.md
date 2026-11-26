@@ -71,7 +71,7 @@ is not disposal: it would read an earlier discarded value and is rejected.
 An initializer's captures, arithmetic and `:?` guards still run; the sink
 does not make those operations unchecked or waive taint on their inputs.
 
-In the provisional [DD136 trial](DD136-err-call-attempts.md), this replaces
+Under [DD136](DD136-err-call-attempts.md), this replaces
 colon's arbitrary operand-disposal role. Bare `:` stays a successful noop;
 `: function` instead attempts a void call owned by ERR. `_=` establishes
 neither an attempt boundary nor a status result.

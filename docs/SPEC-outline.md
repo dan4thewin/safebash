@@ -75,7 +75,7 @@
     8. `$?` is available only in the first evaluated handling expression, not later statements.
     9. Recoverability follows cause and available recovery state, not setup position or missing handling syntax.
         1. Ordinary path-specific I/O failures are recoverable; fork, heap and arithmetic faults are fatal.
-        2. Ordinary result handling does not reach operand/body failures; provisional ERR-owned attempts have the explicit boundary below.
+        2. Ordinary result handling does not reach operand/body failures; ERR-owned attempts have the explicit boundary below.
 7. Tests and control flow
     1. Boolean `[[...]]`: explicit tests, lazy conjunction/disjunction and negation.
         1. String `==`/`!=` are exact; `<`/`>` use unsigned-byte ordering; quotes do not change comparison semantics.
@@ -417,7 +417,7 @@
         1. Handled `mkdtemp` creation failure binds empty text, never a previous pathname.
     3. Consume the producer's actual result; no assignment status or automatic taint clearance.
     4. A named predicate's same-process effects persist on either outcome; completed empty file reads succeed.
-        1. An ERR-owned named predicate capture also establishes a provisional attempt; abandonment binds already-emitted caller-capture output, not unfinished inner values.
+        1. An ERR-owned named predicate capture also establishes an attempt; abandonment binds already-emitted caller-capture output, not unfinished inner values.
     5. Value-bearing regex captures may consume both text and boolean here.
 21. Termination and signals
     1. `exit [N]` requests orderly termination; `fail [N]` requests failure termination.
@@ -430,7 +430,7 @@
     4. Handler fall-through preserves incoming status; explicit termination replaces it.
         1. Full integer status survives until final low-eight-bit process-status conversion.
         2. Incoming `status` is readable in the first evaluated handler expression.
-    5. EXIT failure may enter ERR; exit inside either handler terminates directly; fail inside ERR terminates unless an eligible provisional attempt catches it.
+    5. EXIT failure may enter ERR; exit inside either handler terminates directly; fail inside ERR terminates unless an eligible attempt catches it.
         1. No resumption of interrupted main execution or handler re-entry; ERR never transfers to EXIT.
         2. First fatal fault attempts ERR once, including heap exhaustion; another fatal fault terminates. Cleanup is not guaranteed.
     6. Handlers observe actual completed global writes.

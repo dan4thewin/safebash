@@ -19,8 +19,8 @@ status: accepted
    boundaries. Taint validation is independent of cardinality.
 5. Named splats are not scalars. A named `for` source is the sole, bare
    splat; DD#99 separately defines array-to-map conversion. `echo`
-   requires an explicit `join` rather than a splat. The provisional DD136
-   trial uses DD98's write-only `_` for value disposal and reserves colon
+   requires an explicit `join` rather than a splat. DD136
+   uses DD98's write-only `_` for value disposal and reserves colon
    operands for ERR-owned void-function attempts.
 
 ---
@@ -180,7 +180,7 @@ ambiguity sash eliminates, right at echo's output (worst in a pipeline).
 use an explicit join — ~~**`echo $(join @a)`**~~ (the `join` intrinsic, DD#41/
 DD#60). Literal args are unaffected: `echo a b c` is fine (three literals,
 no array structure to lose). ~~`:` ignores its args, so this is moot for it.~~
-In DD136's trial, discard a splat with `array _=(@a)`; `: FUNCTION ARG...`
+Under DD136, discard a splat with `array _=(@a)`; `: FUNCTION ARG...`
 instead passes arguments to an attempted void function in ERR.
 (`true`/`false` are now external programs — a bare `@a` to them is SB5032
 like any external program). (New SB code in the splat family — SB5025–5027
@@ -335,10 +335,10 @@ yields for any of these four forms changes which calls compile. Specs
 
 ## Historical implementation 2026-10-28: colon argument disposal
 
-The provisional [DD136 trial](DD136-err-call-attempts.md) retires this
+[DD136](DD136-err-call-attempts.md) retires this
 operand-disposal spelling and its `noop.1`-`.13` / `57.192` assertions.
 Use `_=$value` or an independent discard collection under DD98.
-The account below describes the former implementation, not the trial syntax.
+The account below describes the former implementation, not the current syntax.
 
 §3's "`:` ignores its args" is about the join rule only: `:` writes nothing,
 so it flattens nothing. It never meant that the arguments go unevaluated, but

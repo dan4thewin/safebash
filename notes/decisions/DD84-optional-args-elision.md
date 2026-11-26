@@ -285,7 +285,7 @@ closed list that happened to omit the one position with a fixed arity.
 Found while applying the above. `analyze_arity` computed a variadic function's
 floor from `required ∪ optional`, so adding a whole-args discard — DD#81's way
 to accept a variable number — turned a DD#84 *optional* argument back into a
-required one. The examples below use the provisional DD136 spelling
+required one. The examples below use the DD136 spelling
 `array _=(@args)`; the original spelling was `: @args`.
 
 ```sash

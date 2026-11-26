@@ -1,22 +1,26 @@
 title: Implement and evaluate ERR-owned call attempts
-status: in-progress
+status: done
 priority: P2
 kind: work
 depends: []
 gates:
-  - Native and C implement the complete DD136 trial contract
+  - Native and C implement the complete DD136 contract
   - Focused before and independent reversion controls
   - Predicted ordinary spec gate and normal commit hooks
   - Authored tour, generated tour and specification outline agree
-  - DG evaluates before adoption or landing on main
+  - DG evaluates and accepts the complete branch before landing on main
 
 # ERR-owned call attempt trial
 
-DG requested the provisional branch and implementation on 2026-11-21.
+DG accepted the complete implemented branch on 2026-11-26 and directed its
+landing on main ([journal 676](../journal/676-accept-err-attempts.md)).
+The implementation, verification and evaluation are complete.
+
+DG originally requested the provisional branch and implementation on 2026-11-21.
 [DD136](../decisions/DD136-err-call-attempts.md) is the contract.
 Branch: `err-attempt-trial`, based on main `02217248`.
-Keep the complete task on this branch; do not promote the decision or
-merge to main without DG's later evaluation.
+That branch is retained at its evaluated tip. Its former adoption boundary
+is satisfied; it is not a restriction on the accepted main implementation.
 
 ## Scope
 
@@ -127,6 +131,7 @@ inner forks, including a before/after natural-restart control.
 The corrected ordinary gate passes with NEW=14, RETIRED=14, FLIPS=0 and
 TOTAL=12853, at rowids 7334622-7347474: 12840 passing and 13 existing skips,
 with no failures or ghosts. The implementation and proof package is
-delivered on `err-attempt-trial`. This owner remains open for DG's
-evaluation and adoption decision; delivery alone neither accepts DD136
-nor changes main.
+delivered on `err-attempt-trial`. DG's subsequent acceptance is recorded
+above and in journal 676; this owner is now complete. The broader
+file-handling, suppression, converter and coverage work remains separately
+owned.

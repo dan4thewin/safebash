@@ -32,7 +32,7 @@ where "continuing is a worse choice than aborting". Path-specific file
 errors belong to the first class. DG separately specified that failure
 to fork must abort like heap exhaustion.
 
-This is the accepted contract. The DD136 trial implements uniform fatal
+This is the accepted contract. DD136 implements uniform fatal
 fork routing; the broader classification and file-handling tasks below
 remain open. It does not settle every recorded setup inconsistency.
 
@@ -50,7 +50,7 @@ prove that a failure is recoverable; lacking a handling form today does
 not make an ordinary failure fatal.
 
 DD135's `0?` and other NUL-excluding predicates can guard actual argv data;
-they do not add recovery to the argv guard. The DD136 trial retires
+they do not add recovery to the argv guard. DD136 retires
 mandatory static ERR NUL proofs along with SB5101, keeping runtime guards
 terminal even inside an attempt. Other unconditional operational failures
 remain work under this decision. Readonly inputs and a generated NUL-free
@@ -213,7 +213,7 @@ Stopping further work does not undo work that already completed.
   and ERR effect analysis.
 - `bug-fork-failure-reporting-by-form`: use the fatal path uniformly for
   every failed fork, with consistent diagnostics and no resumed branch;
-  implemented on the DD136 trial branch, pending its final delivery proof.
+  implemented, verified and accepted on main with DD136 (journals 664/676).
 - `recoverable-file-failures`: expose and enforce recoverable file-error
   handling, including attached redirects; depends on the classification
   work so fatal causes are not accidentally discarded.

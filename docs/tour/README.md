@@ -17,10 +17,9 @@ Using this tour
 Every `sash` snippet in this tour is a complete program. The
 [GitHub edition](README.md) includes recorded output.
 
-This edition includes directory selectors, immutable scratch values and
-validated regexes, all accepted and implemented on `main`.
-The checked-disposal and ERR-attempt slides additionally show a
-**provisional trial** on `err-attempt-trial`, not yet adopted on main.
+This edition includes directory selectors, immutable scratch values,
+validated regexes, checked disposal and ERR-owned call attempts, all
+accepted and implemented on `main`.
 
 **When running under presenterm** (`mk -p 1 tour`):
 
@@ -334,7 +333,7 @@ To deliberately throw a value away, assign it to `_`.
 
 
 
-Checked disposal (trial)
+Checked disposal
 ---
 
 ```bash
@@ -1924,7 +1923,7 @@ Try changing `fail 3` to `exit 3`.
 
 
 
-Best-effort cleanup (trial)
+Best-effort cleanup
 ---
 
 ```bash
@@ -1961,7 +1960,7 @@ not rolled back. ERR's original status, here 3, survives its fall-through.
 
 
 
-A failed attempt is not a return (trial)
+A failed attempt is not a return
 ---
 
 ```bash
