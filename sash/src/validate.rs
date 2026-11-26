@@ -4140,6 +4140,7 @@ const BUILTINS: &[&str] = &[
     "waitstatus",
     "getcwd",
     "epochseconds",
+    "epochuseconds",
     // Regex (DD#63): match/matchall are boolean commands (sub/gsub are
     // value-only). `matchall` fills its out-array with every match.
     "match",
@@ -4199,6 +4200,7 @@ const VALUE_ONLY_INTRINSICS: &[&str] = &[
     "waitstatus",
     "getcwd",
     "epochseconds",
+    "epochuseconds",
     "argc",
     "arg",
     "signum",

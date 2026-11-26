@@ -237,7 +237,7 @@
         1. Visit each captured key once; source-map insertion, deletion, reinsertion, clearing or replacement does not change that sequence.
         2. Explicit value lookups in the body read the current map, with ordinary missing-cell behavior.
         3. `keys MAP ARRAY` supplies the same independent key snapshot to its destination.
-    8. Process/environment values: `getpid` (also `$$`), `getppid`, `getcwd`, `epochseconds`, `random`.
+    8. Process/environment values: `getpid` (also `$$`), `getppid`, `getcwd`, `epochseconds`, `epochuseconds` (integer Unix wall-clock microseconds), `random`.
     9. `$(mkdtemp)` atomically creates a new owner-only directory under `/tmp` and returns its absolute pathname.
         1. No operands or `TMPDIR` use; retry name collisions, never adopt an existing object or fall back to another directory.
         2. Creation has operational status; unchecked failure aborts before assignment.

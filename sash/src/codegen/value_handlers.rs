@@ -501,6 +501,11 @@ pub(super) fn int_intrinsic_i64(
             let call = builder.ins().call(f, &[]);
             builder.inst_results(call)[0]
         }
+        "epochuseconds" => {
+            let f = module.declare_func_in_func(externs.epochuseconds, builder.func);
+            let call = builder.ins().call(f, &[]);
+            builder.inst_results(call)[0]
+        }
         "argc" => {
             let gv = module.declare_data_in_func(externs.argc, builder.func);
             let base = builder.ins().global_value(I64, gv);

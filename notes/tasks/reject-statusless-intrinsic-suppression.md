@@ -92,6 +92,13 @@ already consumes the only result, advising removal of `-`.
 
 ## Evidence and regression obligations
 
+The 2026-11-26 `epochuseconds` addition follows `epochseconds`' existing
+integer-value path and inherits this pending guard. The frozen pre-addition
+compiler at `4388dcfd` accepts `echo $(- epochseconds)` through `--emit-c`;
+the new native clock likewise accepts `echo $(- epochuseconds)`. Both are
+statusless captures under this rule. The clock addition does not implement
+general statusless-intrinsic enforcement or introduce a clock-only exception.
+
 R3 retains the original native/C measurement and archive pointer. It
 was not rerun or revalidated against later language changes. Review the
 historical `noreach.12`, `int n=$(- strlen $(/bin/false))`: its runtime

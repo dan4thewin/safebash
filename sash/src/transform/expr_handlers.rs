@@ -915,8 +915,8 @@ fn try_arith_int_intrinsic(
 /// a rename, not a lowering: it carried the intrinsic through SSA under a
 /// magic-variable name that four codegen special-cases then had to intercept,
 /// which is precisely the direction DD#111 forbids. It now flows as
-/// `CmdSubst { argv: ["getpid"] }` like its five stateless peers
-/// (`getppid`/`random`/`argc`/`signum`/`epochseconds`), and the intrinsic
+/// `CmdSubst { argv: ["getpid"] }` like its stateless peers
+/// (`getppid`/`random`/`argc`/`signum`/`epochseconds`/`epochuseconds`), and the intrinsic
 /// tables lower it by name.
 ///
 /// DD#111: variables are not magic in sash. These keyword forms are the real
@@ -948,7 +948,7 @@ pub(crate) fn stateful_intrinsic_slot(name: &str) -> Option<&'static str> {
 /// and reuse the `?`/`!` slots the compiler writes (native + c lower them
 /// directly); every stateless one — `getpid` included — reuses the word-form
 /// `CmdSubst` node and codegen computes the i64 (native direct via
-/// `int_intrinsic_i64`, c via its atoi fallback).
+/// `int_intrinsic_i64`, C via `int_intrinsic_i64_c`).
 ///
 /// **A stateless intrinsic missing from that list no longer falls through.**
 /// It used to: the variable branch below read an unset slot and yielded a
@@ -973,12 +973,11 @@ fn resolve_nullary_sexpr(name: &str, args: &[ArithExpr], state: &VersionState) -
         return Some(SsaValue::Var(state.lookup(var)));
     }
     match name {
-        "getpid" | "getppid" | "argc" | "random" | "signum" | "epochseconds" | "waitstatus" => {
-            Some(SsaValue::CmdSubst {
-                argv: vec![SsaValue::Literal(name.to_string())],
-                suppressed: false,
-            })
-        }
+        "getpid" | "getppid" | "argc" | "random" | "signum" | "epochseconds" | "epochuseconds"
+        | "waitstatus" => Some(SsaValue::CmdSubst {
+            argv: vec![SsaValue::Literal(name.to_string())],
+            suppressed: false,
+        }),
         _ if crate::resolve::arith_denotation(name).is_some() => unreachable!(
             "nullary sexpr `({name})` names a compiler intrinsic with no arith \
              lowering. A non-`Int` denotation is rejected by type_check and a \
@@ -1217,6 +1216,7 @@ mod tests {
             "getppid",
             "getcwd",
             "epochseconds",
+            "epochuseconds",
             "argc",
             "signum",
             "random",

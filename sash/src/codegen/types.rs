@@ -214,6 +214,7 @@ pub(super) struct ExternFuncs {
     pub(super) getppid: cranelift_module::FuncId,
     pub(super) random: cranelift_module::FuncId,
     pub(super) epochseconds: cranelift_module::FuncId,
+    pub(super) epochuseconds: cranelift_module::FuncId,
     pub(super) trap: cranelift_module::FuncId,
     pub(super) glob: cranelift_module::FuncId,
     pub(super) rglob: cranelift_module::FuncId,

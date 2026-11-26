@@ -797,6 +797,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let epochseconds_func = module
         .declare_function("sash_epochseconds", Linkage::Import, &getpid_sig)
         .expect("declare");
+    let epochuseconds_func = module
+        .declare_function("sash_epochuseconds", Linkage::Import, &getpid_sig)
+        .expect("declare");
 
     // sash_glob(private_target, owned_patterns, checked) -> status
     let mut glob_sig = module.make_signature();
@@ -979,6 +982,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         getppid: getppid_func,
         random: random_func,
         epochseconds: epochseconds_func,
+        epochuseconds: epochuseconds_func,
         trap: trap_func,
         glob: glob_func,
         rglob: rglob_func,

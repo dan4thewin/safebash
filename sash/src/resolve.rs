@@ -64,6 +64,7 @@ const INTRINSICS: &[(&str, ArithDenotation)] = &[
     ("argc", ArithDenotation::Int),
     ("status", ArithDenotation::Int),
     ("epochseconds", ArithDenotation::Int),
+    ("epochuseconds", ArithDenotation::Int),
     ("random", ArithDenotation::Int),
     ("getpid", ArithDenotation::Int),
     ("getppid", ArithDenotation::Int),

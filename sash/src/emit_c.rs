@@ -279,6 +279,7 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     writeln!(out, "extern i64 sash_epochseconds(void);").unwrap();
+    writeln!(out, "extern i64 sash_epochuseconds(void);").unwrap();
     writeln!(out, "extern i64 sash_getpid(void);").unwrap();
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
     writeln!(out, "extern i64 sash_random(void);").unwrap();
@@ -3565,6 +3566,7 @@ fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
 fn int_intrinsic_i64_c(e: &mut Emit, name: &str) -> Option<String> {
     let value = match name {
         "epochseconds" => "sash_epochseconds()",
+        "epochuseconds" => "sash_epochuseconds()",
         "signum" => "sash_signum",
         "getpid" => "sash_getpid()",
         "getppid" => "sash_getppid()",

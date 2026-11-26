@@ -14,6 +14,9 @@ status: implemented
 6. In the provisional DD136 trial, an integer call cannot establish an ERR
    attempt. It may run inside one; abandonment skips its consumers rather
    than fabricating an integer result.
+7. `epochseconds` and `epochuseconds` are nullary integer intrinsics reading
+   Unix wall-clock time in seconds and microseconds respectively. They are
+   clean values, not monotonic timers or status producers.
 
 ---
 
@@ -67,6 +70,31 @@ or captured stdout (a string) for a string/void function. The
 arithmetic expression; both surfaces work for every int producer.
 
 Int→string conversion follows DD#30: `echo "$x"` at output.
+
+## Epoch clocks
+
+`$(epochseconds)` returns whole seconds since the Unix epoch.
+`$(epochuseconds)` returns whole microseconds since that same epoch.
+DG requested the microsecond counterpart on 2026-11-26 and proposed the
+`epochuseconds` name. Both follow the existing integer-intrinsic rules:
+
+```sash
+int stamp=$(epochuseconds)
+int next=$(( (epochuseconds) ))
+echo $stamp $next
+```
+
+Each evaluation samples `CLOCK_REALTIME` once. Microseconds are computed as
+`seconds * 1000000 + nanoseconds / 1000`, dropping sub-microsecond precision;
+an unrepresentable signed-64-bit result takes the ordinary arithmetic-overflow
+abort rather than wrapping. The runtime returns an integer directly, with
+decimal formatting only in string context. Neither clock takes arguments,
+introduces input taint, nor supplies a separate status.
+
+These are wall-clock readings, not elapsed-time clocks: clock adjustments can
+move them backward, and successive readings need not be distinct. Microsecond
+units do not promise microsecond clock accuracy or resolution. `epochseconds`
+is unchanged.
 
 ## Integer capture has one result channel (DG, 2026-11-06)
 

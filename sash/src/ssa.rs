@@ -2771,8 +2771,8 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
         // Routing that spelling through the ordinary parse is what exposed
         // it — `$(getcpid x)` then reached the int-context lowering and hit
         // its `unreachable!()`.
-        "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "argc" | "signum"
-        | "random" | "waitstatus" | "getcpid" | "mkdtemp" => Some(0..=0),
+        "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "epochuseconds" | "argc"
+        | "signum" | "random" | "waitstatus" | "getcpid" | "mkdtemp" => Some(0..=0),
         // DD#126: `wait` reaps any child, `wait PID` reaps that one.
         "wait" => Some(0..=1),
         "getenv" => Some(1..=2),

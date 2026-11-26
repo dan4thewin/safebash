@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=506
+plan=513
 echo "1..$plan" >&3
 
 set +e
@@ -2771,6 +2771,53 @@ str s="$(epochseconds)"
 int m=$(( (strlen $s) ))
 echo $(( m == 10 && n > 0 ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk den.22
+
+# DD58: epochuseconds shares the integer/capture contract, at microsecond scale.
+_epoch_before=${EPOCHREALTIME/./}
+run_sash 'fn clock -> int { return $(epochuseconds) }
+int seconds=$(epochseconds)
+int direct=$(epochuseconds)
+int sexpr=$(( (epochuseconds) ))
+int bare=$(( epochuseconds ))
+str quoted="$(epochuseconds)"
+echo $seconds $direct $sexpr $bare $quoted $(clock)'
+_epoch_after=${EPOCHREALTIME/./}
+read -r _seconds _direct _sexpr _bare _quoted _function _extra <<< "$out"
+_epoch_ok=1
+[[ $rc = 0 && -z $err && -z $rerr && -z $_extra && $out != *$'\n'* ]] || _epoch_ok=0
+[[ $_seconds =~ ^[0-9]+$ ]] &&
+    (( _seconds >= _epoch_before / 1000000 && _seconds <= _epoch_after / 1000000 )) || _epoch_ok=0
+for _value in "$_direct" "$_sexpr" "$_bare" "$_quoted" "$_function"; do
+    [[ $_value =~ ^[0-9]+$ ]] &&
+        (( _value >= _epoch_before && _value <= _epoch_after )) || _epoch_ok=0
+done
+[[ $_epoch_ok = 1 ]]; chk epochus.1
+
+# Stage-local evaluation uses the same clean integer and string rendering.
+_epoch_before=${EPOCHREALTIME/./}
+run_sash 'echo "$(epochuseconds)" | /bin/cat'
+_epoch_after=${EPOCHREALTIME/./}
+[[ $rc = 0 && -z $err && -z $rerr && $out =~ ^[0-9]+$ ]] &&
+    (( out >= _epoch_before && out <= _epoch_after )); chk epochus.2
+
+# Repeated evaluations take live samples, not a cached or whole-second value.
+run_sash 'int first=$(epochuseconds)
+int later=$first
+while (( later == first )) { (( later = epochuseconds )) }
+echo $(( first % 1000000 != 0 || later % 1000000 != 0 ))'
+[[ $rc = 0 && $out = 1 && -z $err && -z $rerr ]]; chk epochus.3
+
+run_sash 'echo $(epochuseconds extra)'
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *epochuseconds* ]]; chk epochus.4
+
+run_sash 'echo $(( (epochuseconds 1) ))'
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *epochuseconds* ]]; chk epochus.5
+
+run_sash 'str stamp=$(epochuseconds); echo $stamp'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk epochus.6
+
+run_sash 'epochuseconds'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err == *epochuseconds* ]]; chk epochus.7
 
 # Literal syntax and the runtime's signed-64-bit domain must both hold.
 run_sash 'int low=-9223372036854775808

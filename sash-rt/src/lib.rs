@@ -3673,6 +3673,14 @@ pub extern "C" fn sash_epochseconds() -> i64 {
     ts.tv_sec as i64
 }
 
+/// Current epoch microseconds, truncating sub-microsecond precision.
+#[no_mangle]
+pub extern "C" fn sash_epochuseconds() -> i64 {
+    let ts = rustix::time::clock_gettime(rustix::time::ClockId::Realtime);
+    let micros = i128::from(ts.tv_sec) * 1_000_000 + i128::from(ts.tv_nsec) / 1_000;
+    i64::try_from(micros).unwrap_or_else(|_| sash_arith_overflow())
+}
+
 /// Start capturing stdout: save stdout, point it at an anonymous memory file.
 /// Returns (saved_stdout_fd, capture_fd).
 ///
