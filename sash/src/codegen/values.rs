@@ -1890,11 +1890,16 @@ mod invariant_tests {
                 "must be lifted to a pipeline",
             ),
             (
+                vec![SsaValue::Literal("mkdtemp".into())],
+                "mkdtemp expects one lowered parent",
+            ),
+            (
                 vec![
                     SsaValue::Literal("mkdtemp".into()),
+                    SsaValue::Literal("parent".into()),
                     SsaValue::Literal("extra".into()),
                 ],
-                "mkdtemp expects no arguments",
+                "mkdtemp expects one lowered parent",
             ),
         ] {
             let message = native_value_ice(

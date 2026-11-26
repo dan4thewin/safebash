@@ -147,12 +147,16 @@ only `echo`. Environment and program-argument inputs remain tainted too.
 An unchecked tainted value still cannot be read by `echo` or any other copy;
 the ordinary use-site rules require attest or explicit `:!` first.
 
-DD135's `$(mkdtemp)` returns generated pathname bytes directly. Creating a
-directory is not reading its name from a kernel-backed stdout capture;
+DD135's `$(mkdtemp [DIR])` returns constructed pathname bytes directly.
+Creating a directory is not reading its name from a kernel-backed stdout capture;
 the value is clean and NUL-free, with a separate operational creation status.
-The constructor is implemented
-([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)). Subsequent fd
-reads still introduce taint, and assigning its clean result does not resolve
+The optional parent remains an ordinary checked read, not a new taint
+exemption. Its generated child name does not validate the supplied parent.
+The original constructor is implemented
+([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md));
+[journal 678](../journal/678-mkdtemp-parent-directory.md) records the
+optional-parent extension. Subsequent fd reads still introduce taint, and
+assigning its clean result does not resolve
 an already-tainted live binding.
 
 DG proposed this boundary on 2026-11-02 and chose to implement it using the

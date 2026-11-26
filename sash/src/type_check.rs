@@ -1314,7 +1314,7 @@ fn not_an_int(part: &str) -> Option<String> {
 /// literal (SB5074), so neither slot can hold an int.
 fn string_operand_slots(name: &str) -> Option<std::ops::Range<usize>> {
     match name {
-        "toupper" | "tolower" | "strlen" | "basename" | "dirname" => Some(0..1),
+        "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "mkdtemp" => Some(0..1),
         "getenv" | "match" | "matchall" => Some(0..2),
         "arg" => Some(1..2),
         "sub" | "gsub" => Some(0..3),

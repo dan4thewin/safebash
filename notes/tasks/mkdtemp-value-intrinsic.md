@@ -1,25 +1,36 @@
-title: Add a clean fixed-/tmp mkdtemp value intrinsic
+title: Add a clean mkdtemp value intrinsic with an optional parent
 status: done
 priority: P2
 kind: work
 depends: []
 gates:
-  - "zero-argument $(mkdtemp) atomically creates a new owner-only directory under /tmp and returns its absolute pathname directly"
-  - "TMPDIR and caller templates do not influence the path; collision retries never adopt existing files/directories/symlinks, and /tmp failure has no fallback"
-  - "the generated value is independently clean and NUL-free in source/SSA taint and ERR byte-fact analysis"
+  - "$(mkdtemp [DIR]) atomically creates a new owner-only directory under an existing parent and returns its absolute pathname; only omission selects /tmp"
+  - "DIR is an ordinary string operand evaluated once before cwd resolution and creation; relative parents retain symlink/.. semantics, and empty/NUL-bearing parents fail"
+  - "no template interpretation, TMPDIR use, parent creation or fallback; collision retries never adopt existing files/directories/symlinks"
+  - "the direct result is independently clean and NUL-free; both taint layers check the supplied parent, and generated suffixes do not validate input"
   - "ordinary creation is implicitly checked before assignment; direct untyped capture-conditions consume its actual status, and an inner - discards only that status"
   - "handled recoverable failure binds empty text plus failure, never stale path data or empty success; fatal causes remain fatal"
   - "sole-value placement, arity, result kinds, discarded-result refusal, body boundaries and readonly ERR destinations retain their contracts"
-  - "main-created paths work as handled cleanup argv without :! or attest when their binding was never tainted; ERR creation requires a writable target and real failure handling"
+  - "main-created paths work as handled cleanup argv without :! or attest when their binding was never tainted; ERR creation respects writable targets and DD136's handling/attempt/termination rules"
   - "native/C CLI controls pin creation, byte facts, collision/failure paths and negative cases; before/reversion controls and the predicted ordinary gate pass"
 
 ## Contract
 
 [DD135](../decisions/DD135-err-readonly-inputs-nul-and-mkdtemp.md) adopts
-zero-argument `$(mkdtemp)`: a direct clean/NUL-free value and a real
+`$(mkdtemp [DIR])`: a direct clean/NUL-free value and a real
 operational creation status. It is not an external `mktemp` wrapper or a
-stdout capture. Use fixed `/tmp`, a fixed prefix and a generated
-restricted-alphabet suffix. No prefix/template operand or `TMPDIR` fallback.
+stdout capture. Omission selects `/tmp`; one ordinary string operand selects
+the existing parent. Keep the fixed child-name prefix and generated
+restricted-alphabet suffix, without template interpretation, `TMPDIR`,
+missing-parent creation or fallback.
+
+Evaluate the parent once before creation and before anchoring a relative
+path to the resulting cwd. Return an absolute path without lexical
+normalization or `realpath`: symlinks followed by `..` retain ordinary
+filesystem interpretation. Empty or NUL-bearing parents fail, rather than
+being treated as omission or as truncated paths. Ordinary type and taint
+checks apply to the operand; neither generation nor a clean result excuses
+an unchecked input read.
 
 Creation is atomic and exclusive, with owner-only directory access; retry
 collisions rather than accepting an existing object. Randomness, suffix,
@@ -38,7 +49,8 @@ Apply DD130 to the actual error cause and resulting state. Ordinary path/
 creation errors are recoverable; heap exhaustion and other fatal faults
 cannot become empty results. Keep failures visible under the existing
 diagnostic/handling convention, including after collisions and failed use
-of `/tmp`.
+of the selected parent. Outer handling/discard does not catch operand or
+helper-body failures; completed operand effects are not rolled back.
 
 ## Acceptance requirements
 
@@ -61,9 +73,10 @@ on chance. Keep created test directories private and clean up only owned
 paths.
 
 The [readonly ERR/proof task](err-readonly-inputs-and-nul-proofs.md) owns
-import restrictions. This constructor does not require its new backward
-predicate query for a statically NUL-free result. It can land independently
-of the full [recoverable-file-failures](recoverable-file-failures.md) inventory,
+import restrictions. DD136 has retired mandatory static ERR NUL proofs;
+runtime argv guards remain, and the constructor still supplies NUL-free
+bytes. It can evolve independently of the full
+[recoverable-file-failures](recoverable-file-failures.md) inventory,
 while coordinating the shared classification and actual ERR failure model.
 The delivered tour checker uses this constructor and direct guarded cleanup
 argv, while retaining sibling-file staging and atomic publication.
@@ -89,3 +102,24 @@ published file while cleaning owned scratch paths.
 [Journal 641](../journal/641-mkdtemp-and-tour-cleanup.md) records the exact
 reversion sets, control corrections, failure classification and gate.
 This completes DD135, not the broader file-failure or lookup-policy work.
+
+## Optional parent delivered 2026-11-26
+
+Native and C now accept one ordinary checked string parent. Shared lowering
+normalizes omission to `/tmp`; both backends pass counted parent bytes to
+the same runtime constructor. Relative anchoring follows operand effects
+and preserves symlink/`..` interpretation. Empty/NUL input and failed cwd
+resolution are contained failures. The complete result is reserved before
+creation and reclaimed after a failed attempt; heap failure stays fatal.
+
+The source and SSA taint layers both check the filesystem input independently
+of the clean result. The SSA check uses the canonical instruction-read
+inventory rather than changing result provenance or adding a private walker.
+
+All 66 focused cases pass per mode. The matched original compiler/runtime
+fails exactly the 26 new parent-behavior cases in each mode; nine independent
+reversions pin the changed mechanisms and are restored. The ordinary gate
+passes with 13416 checks, 54 first-ever mode IDs, no flips and exactly the
+two retired `mkd.13` IDs. [Journal 678](../journal/678-mkdtemp-parent-directory.md)
+records the full evidence. Delivery is on `slice-trial`; main and the
+array-slice feature's provisional status remain unchanged.

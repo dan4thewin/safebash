@@ -218,8 +218,28 @@ pub(super) fn handle_cmdsub(
         panic!("ICE: command substitution with a non-literal head reached codegen")
     };
     if name == "mkdtemp" {
-        assert_eq!(argv_values.len(), 1, "ICE: mkdtemp expects no arguments");
-        return emit_mkdtemp(suppressed, builder, module, externs, exit_status_var);
+        assert_eq!(
+            argv_values.len(),
+            2,
+            "ICE: mkdtemp expects one lowered parent"
+        );
+        let parent = lower_value(
+            &argv_values[1],
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        );
+        return emit_mkdtemp(
+            parent,
+            suppressed,
+            builder,
+            module,
+            externs,
+            exit_status_var,
+        );
     }
     try_native_intrinsic(
         name,
@@ -235,6 +255,7 @@ pub(super) fn handle_cmdsub(
 }
 
 fn emit_mkdtemp(
+    (parent_ptr, parent_len): (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value),
     suppressed: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -247,7 +268,10 @@ fn emit_mkdtemp(
     let status_addr = builder.ins().stack_addr(I64, out, 8);
     let checked = builder.ins().iconst(I64, i64::from(!suppressed));
     let func = module.declare_func_in_func(externs.mkdtemp, builder.func);
-    let call = builder.ins().call(func, &[checked, len_addr, status_addr]);
+    let call = builder.ins().call(
+        func,
+        &[parent_ptr, parent_len, checked, len_addr, status_addr],
+    );
     let ptr = builder.inst_results(call)[0];
     let len = builder.ins().stack_load(I64, out, 0);
     let status = builder.ins().stack_load(I64, out, 8);

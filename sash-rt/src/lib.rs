@@ -1004,27 +1004,42 @@ pub extern "C" fn sash_getenv(name: *const u8, name_len: i64, out_len: *mut i64)
 
 /// DD135: a direct pathname and creation status, never captured stdout.
 #[no_mangle]
-pub extern "C" fn sash_mkdtemp(checked: i64, out_len: *mut i64, out_status: *mut i64) -> *const u8 {
-    let mut path = *b"/tmp/sash.00000000000000000000000000000000\0";
-    let len = path.len() - 1;
-    // Reserve the returned string before publishing a directory in the filesystem.
-    let result = unsafe { alloc_cstr(len) };
-    match create_temp_directory(&mut path) {
-        Ok(()) => unsafe {
-            core::ptr::copy_nonoverlapping(path.as_ptr(), result, path.len());
+pub extern "C" fn sash_mkdtemp(
+    parent_ptr: *const u8,
+    parent_len: i64,
+    checked: i64,
+    out_len: *mut i64,
+    out_status: *mut i64,
+) -> *const u8 {
+    let parent = if parent_len == 0 {
+        &[][..]
+    } else {
+        unsafe { core::slice::from_raw_parts(parent_ptr, parent_len as usize) }
+    };
+    let creation = temp_directory_path(parent).and_then(|(result, len)| {
+        let path = unsafe { core::slice::from_raw_parts_mut(result, len + 1) };
+        match create_temp_directory(path) {
+            Ok(()) => Ok((result, len)),
+            Err(error) => {
+                unsafe { sash_free_ptr(result) };
+                Err(error)
+            }
+        }
+    });
+    match creation {
+        Ok((result, len)) => unsafe {
             *out_len = len as i64;
             *out_status = 0;
             result
         },
         Err(error) => {
             unsafe {
-                sash_free_ptr(result);
                 *out_len = 0;
                 *out_status = 1;
             }
             set_last_errno(error);
             if checked != 0 {
-                sash_emsg(b"mkdtemp".as_ptr(), 7, b"/tmp".as_ptr(), 4);
+                sash_emsg(b"mkdtemp".as_ptr(), 7, parent.as_ptr(), parent.len() as i64);
                 sash_abort(1);
             }
             b"\0".as_ptr()
@@ -1032,12 +1047,55 @@ pub extern "C" fn sash_mkdtemp(checked: i64, out_len: *mut i64, out_status: *mut
     }
 }
 
-fn create_temp_directory(path: &mut [u8; 43]) -> Result<(), rustix::io::Errno> {
+fn temp_directory_path(parent: &[u8]) -> Result<(*mut u8, usize), rustix::io::Errno> {
+    if parent.is_empty() || parent.contains(&0) {
+        return Err(rustix::io::Errno::INVAL);
+    }
+    let mut cwd_buf = [0u8; 4096];
+    let cwd = if parent.starts_with(b"/") {
+        &[][..]
+    } else {
+        let len = linux_syscalls::getcwd(&mut cwd_buf)?;
+        let cwd = &cwd_buf[..len - 1];
+        if !cwd.starts_with(b"/") {
+            return Err(rustix::io::Errno::NOENT);
+        }
+        cwd
+    };
+    let cwd_sep = usize::from(!cwd.is_empty() && !cwd.ends_with(b"/"));
+    let parent_sep = usize::from(!parent.ends_with(b"/"));
+    let tail = b"sash.00000000000000000000000000000000";
+    let len = cwd
+        .len()
+        .checked_add(cwd_sep)
+        .and_then(|len| len.checked_add(parent.len()))
+        .and_then(|len| len.checked_add(parent_sep + tail.len()))
+        .filter(|len| *len < isize::MAX as usize)
+        .unwrap_or_else(|| sash_panic_oom(usize::MAX));
+    // Reserve and terminate the result before any filesystem creation.
+    let result = unsafe { alloc_cstr(len) };
+    // Preserve the parent's spelling: collapsing `..` changes symlink resolution.
+    unsafe {
+        let mut dest = result;
+        for part in [cwd, &b"/"[..cwd_sep], parent, &b"/"[..parent_sep], tail] {
+            core::ptr::copy_nonoverlapping(part.as_ptr(), dest, part.len());
+            dest = dest.add(part.len());
+        }
+    }
+    Ok((result, len))
+}
+
+fn create_temp_directory(path: &mut [u8]) -> Result<(), rustix::io::Errno> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    let suffix_start = path.len() - 33;
+    let suffix_end = path.len() - 1;
     for _ in 0..128 {
         let mut random = [0u8; 16];
         fill_random(&mut random)?;
-        for (pair, byte) in path[10..42].chunks_exact_mut(2).zip(random) {
+        for (pair, byte) in path[suffix_start..suffix_end]
+            .chunks_exact_mut(2)
+            .zip(random)
+        {
             pair[0] = HEX[usize::from(byte >> 4)];
             pair[1] = HEX[usize::from(byte & 15)];
         }

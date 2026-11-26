@@ -61,7 +61,7 @@ In an existing **boolean/status-consuming context**, an untyped assignment
 whose RHS is one eligible producer is a **capture-condition**. The accepted
 producers are a single external command, an ~~external~~ otherwise-legal
 pipeline, a named predicate function, DD101's bare `arg`/`getenv` lookups,
-a direct `$(<file)` read, and DD135's `$(mkdtemp)`:
+a direct `$(<file)` read, and DD135's `$(mkdtemp [DIR])`:
 
 - the **condition consumes the producer's actual status**
   (`test = status == 0`); a recoverable nonzero result does **not** abort
@@ -83,7 +83,7 @@ a direct `$(<file)` read, and DD135's `$(mkdtemp)`:
 
 - **RHS shape:** a single external `$(cmd)` OR a pipeline `$(a | b)` ~~of external
   stages~~, a named predicate `$(f args...)`, bare `$(arg N)` / `$(getenv NAME)`,
-  a direct `$(<file)`, or zero-argument `$(mkdtemp)`.
+  a direct `$(<file)`, or `$(mkdtemp [DIR])`.
   ~~Excluded (stay SB4025): a user-function capture `$(f)`
   (functions convey status via `return` — DD#74 predicates).~~
   Excluded: void/integer function calls, value-only intrinsics (including

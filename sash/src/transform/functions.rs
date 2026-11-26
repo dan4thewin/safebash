@@ -676,7 +676,10 @@ fn lift_cmdsub(
             lift_input_lookup(argv, suppressed, ssa, state, block)
         });
     }
-    let argv = lift_int_func_args(argv, ssa, state, block);
+    let mut argv = lift_int_func_args(argv, ssa, state, block);
+    if matches!(argv.as_slice(), [SsaValue::Literal(name)] if name == "mkdtemp") {
+        argv.push(SsaValue::Literal("/tmp".into()));
+    }
     if matches!(argv.first(), Some(SsaValue::Literal(name)) if name == "mkdtemp") {
         let temp = state.reserve_temp_name("__mkdtemp".into(), VarType::String);
         let target = state.define(&temp);

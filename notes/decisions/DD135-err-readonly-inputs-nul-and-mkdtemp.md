@@ -18,10 +18,14 @@ status: implemented
    NUL-freedom for the tested value, not taint clearance.
    DD136 retires mandatory static ERR NUL proofs; runtime argv guards
    remain terminal, including inside an attempted call.
-6. Zero-argument `$(mkdtemp)` atomically creates a new owner-only directory
-   under fixed `/tmp`, retries name collisions and returns its absolute
-   pathname directly as a clean, NUL-free string. Ignore `TMPDIR`; do not
-   fall back to another directory.
+6. `$(mkdtemp [DIR])` atomically creates a new owner-only directory under
+   `DIR`, or `/tmp` when omitted, retries name collisions and returns its
+   absolute pathname directly as a clean, NUL-free string. `DIR` is an
+   ordinary string operand evaluated once, with normal type, taint and
+   operand-failure checks. Anchor relative parents to cwd after operand
+   evaluation, preserving symlink and `..` semantics. The parent must exist;
+   empty or NUL-bearing parents fail. Ignore `TMPDIR`; do not create missing
+   parents or fall back to another directory.
 7. Creation has a real operational status. An unhandled failure aborts
    before assignment; a legal capture-condition handles it, and an inner
    `-` may explicitly discard it. Handled recoverable failure supplies empty
@@ -45,6 +49,11 @@ package ([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)).
 [DD136](DD136-err-call-attempts.md) retires only the
 mandatory ERR NUL-proof component, together with SB5101. Readonly imports,
 counted predicates, filename guards and the constructor remain implemented.
+DG approved the optional-parent extension on 2026-11-26. It is implemented
+in native and C on `slice-trial`;
+[journal 678](../journal/678-mkdtemp-parent-directory.md) records delivery.
+This does not move main or change the separate array-slice trial's
+provisional status.
 
 ## Readonly at the ERR boundary
 
@@ -151,18 +160,29 @@ to DD128/DD130 and their existing backlog.
 
 ## A generated temporary-directory value
 
-`$(mkdtemp)` is a value-producing builtin, not stdout to be captured through
-a pipe. A fixed prefix and a generated restricted-alphabet suffix produce
-the pathname under `/tmp`; neither a caller template nor an environment
-value contributes pathname bytes. Creation is exclusive and atomic, with
-owner-only access. A collision retries rather than adopting an existing
-directory or symlink.
+`$(mkdtemp [DIR])` is a value-producing builtin, not stdout to be captured
+through a pipe. The optional operand chooses the existing parent directory,
+not a name template. It accepts ordinary string values, including computed
+values and collection cells, without a literal-only restriction. Evaluate
+it once before resolving the parent and attempting creation; an outer
+condition or status discard does not catch its operand or helper failures.
 
-The successful result is both clean and NUL-free. Those are independent
-compiler facts: cleanliness alone cannot remove the possible-NUL objection.
-Returning a pathname directly introduces no kernel-capture taint; later fd
-reads still follow DD127. Assigning this clean result to an already-tainted
-live binding does not resolve that binding's taint under DD128.
+A relative parent is anchored to the actual cwd after operand evaluation.
+The returned pathname is absolute, so a later `cd` does not reinterpret it.
+This is not lexical normalization or `realpath`: preserve ordinary pathname
+resolution, including symlinks followed by `..`. Creation is exclusive and
+atomic, with owner-only access. A fixed child-name prefix and generated
+restricted-alphabet suffix are unchanged; a collision retries rather than
+adopting an existing directory or symlink.
+
+The parent is a normal checked read. Environment/input-derived values need
+their ordinary legal attest or explicit forced read before use; the generated
+suffix does not validate the parent. No `cpath?` or filesystem-ownership
+proof is imposed or manufactured. The successful direct result introduces
+no new taint and is NUL-free because all parent bytes are checked before
+creation. Later fd reads still follow DD127. Assigning this clean result to
+an already-tainted live binding does not resolve that binding's taint under
+DD128.
 
 An ordinary `work=$(mkdtemp)` implicitly checks creation before assignment.
 The direct untyped form `if work=$(mkdtemp) { ... }` binds the new pathname
@@ -171,17 +191,22 @@ binds empty text and supplies failure; it never reuses a previous pathname.
 `work=$(- mkdtemp)` explicitly discards that status and retains the same
 defined failure value. Assignment itself has no status.
 
-The value occupies its own direct capture under DD111. No argument/template
-form, arbitrary statement-position use or typed declaration condition is
-added. Conditions, negation, status reads and discarded-result restrictions
-retain DD55/DD88's existing rules. In ERR the destination must also be
-writable under the import restriction. Under DD136, an unchecked creation
-failure abandons an eligible attempt or terminates ERR.
+The value occupies its own direct capture under DD111. No caller-selected
+child-name template, arbitrary statement-position use or typed declaration
+condition is added. Conditions, negation, status reads and discarded-result
+restrictions retain DD55/DD88's existing rules. In ERR the destination must
+also be writable under the import restriction. Under DD136, an unchecked
+creation failure abandons an eligible attempt or terminates ERR.
 
-Failure to use `/tmp` is an error, not permission to choose `$TMPDIR`, the
-current directory or another fallback. Apply DD130 to the actual cause and
-post-failure state. Ordinary creation errors are recoverable; heap and other
-genuinely fatal faults do not become an empty-string result. No particular
+Only omission selects `/tmp`; an explicitly empty parent is an error.
+Missing/non-directory parents, interior NUL and failure to obtain a required
+cwd are contained recoverable failures, using the same empty-value/status
+contract as failed creation. No invalid parent reaches a truncated pathname
+lookup. Do not create missing parents, consult `TMPDIR`, or choose another
+directory after failure. Apply DD130 to the actual cause and post-failure
+state. Heap and other genuinely fatal faults do not become an empty-string
+result. Reserve the returned pathname before creating its directory;
+publishing its return value needs no post-creation allocation. No particular
 randomness source, suffix format, syscall wrapper, diagnostic code or runtime
 ABI is selected by this decision.
 

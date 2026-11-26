@@ -8,7 +8,7 @@ status: accepted
    This includes `arg`/`getenv` with a default (DD101).
 3. Bare `arg`/`getenv` supply separate presence status requiring explicit
    handling or discard. Every lookup form's string remains tainted.
-4. `$(mkdtemp)` supplies a direct clean/NUL-free pathname and operational
+4. `$(mkdtemp [DIR])` supplies a direct clean/NUL-free pathname and operational
    creation status (DD135). Ordinary implicit checks or legal handling/discard
    apply without widening the sole-producer rule.
 
@@ -58,14 +58,15 @@ The 2026-11-12/13 lookup changes are implemented in native and C
 rejection remains with `reject-statusless-intrinsic-suppression`. Neither grants new
 statement-position meaning to an intrinsic or changes the sole-statement rule.
 
-DD135 adds zero-argument `$(mkdtemp)`: a direct generated pathname plus
+DD135 adds `$(mkdtemp [DIR])`: a direct constructed pathname plus
 operational creation status, not stdout capture or mandatory-consumption
 lookup presence. Ordinary unhandled creation failure aborts before
 assignment. A legal untyped capture-condition consumes the status; an inner
 `-` explicitly discards it. Handled recoverable failure supplies empty
 text and failure, never an old pathname. The sole-producer and result-use
-rules still apply. Native/C delivery is recorded in
-[mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
+rules still apply. The optional parent is an ordinary checked string
+operand, not a template; omission selects `/tmp`. Native/C delivery is
+recorded in [mkdtemp-value-intrinsic](../tasks/mkdtemp-value-intrinsic.md).
 
 DD132 gives scalar `match`/`sub`/`gsub` a real
 match/no-match boolean alongside their text. Captures may discard

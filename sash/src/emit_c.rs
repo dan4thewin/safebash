@@ -264,7 +264,7 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern const char* sash_mkdtemp(i64 checked, i64* out_len, i64* out_status);"
+        "extern const char* sash_mkdtemp(const char* parent, i64 parent_len, i64 checked, i64* out_len, i64* out_status);"
     )
     .unwrap();
     // DD#60: program-argument access.
@@ -3647,11 +3647,16 @@ mod capture_invariant_tests {
                 "must be lifted to a pipeline",
             ),
             (
+                vec![SsaValue::Literal("mkdtemp".into())],
+                "mkdtemp expects one lowered parent",
+            ),
+            (
                 vec![
                     SsaValue::Literal("mkdtemp".into()),
+                    SsaValue::Literal("parent".into()),
                     SsaValue::Literal("extra".into()),
                 ],
-                "mkdtemp expects no arguments",
+                "mkdtemp expects one lowered parent",
             ),
         ] {
             let payload = std::panic::catch_unwind(|| {
@@ -3737,12 +3742,13 @@ fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], suppressed: bool, types: &VarTyp
         panic!("ICE: command substitution with a non-literal head reached codegen")
     };
     if name == "mkdtemp" {
-        assert_eq!(argv.len(), 1, "ICE: mkdtemp expects no arguments");
+        assert_eq!(argv.len(), 2, "ICE: mkdtemp expects one lowered parent");
+        let (parent_ptr, parent_len) = lower_value_as_str(e, &argv[1], types);
         let t = e.fresh();
         let checked = i64::from(!suppressed);
         writeln!(
             e.out,
-            "    i64 {t}_l, {t}_s; const char* {t}_p = sash_mkdtemp({checked}, &{t}_l, &{t}_s);\n\
+            "    i64 {t}_l, {t}_s; const char* {t}_p = sash_mkdtemp({parent_ptr}, {parent_len}, {checked}, &{t}_l, &{t}_s);\n\
              __exit_status = {t}_s;"
         )
         .unwrap();

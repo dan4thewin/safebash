@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD135: direct values/statuses, owned directories, and failure boundaries.
 . common.sh
-plan=40
+plan=66
 setup mkdtemp
 
 set +e
@@ -13,7 +13,7 @@ strace -qq -o injector.trace \
     echo "spec: mkdtemp requires strace with poke_exit support" >&3
     exit 1
 }
-tracer=(strace -qq -s 256 -e trace=getrandom,mkdirat,clone,fork,vfork)
+tracer=(strace -qq -s 256 -e trace=getrandom,mkdirat,getcwd,clone,fork,vfork)
 
 # Only successful, non-injected mkdir calls prove ownership. This also finds
 # older creations if a broken value carrier no longer returns their names.
@@ -142,8 +142,8 @@ echo $work' "${tracer[@]}" -o err-empty.trace -e inject=mkdirat:error=EROFS
    && $(grep -cE '^(clone|fork|vfork)\(' err-empty.trace) == 0 ]]; chk mkd.12
 clean_created err-empty.trace
 
-run_refusal 'str p=$(mkdtemp template); echo $p'
-[[ $rc != 0 && $err == *SB4045* ]]; chk mkd.13
+run_refusal 'str p=$(mkdtemp parent extra); echo $p'
+[[ $rc != 0 && $err == *SB4045* ]]; chk mkd.41
 
 run_refusal 'mkdtemp'
 [[ $rc != 0 && $err == *SB5073* ]]; chk mkd.14
@@ -311,6 +311,185 @@ run_refusal 'str p=$(mkdtemp 2>/dev/null); echo $p'
 run_refusal 'str p=$(mkdtemp | /bin/cat); echo ${p:!}'
 [[ $rc != 0 && $err == *SB5073* ]]; chk mkd.40
 clean_created refusal.trace
+
+run_parent() {
+    local src=$1; shift
+    clean_created parent.trace
+    : > parent.trace
+    run_sash_under "$src" "${tracer[@]}" -o parent.trace "$@"
+}
+
+mkdir parent next outside outside/inner || exit 1
+ln -s "$PWD/outside/inner" link || exit 1
+printf keep > parent-file
+
+TMPDIR="$PWD/missing" run_parent "str parent=$PWD/parent
+str p=\$(mkdtemp \$parent); echo \$p"
+[[ $rc == 0 && -z $err && -z $rerr && $out == "$PWD/parent/sash."* \
+   && -d $out && ! -L $out && -O $out && $(stat -c %a -- "$out") == 700 \
+   && $(grep -c '^mkdirat(.*= 0$' parent.trace) == 1 \
+   && $(grep -cE '^(getcwd|clone|fork|vfork)\(' parent.trace) == 0 ]]; chk mkd.42
+
+run_parent 'str p=$(mkdtemp parent); cd /; echo $p'
+[[ $rc == 0 && -z $err && -z $rerr && $out == "$PWD/parent/sash."* \
+   && -d $out && $(grep -c '^getcwd(' parent.trace) == 1 ]]; chk mkd.43
+
+run_parent 'int calls=0
+fn parent { (( calls += 1 )); cd next; echo .. }
+str p=$(mkdtemp "$(parent)")
+echo $calls; echo $p'
+mapfile -t paths <<< "$out"
+[[ $rc == 0 && -z $err && -z $rerr && ${#paths[@]} == 2 \
+   && ${paths[0]} == 1 && ${paths[1]} == "$PWD/next/../sash."* \
+   && -d ${paths[1]} && $(grep -c '^mkdirat(.*= 0$' parent.trace) == 1 ]]; chk mkd.44
+
+run_parent 'str p=$(mkdtemp link/..); echo $p'
+[[ $rc == 0 && -z $err && -z $rerr && $out == "$PWD/link/../sash."* \
+   && -d $out && -d outside/"${out##*/}" && ! -e "${out##*/}" ]]; chk mkd.45
+
+mkdir -- $'odd \nparent' || exit 1
+run_parent 'array parents=($'"'odd \\nparent'"')
+str p=$(mkdtemp ${parents[0]}); echo $p'
+[[ $rc == 0 && -z $err && -z $rerr && $out == "$PWD/"$'odd \nparent/sash.'* \
+   && -d $out ]]; chk mkd.46
+
+run_parent "str p=\$(mkdtemp \$(dirname $PWD/parent/file)/); echo \$p"
+[[ $rc == 0 && -z $err && -z $rerr && $out == "$PWD/parent/sash."* \
+   && -d $out ]]; chk mkd.47
+
+run_parent 'str p=old
+if p=$(mkdtemp "") { echo wrong } else { echo "[$p]" $? }
+str q=$(- mkdtemp ""); echo "[$q]"'
+[[ $rc == 0 && -z $err && -z $rerr && $out == $'[] 1\n[]' \
+   && $(grep -cE '^(getcwd|getrandom|mkdirat)\(' parent.trace) == 0 ]]; chk mkd.48
+
+all_missing=1
+for parent in missing/child parent-file; do
+    run_parent "str p=old
+if p=\$(mkdtemp $parent) { echo wrong } else { echo \"[\$p]\" \$? }"
+    [[ $rc == 0 && -z $err && -z $rerr && $out == '[] 1' \
+       && ! -e missing && $(<parent-file) == keep \
+       && $(grep -c '^mkdirat(.*= 0$' parent.trace) == 0 ]] || all_missing=0
+done
+[[ $all_missing == 1 ]]; chk mkd.49
+
+run_parent 'str p=old
+ERR { - echo "[$p]" }
+p=$(mkdtemp missing/child); echo after'
+[[ $rc == 1 && -z $err && $out == '[old]' \
+   && $rerr == *'mkdtemp: missing/child: No such file or directory'* \
+   && ! -e missing ]]; chk mkd.50
+
+run_parent 'str p=old
+if p=$(mkdtemp $'"'parent\\x00/tail'"') { echo wrong } else { echo "[$p]" $? }
+str q=$(- mkdtemp $'"'\\x00parent'"'); echo "[$q]"'
+[[ $rc == 0 && -z $err && -z $rerr && $out == $'[] 1\n[]' \
+   && $(grep -cE '^(getcwd|getrandom|mkdirat)\(' parent.trace) == 0 ]]; chk mkd.51
+
+run_parent "if p=\$(mkdtemp parent) { echo wrong } else { echo \"[\$p]\" \$? }
+str q=\$(mkdtemp $PWD/parent); echo \$q" -e inject=getcwd:error=ENOENT
+mapfile -t paths <<< "$out"
+[[ $rc == 0 && -z $err && -z $rerr && ${#paths[@]} == 2 \
+   && ${paths[0]} == '[] 1' && ${paths[1]} == "$PWD/parent/sash."* \
+   && -d ${paths[1]} && $(grep -c 'getcwd(.*ENOENT.*INJECTED' parent.trace) == 1 \
+   && $(grep -c '^mkdirat(.*= 0$' parent.trace) == 1 ]]; chk mkd.52
+
+run_parent 'str p=old
+ERR { - echo "[$p]" }
+p=$(mkdtemp .); echo after' -e inject=getcwd:error=ENOENT
+[[ $rc == 1 && -z $err && $out == '[old]' \
+   && $rerr == *'mkdtemp: .: No such file or directory'* \
+   && $(grep -c 'getcwd(.*ENOENT.*INJECTED' parent.trace) == 1 \
+   && $(grep -cE '^(getrandom|mkdirat)\(' parent.trace) == 0 ]]; chk mkd.53
+
+SASH_CFLAGS=--heap-size=64 run_parent "ERR { - echo ERR }
+if p=\$(mkdtemp $PWD/parent) { echo \$p } else { echo caught }"
+[[ $rc == 1 && -z $err && $out == ERR && $rerr == *'out of memory'* \
+   && $(grep -cE '^(getrandom|mkdirat)\(' parent.trace) == 0 ]]; chk mkd.54
+
+SASH_CFLAGS=--heap-size=1024 run_parent "int n=0
+while (( n < 100 )) {
+    if p=\$(mkdtemp $PWD/parent) { echo \$p; exit 2 }
+    (( n += 1 ))
+}
+echo \$n" -e inject=mkdirat:error=EACCES
+[[ $rc == 0 && -z $err && -z $rerr && $out == 100 \
+   && $(grep -c 'mkdirat(.*EACCES.*INJECTED' parent.trace) == 100 ]]; chk mkd.55
+
+run_parent 'str parent=$(getenv MKD_DIR .)
+str p=$(mkdtemp $parent); echo $p'
+[[ $rc != 0 && $err == *SB5020* ]]; chk mkd.56
+
+SASH_CFLAGS=--no-taint-cst run_parent 'str parent=$(getenv MKD_DIR .)
+str p=$(mkdtemp $parent); echo $p'
+[[ $rc != 0 && $err == *'tainted variable parent_'*'mkdtemp parent directory'* ]]; chk mkd.57
+
+MKD_DIR="$PWD/parent" run_parent 'str _parent=$(getenv MKD_DIR .)
+attest _parent cpath?
+str p=$(mkdtemp $_parent); echo $p'
+[[ $rc == 0 && -z $err && -z $rerr && $out == "$PWD/parent/sash."* \
+   && -d $out ]]; chk mkd.58
+
+MKD_DIR="$PWD/parent" run_parent 'str parent=$(getenv MKD_DIR .)
+str p=$(mkdtemp ${parent:!}); echo $p'
+[[ $rc == 0 && -z $err && -z $rerr && $out == "$PWD/parent/sash."* \
+   && -d $out ]]; chk mkd.59
+
+run_parent 'int parent=7
+str p=$(mkdtemp $parent); echo $p'
+[[ $rc != 0 && $err == *SB4030*'mkdtemp'*'int variable'* ]]; chk mkd.60
+
+run_parent 'str p=$(mkdtemp $(/bin/echo parent)); echo $p'
+[[ $rc != 0 && $err == *SB5020* ]]; chk mkd.61
+
+all_operands=1
+for call in 'str p=$(- mkdtemp "$(parent)"); echo $p' \
+            'if p=$(mkdtemp "$(parent)") { echo $p } else { echo caught }'; do
+    run_parent "fn parent -> int { /bin/false; return 1 }
+$call
+echo after"
+    [[ $rc == 1 && -z $err && -z $out && $rerr == *'/bin/false: command failed'* \
+       && $(grep -cE '^(getrandom|mkdirat)\(' parent.trace) == 0 ]] || all_operands=0
+done
+[[ $all_operands == 1 ]]; chk mkd.62
+
+run_parent "str parent=\$(mkdtemp $PWD/parent)
+str child=\$(mkdtemp \$parent)
+echo \$parent; echo \$child"
+mapfile -t paths <<< "$out"
+[[ $rc == 0 && -z $err && -z $rerr && ${#paths[@]} == 2 \
+   && ${paths[0]} == "$PWD/parent/sash."* && ${paths[1]} == "${paths[0]}/sash."* \
+   && -d ${paths[0]} && -d ${paths[1]} \
+   && $(grep -c '^mkdirat(.*= 0$' parent.trace) == 2 ]]; chk mkd.63
+
+run_parent 'int calls=0
+fn parent { (( calls += 1 )); cd next; echo missing }
+if p=$(mkdtemp "$(parent)") { echo wrong } else { echo "$calls:[$p]" }
+echo "$(getcwd)"'
+[[ $rc == 0 && -z $err && -z $rerr && $out == "1:[]"$'\n'"$PWD/next" \
+   && ! -e next/missing ]]; chk mkd.64
+
+run_parent "str root=$PWD/parent
+ERR {
+    if p=\$(mkdtemp \${root:!}) { echo \$p }
+}
+fail 5"
+[[ $rc == 5 && -z $err && -z $rerr && $out == "$PWD/parent/sash."* \
+   && -d $out ]]; chk mkd.65
+
+run_parent 'if p=$(mkdtemp /) { echo wrong } else { echo "[$p]" $? }' \
+    -e inject=mkdirat:error=EACCES
+[[ $rc == 0 && -z $err && -z $rerr && $out == '[] 1' \
+   && $(grep -cE '^mkdirat\(AT_FDCWD, "/sash\.[0-9a-f]{32}", 0700\).*EACCES.*INJECTED' parent.trace) == 1 \
+   && $(grep -c '^getcwd(' parent.trace) == 0 ]]; chk mkd.66
+
+# Linux can return "(unreachable)/..." after an unmatched chroot; it is not absolute.
+run_parent 'if p=$(mkdtemp .) { echo wrong } else { echo "[$p]" $? }' \
+    -e inject=getcwd:retval=16:poke_exit=@arg1=28756e726561636861626c65292f7800
+[[ $rc == 0 && -z $err && -z $rerr && $out == '[] 1' \
+   && $(grep -c 'getcwd(.*(unreachable)/x.*INJECTED' parent.trace) == 1 \
+   && $(grep -cE '^(getrandom|mkdirat)\(' parent.trace) == 0 ]]; chk mkd.67
+clean_created parent.trace
 
 set -e
 tally

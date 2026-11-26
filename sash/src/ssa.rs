@@ -972,9 +972,11 @@ impl SsaInst {
     /// has always been exhaustive) and neither was listed on the read side.
     ///
     /// The positions deliberately absent are *propagation*, not escape:
-    /// `Assign`'s value flows into its target, `Attest`/`AttestAll` read their
-    /// source because validating it is the entire point of the form, and
-    /// `CaptureEnd` defines rather than reads. `classify_inst_def` owns those.
+    /// Ordinary `Assign` values flow into their targets; a constructor's
+    /// filesystem input is an escape even when its result is clean.
+    /// `Attest`/`AttestAll` read their source because validating it is the
+    /// point of the form, and `CaptureEnd` defines rather than reads.
+    /// `classify_inst_def` owns those propagated/defined values.
     pub(crate) fn taint_reads(&self) -> Vec<(TaintRead<'_>, String)> {
         self.reads(false)
     }
@@ -1106,6 +1108,12 @@ impl SsaInst {
                     ));
                 }
                 reads
+            }
+            SsaInst::Assign {
+                value: SsaValue::CmdSubst { argv, .. },
+                ..
+            } if matches!(argv.first(), Some(SsaValue::Literal(name)) if name == "mkdtemp") => {
+                value_reads(&argv[1..], "a mkdtemp parent directory".to_string())
             }
             SsaInst::Assign { value, .. } if propagation => {
                 vec![(TaintRead::Value(value), "an assigned value".to_string())]
@@ -2801,9 +2809,10 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
         // it — `$(getcpid x)` then reached the int-context lowering and hit
         // its `unreachable!()`.
         "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "epochuseconds" | "argc"
-        | "signum" | "random" | "waitstatus" | "getcpid" | "mkdtemp" => Some(0..=0),
+        | "signum" | "random" | "waitstatus" | "getcpid" => Some(0..=0),
         // DD#126: `wait` reaps any child, `wait PID` reaps that one.
         "wait" => Some(0..=1),
+        "mkdtemp" => Some(0..=1),
         "getenv" => Some(1..=2),
         "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" => Some(1..=1),
         "match" => Some(2..=2),

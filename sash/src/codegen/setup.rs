@@ -165,7 +165,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .expect("declare sash_getenv");
 
     let mut mkdtemp_sig = module.make_signature();
-    mkdtemp_sig.params.extend([AbiParam::new(I64); 3]);
+    mkdtemp_sig.params.extend([AbiParam::new(I64); 5]);
     mkdtemp_sig.returns.push(AbiParam::new(I64));
     let mkdtemp_func = module
         .declare_function("sash_mkdtemp", Linkage::Import, &mkdtemp_sig)

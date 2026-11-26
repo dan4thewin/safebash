@@ -122,23 +122,28 @@ this redirect phase, including in stages. Its completed effects are not
 undone by a later redirect failure either.
 Do not invent a successful empty value to conceal a failed file operation.
 
-DD135's zero-argument `$(mkdtemp)` supplies a direct pathname and real
+DD135's `$(mkdtemp [DIR])` supplies a direct pathname and real
 creation status. A legal capture-condition handles recoverable failure,
 or an inner `-` discards its status; that outcome supplies empty text
 **and failure**, never a prior pathname. Ordinary unhandled failure aborts
-before assignment. The path is generated under fixed `/tmp`, clean and
-NUL-free without stdout capture. Apply the cause/state classification to
-creation and collision retries; fatal faults remain fatal. The delivered
-[mkdtemp unit](../tasks/mkdtemp-value-intrinsic.md) is independent of the
-remaining file-I/O repairs.
+before assignment. Omission chooses `/tmp`; a supplied ordinary string
+chooses the existing parent, with normal operand checks. The absolute result
+is clean and NUL-free without stdout capture. Apply the cause/state
+classification to creation and collision retries; fatal faults remain fatal.
+The delivered [mkdtemp unit](../tasks/mkdtemp-value-intrinsic.md) is
+independent of the remaining file-I/O repairs.
 
-Its implementation classifies returned entropy or `mkdirat` errors,
-including syscall `ENOMEM`, as contained failed attempts: no descriptor,
+Its implementation classifies invalid parent bytes, required cwd-resolution
+failure, and returned entropy or `mkdirat` errors, including syscall `ENOMEM`,
+as contained failed attempts: no descriptor,
 child or successful pathname has been published, and reserved result storage
 is freed. Runtime heap exhaustion is different: it remains fatal and occurs
-before entropy or creation. This is a constructor-local application of the
-cause/state rule, not an errno-wide policy for other operations
-([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)).
+before entropy or creation. Empty/NUL-bearing parents fail before cwd lookup
+or creation; a relative parent retains ordinary symlink/`..` interpretation.
+This is a constructor-local application of the cause/state rule, not an
+errno-wide policy for other operations. Original delivery is recorded in
+[journal 641](../journal/641-mkdtemp-and-tour-cleanup.md); the parent-directory
+extension is in [journal 678](../journal/678-mkdtemp-parent-directory.md).
 
 **Direct file reads have an accepted handling surface** (DG, 2026-11-10;
 DD88, journal 610): `if text=$(<file) { ... }` binds the read's text and

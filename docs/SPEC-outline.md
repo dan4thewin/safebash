@@ -238,10 +238,11 @@
         2. Explicit value lookups in the body read the current map, with ordinary missing-cell behavior.
         3. `keys MAP ARRAY` supplies the same independent key snapshot to its destination.
     8. Process/environment values: `getpid` (also `$$`), `getppid`, `getcwd`, `epochseconds`, `epochuseconds` (integer Unix wall-clock microseconds), `random`.
-    9. `$(mkdtemp)` atomically creates a new owner-only directory under `/tmp` and returns its absolute pathname.
-        1. No operands or `TMPDIR` use; retry name collisions, never adopt an existing object or fall back to another directory.
-        2. Creation has operational status; unchecked failure aborts before assignment.
-        3. A handled recoverable failure supplies empty text and failure, never an old pathname; fatal faults remain fatal.
+    9. `$(mkdtemp [DIR])` atomically creates a new owner-only directory under `DIR` (default `/tmp`) and returns its absolute pathname.
+        1. `DIR` is an ordinary checked string evaluated once; anchor relative parents after operand evaluation without collapsing symlinks or `..`.
+        2. Empty/NUL-bearing or unusable parents fail; no parent creation, name template or `TMPDIR` use. Retry collisions, never adopt an existing object or fall back to another directory.
+        3. Creation has operational status; unchecked failure aborts before assignment.
+        4. A handled recoverable failure supplies empty text and failure, never an old pathname; fatal faults remain fatal.
 13. Taint and attestation
     1. Taint tracks unresolved external input on values and live bindings.
     2. Environment, program arguments, descriptor reads and kernel-backed captures introduce taint, including builtin-only pipes.
