@@ -4,8 +4,8 @@ status: implemented
 1. Sash bindings and environment variables are separate namespaces with no
    implicit mirroring.
 2. Read environment data through `getenv`: explicitly handle/discard bare
-   lookup status, or supply a literal default for absence. Every form remains
-   tainted; present-empty never selects the default (DD24/DD101).
+   lookup status, or supply an eager string default for absence. Every form
+   remains tainted; present-empty never selects the default (DD24/DD101).
 3. Delegate per-command environments to `/usr/bin/env`. A sash binding is
    resultless and needs a separator before a following command (DD71).
 4. `cd` requires exactly one directory argument, literal or computed.
@@ -24,10 +24,11 @@ legal attest or an explicit forced read under DD91/DD93.
 Without DEFAULT, DD101 requires explicit handling of lookup status through
 a legal capture-condition, or discard inside `$(- getenv NAME)`. Using the
 string does not consume that status, and taint validation does not replace
-presence handling. A literal DEFAULT instead handles absence and yields only
-the selected tainted string. Present-empty does not select it. Mandatory
-handling and the default form are implemented in native and C
-(`require-getenv-status-handling`, journal 663).
+presence handling. An ordinary eager string DEFAULT instead handles absence
+and yields only the selected tainted string. Present-empty does not select it.
+Mandatory handling and the default form are implemented in native and C
+(`require-getenv-status-handling`, journal 663); journal 674 records general
+eager defaults.
 
 `$HOME` in sash source refers to a sash variable named `HOME`. It
 does NOT implicitly read the `HOME` environment variable. If no sash
@@ -109,7 +110,7 @@ distinguishable, which they were not before. ~~Uncaught is allowed.~~
 For this bare form, the value is `""` for both absence and present-empty, but
 status must now be explicitly handled or discarded (DG, 2026-11-12).
 Taint remains independent.
-The literal-default form added by DG on 2026-11-13 instead resolves absence
+The defaulted form added by DG on 2026-11-13 instead resolves absence
 within the lookup and returns only a string.
 See [DD#101](DD101-getenv-lookup-status.md).
 

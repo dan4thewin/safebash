@@ -93,7 +93,7 @@ Members:
 - **`[[ … ]]` tests** / comparisons (DD#62).
 - **`-> int` function return values** (DD#55).
 - **Bare `arg`/`getenv` lookup status** (DD101, revised 2026-11-12/13),
-  separate from the string value and taint. A literal default resolves absence
+  separate from the string value and taint. A default resolves absence
   and makes either lookup value-only. Both forms are implemented in native
   and C (`require-getenv-status-handling`, journal 663).
 - **`r?` and scalar `match`/`sub`/`gsub`'s match boolean** (DD132), the
@@ -111,9 +111,9 @@ runtime assertion on absence. Capturing text alone does not consume lookup
 status; `$(- arg N)` / `$(- getenv NAME)` discard status while retaining the
 tainted string. DD88's legal capture-conditions consume it. No taint switch
 or outer body/operand handler supplies that consumption.
-With a literal default, only absence selects the fallback; present-empty
-remains empty. There is then no status to consume or discard, and the selected
-string remains tainted.
+With an ordinary eager string default, only absence selects the fallback;
+present-empty remains empty. There is then no status to consume or discard,
+and the selected string remains tainted.
 
 This resolves the bare-`[[ … ]]` question: a bare test is **not** an
 allowed assertion that aborts on false (that would be the (A) reading) —

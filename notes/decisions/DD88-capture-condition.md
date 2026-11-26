@@ -13,7 +13,7 @@ status: accepted
    text and failure, never a previous pathname. Handling is not attest.
 4. Assignment itself has no result. Declarations, void/integer calls,
    value-only captures, arbitrary expressions and multi-statement bodies gain
-   no condition result; literal-default lookups are value-only (DD101).
+   no condition result; defaulted lookups are value-only (DD101).
 5. Ordinary handling-position, negation, taint and no-reach rules apply;
    discarded statuses cannot also be consumed. In the provisional DD136
    trial, ERR-owned named predicate captures establish narrow call attempts:
@@ -34,7 +34,7 @@ DG accepted named predicate-function capture-conditions on 2026-11-12
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
 owns it.
 DD101's symmetric lookup decision (DG, 2026-11-13; journal 631) admits bare
-`arg` alongside bare `getenv`, but not their value-only literal-default forms.
+`arg` alongside bare `getenv`, but not their value-only defaulted forms.
 That extension is implemented in native and C
 (`require-getenv-status-handling`, journal 663).
 DD135's direct `$(mkdtemp)` creation is implemented in both backends;
@@ -362,7 +362,7 @@ is implemented (`require-getenv-status-handling`, journal 663).
 
 DG's 2026-11-13 symmetric lookup rule adds bare `$(arg N)` to the same
 consumers: use actual presence, not text length, and evaluate once. Supplying
-a literal default to either lookup makes it value-only, hence ineligible as
+a default to either lookup makes it value-only, hence ineligible as
 a capture-condition. This extension is implemented in native and C; typed
 declarations and other excluded RHS shapes remain excluded.
 The accepted file-read and regex extensions are

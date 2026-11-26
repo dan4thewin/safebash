@@ -8,8 +8,9 @@ supersedes: DD42
    zero: present-empty succeeds; absent supplies empty text and failure.
    Explicitly handle or discard status under DD101.
 3. `$(arg N DEFAULT)` returns only a tainted string: the supplied value,
-   including empty, or literal DEFAULT on absence. It has no status to
-   test or discard. Index validation still applies.
+   including empty, or DEFAULT on absence. The default is an ordinary eager
+   string argument (DD101/DD105). It has no status to test or discard.
+   Index validation still applies.
 4. Argument indices obey DD#112; malformed and negative indices are rejected.
 5. `argv [N] a` fills an array with `argv[N:]`, defaulting to zero,
    auto-declaring an eligible target. Ordinary targets accumulate complete
@@ -31,6 +32,8 @@ are delivered by
 [`require-getenv-status-handling`](../tasks/require-getenv-status-handling.md)
 without changing `argc`, `argv` or function arguments. DD131 separately
 governs array-fill destinations.
+General string defaults and ordered argument evaluation are implemented on
+2026-11-26 ([journal 674](../journal/674-general-lookup-defaults.md)).
 
 ## Addendum 2026-08-17 — `$(arg N DEFAULT)` optional default
 
@@ -54,8 +57,11 @@ A supplied empty argument remains empty, even with a nonempty DEFAULT.
 
 DD#93 makes the validation keyword `attest`.
 
-This is the disposition `:?` (strict, abort) vs `:-` (default) split applied to
-argv — the same idiom as DD#69 `@{a:?}`/`@{a:-}` and DD#77 `${s:?}`/`${s:-}`.
+~~This is the disposition `:?` (strict, abort) vs `:-` (default) split applied to
+argv — the same idiom as DD#69 `@{a:?}`/`@{a:-}` and DD#77 `${s:?}`/`${s:-}`.~~
+The current lookup contract is distinct: bare presence must be handled or
+discarded, and a default is an ordinary eagerly evaluated string argument.
+It selects on absence, not on a supplied empty string.
 `arg` is a builtin in `$(…)` position, so it cannot wear the `${…:-}` syntax;
 the default is a **positional** second argument (`arg` takes exactly one index,
 so a second token is unambiguous).
@@ -70,7 +76,9 @@ so a second token is unambiguous).
   is a DD#78 read-position rule, not a change to `arg`'s taint.~~
 - **Negative index** stays a compile error (below), default or not.
 
-DD#65's final default rule is literal-only; DD#78 retains no live rule.
+~~DD#65's final default rule is literal-only.~~ DD101 now governs ordinary
+lookup defaults; DD65's literal-only rule remains for `:-` and `:?`.
+DD78 retains no live rule.
 
 ## Original decision
 
@@ -252,7 +260,7 @@ not an element of `args`.
 
 - DD#22 — no word splitting (quotes yield one string; array splats unquoted)
 - DD#24 — taint quarantine (argv/arg sources are tainted; argc clean)
-- DD#101 — shared lookup presence, handling and literal-default contracts
+- DD#101 — shared lookup presence, handling and eager-default contracts
 - DD#112 — argument-index validation
 - DD#41 — sash-native array syntax (`@arr`; `len`/`keys`/`join`)
 - DD#46 — positionals function-local (top-level redirects to here)

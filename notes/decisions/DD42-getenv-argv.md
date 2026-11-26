@@ -7,14 +7,15 @@ superseded-by: DD60
 2. Without DEFAULT, a present name succeeds, including empty; absence fails
    with empty text. Explicitly handle or discard status; a string consumer
    alone does not handle it (DD101).
-3. A literal DEFAULT handles absence and makes the lookup value-only.
-   Present-empty stays empty; no status remains to test or discard (DD101).
+3. An ordinary eager string DEFAULT handles absence and makes the lookup
+   value-only. Present-empty stays empty; no status remains to test or
+   discard (DD101).
 
 ---
 
 **The argv/argc half of this DD is superseded by [DD#60](DD60-argv-trio.md)**
 (C-semantics `argv`/`arg`/`argc` trio). `getenv` remains the canonical env-var
-read; DD101 governs presence and literal defaults. The argv/argc text below
+read; DD101 governs presence and defaults. The argv/argc text below
 is retained for context; for current behavior see DD#60.
 
 `$(getenv VAR)` reads an environment variable. ~~`$(argv N)` reads
@@ -54,10 +55,12 @@ the value while explicitly discarding presence. Neither handling nor discard
 resolves taint.
 
 DD101's 2026-11-13 revision adds `$(getenv NAME DEFAULT)` with the same
-literal-default contract as `arg`: select DEFAULT only on absence, and return
+default contract as `arg`: select DEFAULT only on absence, and return
 only the selected tainted string. Bare `arg` also gains the same presence result.
 These changes are implemented in native and C; `require-getenv-status-handling`
 and journal 663 record delivery.
+The defaults are now ordinary eagerly evaluated string arguments
+(DD101's 2026-11-26 revision, journal 674).
 
 Note for readers arriving from the abort discussion: this file's "There is no
 silent empty return" is scoped to `$(argv N)` **out-of-range bounds**, the
@@ -69,4 +72,4 @@ it says nothing about environment lookups — an earlier revision of
 
 - DD#24 — Taint quarantine and bless (getenv results are tainted)
 - DD#53 — Env var isolation (getenv is the only way to read env vars)
-- DD#101 — shared lookup status and literal defaults
+- DD#101 — shared lookup status and eager defaults

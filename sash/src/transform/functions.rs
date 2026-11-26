@@ -671,6 +671,11 @@ fn lift_cmdsub(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
+    if defaulted_lookup(&argv) {
+        return unsuppressed(state, |state| {
+            lift_input_lookup(argv, suppressed, ssa, state, block)
+        });
+    }
     let argv = lift_int_func_args(argv, ssa, state, block);
     if matches!(argv.first(), Some(SsaValue::Literal(name)) if name == "mkdtemp") {
         let temp = state.reserve_temp_name("__mkdtemp".into(), VarType::String);
@@ -697,6 +702,32 @@ fn lift_cmdsub(
         negated: vec![],
     });
     SsaValue::Var(target)
+}
+
+fn defaulted_lookup(argv: &[SsaValue]) -> bool {
+    matches!(argv, [SsaValue::Literal(name), _, _] if matches!(name.as_str(), "arg" | "getenv"))
+}
+
+/// Evaluate and retain both operands before the lookup, not merely before
+/// choosing its result. A later default capture can mutate the name/index.
+fn lift_input_lookup(
+    argv: Vec<SsaValue>,
+    suppressed: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    let argv = argv
+        .into_iter()
+        .map(|arg| {
+            let arg = lift_int_func_calls(arg, ssa, state, block);
+            if matches!(arg, SsaValue::Literal(_)) {
+                return arg;
+            }
+            retain_scalar(arg, ssa, state, *block)
+        })
+        .collect();
+    retain_scalar(SsaValue::CmdSubst { argv, suppressed }, ssa, state, *block)
 }
 
 /// The command an external `$( … )` capture runs: its head, once DD#23 has
@@ -733,7 +764,8 @@ pub(super) fn needs_lift(val: &SsaValue) -> bool {
             ..
         } => true,
         SsaValue::CmdSubst { argv, .. } => {
-            external_capture_head(argv).is_some()
+            defaulted_lookup(argv)
+                || external_capture_head(argv).is_some()
                 || matches!(argv.first(), Some(SsaValue::Literal(name)) if name == "mkdtemp")
                 || argv.iter().any(needs_lift)
         }

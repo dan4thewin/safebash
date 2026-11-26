@@ -12583,54 +12583,29 @@ fn splat_not_subscriptable_diag(e: &Expr) -> Option<Diagnostic> {
     ))
 }
 
-/// Enforce `arg`'s index/arity and both input lookups' literal-only defaults.
-///
-/// This used to also host SB5035, which rejected `$(random)` in a `:-` default
-/// because the default was evaluated eagerly and `random` advances the PRNG
-/// whether or not the fallback is taken. Both halves of that are gone: `:-` now
-/// carries a literal, so no substitution of any kind can appear in one, and the
-/// ban has nothing left to reject. The general rule subsumes the special case.
-pub fn check_disposition_defaults(program: &Program) -> Vec<Diagnostic> {
+/// Enforce `arg`'s index and arity requirements (DD#60).
+pub fn check_arg_calls(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| {
-            flag_input_lookup(e, &mut diags);
+            flag_arg_call(e, &mut diags);
         });
     }
     diags
 }
 
-/// DD#60/#101: input lookups take an index/name and an optional literal default.
-///
-/// The default, if present, must be a **literal** — the third disposition
-/// default, held to the same rule as `${x:-D}` and `${x:?MSG}` (SB4070, DG
-/// 2026-09-30). Those two are literals by *parse*; this one cannot be, because
-/// it is an ordinary command argument and nothing knows it belongs to a lookup
-/// until validate. So the rule is enforced structurally here instead, on the
-/// parsed expression.
-///
-/// A single-quoted default needs no special case: `$(arg 5 'costs $5')` is a
-/// `SingleQuoted`, which carries no expansion and so passes. The escape comes
-/// out of the existing quoting rules for free.
-fn flag_input_lookup(e: &Expr, diags: &mut Vec<Diagnostic>) {
+fn flag_arg_call(e: &Expr, diags: &mut Vec<Diagnostic>) {
     let ExprKind::CommandSubstitution(stmts) = &e.kind else {
         return;
     };
     let Some(c) = single_value_command(stmts) else {
         return;
     };
-    let name = expr_literal_str(&c.name);
-    let index_error = match name {
-        "arg" => arg_index_diag(e, c),
-        "getenv" => None,
-        _ => return,
-    };
-    if let Some(d) = index_error {
-        diags.push(d);
+    if expr_literal_str(&c.name) != "arg" {
         return;
     }
-    if let Some(bad) = c.args.get(1).and_then(first_expansion) {
-        diags.push(disposition_default_expansion(bad));
+    if let Some(d) = arg_index_diag(e, c) {
+        diags.push(d);
     }
 }
 
@@ -12698,49 +12673,6 @@ fn is_negative_int_literal(e: &Expr) -> bool {
 fn is_nonnumeric_index_literal(e: &Expr) -> bool {
     let s = expr_literal_str(e);
     !s.is_empty() && !s.bytes().all(|b| b.is_ascii_digit())
-}
-
-/// The span of the first expansion inside `expr`, or `None` if it is all
-/// literal text.
-///
-/// **Total over `ExprKind` on purpose — do not add a wildcard.** The whole
-/// point is to answer "can any of this be substituted at runtime", so a new
-/// variant must be classified deliberately. A wildcard would silently answer
-/// "no" for it and reopen the hole this rule closes.
-fn first_expansion(expr: &Expr) -> Option<Span> {
-    match &expr.kind {
-        // Inert text.
-        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => None,
-        // Substituted at runtime — the whole point of the rule.
-        ExprKind::SimpleExpansion(_)
-        | ExprKind::ParameterExpansion(_)
-        | ExprKind::Subscript { .. }
-        | ExprKind::CommandSubstitution(_)
-        | ExprKind::SlurpFile(_)
-        | ExprKind::Arithmetic(_) => Some(expr.span),
-        // Containers: inert in themselves, so recurse.
-        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            parts.iter().find_map(first_expansion)
-        }
-        ExprKind::AssocArray(pairs) => pairs.iter().find_map(|(_, v)| first_expansion(v)),
-        // A test is a statement-level construct and cannot be an `arg` default;
-        // treat it as substituted rather than inventing a traversal for it.
-        ExprKind::Test(_) => Some(expr.span),
-    }
-}
-
-fn disposition_default_expansion(span: Span) -> Diagnostic {
-    Diagnostic::error_span(
-        span,
-        "SB4070",
-        "an input-lookup default (`$(arg N DEFAULT)` or `$(getenv NAME DEFAULT)`) \
-         is a literal, so a `$` expansion in it \
-         would be silently used as text rather than expanded — the same rule as \
-         `${x:-D}` and `${x:?MSG}`. Single-quote it to mean a literal `$` \
-         (`$(arg 5 'costs $5')`), or, if you want a computed value, capture the \
-         input with an explicit lookup-status consumer"
-            .to_string(),
-    )
 }
 
 // ── SB5056 (DD#98): `_` is write-only — every read of it is rejected ──
@@ -13897,20 +13829,5 @@ mod tests {
         let mut clean = Vec::new();
         check_value_index_reads(&assoc_clean(), &tainted, &output, &mut clean);
         assert!(clean.is_empty(), "a literal element reads nothing");
-    }
-
-    /// `first_expansion` is the fourth walker with a cold `AssocArray` arm, for
-    /// the same reason and with a fourth caller: `flag_arg_builtin` asks it
-    /// about an `arg` DEFAULT, and a default is parsed as a word, so no map
-    /// literal arrives. Its `Test` arm is cold for the stronger reason given on
-    /// `expr_uses_tainted`'s above — `ExprKind::Test` is statement-only. Both
-    /// are kept by the no-wildcard rule stated in the function's own doc, and
-    /// both must answer "substituted", because the rule they serve is "can any
-    /// of this change at runtime" and a silent "no" reopens it.
-    #[test]
-    fn first_expansion_sees_through_a_map_literal_and_a_test() {
-        assert!(first_expansion(&assoc_with(slurp())).is_some());
-        assert!(first_expansion(&assoc_clean()).is_none());
-        assert!(first_expansion(&e(ExprKind::Test(unary("t")))).is_some());
     }
 }

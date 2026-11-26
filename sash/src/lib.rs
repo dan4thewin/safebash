@@ -726,7 +726,7 @@ fn run_semantic_checks(
     tdiags.extend(validate::check_scalar_splat(program));
     tdiags.extend(validate::check_collection_slots(program));
     tdiags.extend(validate::check_collection_args(program));
-    tdiags.extend(validate::check_disposition_defaults(program));
+    tdiags.extend(validate::check_arg_calls(program));
     tdiags.extend(validate::check_elide_positions(program));
     tdiags.extend(validate::check_args_immutable(program));
     tdiags.extend(validate::check_reserved_loop_var(program));

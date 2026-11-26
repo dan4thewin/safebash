@@ -1203,7 +1203,9 @@ world
 `$(arg 1 "")` reads the first program argument, defaulting to empty if
 absent. An attest predicate can combine ordinary tests with `&&` and `||`.
 
-Both lookups accept literal defaults, such as `$(getenv USER nobody)`.
+Both lookups accept ordinary string defaults, such as `$(getenv USER nobody)`
+or `$(arg 1 "$fallback")`. The default is evaluated even when input is
+present; use a bare lookup with `||` when fallback work should be lazy.
 A default resolves absence and returns only text, not a status. It never
 replaces a supplied empty value.
 

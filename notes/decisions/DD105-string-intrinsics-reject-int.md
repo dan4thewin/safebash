@@ -6,8 +6,10 @@ depends: [DD16, DD65, DD102]
    the operand's spelling. Integers do not silently render as text.
 2. Double quoting explicitly converts an integer to a string; a bare word
    literal in a string slot already is a string.
-3. Check subjects, patterns and replacements alike. Collection targets and
-   collection-name operands retain their separate contracts.
+3. Check subjects, patterns, replacements and lookup defaults alike.
+   `arg`'s first operand is an integer index and its second is a string
+   default. Collection targets and collection-name operands retain their
+   separate contracts.
 
 ---
 
@@ -68,23 +70,31 @@ become visible in the source; it does not have to become impossible.
 
 ## The checked slots
 
-Every string slot is a *leading* argument, so a count suffices:
+~~Every string slot is a *leading* argument, so a count suffices.~~
+Slots are selected by position, excluding integer indices and collection
+targets (positions below are one-based):
 
 | intrinsic | string slots |
 |---|---|
 | `toupper` `tolower` `strlen` `basename` `dirname` | 1 |
-| `getenv` | 1 (name), plus the optional literal default (DD101) |
-| `match` `matchall` | 2 (subject, pattern) |
-| `sub` `gsub` | 3 (subject, pattern, replacement) |
+| `getenv` | 1 (name), 2 (optional default, DD101) |
+| `arg` | 2 (optional default, DD101); slot 1 is an integer index |
+| `match` `matchall` | 1–2 (subject, pattern) |
+| `sub` `gsub` | 1–3 (subject, pattern, replacement) |
+| `glob` `rglob` | all operands after the collection target (DD131/DD132) |
 
 Not just the subject: `$(gsub $s "b" $n)` puts an int in the
 *replacement* and is equally a coercion. The trailing array target of
-the 3-arg `match`/`matchall` form is excluded by the count.
+the 3-arg `match`/`matchall` form is excluded.
 
-DD101's `getenv` default form is implemented in native and C. Its extra
-string slot also obeys DD65's literal restriction; quoting an expansion
-does not make it an admissible default. Delivery is recorded in
+DD101's `getenv` default form was implemented in native and C in
 `require-getenv-status-handling` and journal 663.
+~~Its extra string slot also obeys DD65's literal restriction; quoting an
+expansion does not make it an admissible default.~~ Both lookups now accept
+ordinary string defaults (journal 674): `$(arg 1 $n)` rejects an integer,
+whereas `$(arg 1 "$n")` explicitly converts the default. Do not quote the
+integer index in that advice. Eagerness and absence-only selection are DD101's
+rules; `:-`/`:?` still take literal operands.
 
 `join` is absent deliberately — its first operand is a collection
 (SB4030 already) and its separator must be a literal (DD#106), so

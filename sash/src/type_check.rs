@@ -1282,19 +1282,18 @@ fn not_an_int(part: &str) -> Option<String> {
     part.parse::<i64>().err().map(|_| part.to_string())
 }
 
-/// How many **leading** arguments of a string intrinsic are string operands.
-///
-/// The number of leading string operands; directory selectors skip their target.
+/// String-operand slots; exclude `arg`'s index and directory selectors' target.
 ///
 /// `join` is absent deliberately — its first operand is a collection
 /// (SB4030 via `check_join_operand`) and its separator must already be a
 /// literal (SB5074), so neither slot can hold an int.
-fn string_operand_slots(name: &str) -> Option<usize> {
+fn string_operand_slots(name: &str) -> Option<std::ops::Range<usize>> {
     match name {
-        "toupper" | "tolower" | "strlen" | "basename" | "dirname" => Some(1),
-        "getenv" | "match" | "matchall" => Some(2),
-        "sub" | "gsub" => Some(3),
-        "glob" | "rglob" => Some(usize::MAX),
+        "toupper" | "tolower" | "strlen" | "basename" | "dirname" => Some(0..1),
+        "getenv" | "match" | "matchall" => Some(0..2),
+        "arg" => Some(1..2),
+        "sub" | "gsub" => Some(0..3),
+        "glob" | "rglob" => Some(1..usize::MAX),
         _ => None,
     }
 }
@@ -1322,8 +1321,7 @@ fn check_string_intrinsic_operands(
     let Some(slots) = string_operand_slots(&name) else {
         return;
     };
-    let skip = usize::from(matches!(name.as_str(), "glob" | "rglob"));
-    for arg in c.args.iter().skip(skip).take(slots) {
+    for arg in c.args.iter().take(slots.end).skip(slots.start) {
         let ty = splat_collection_name(&arg.kind)
             .map(|name| env.var_type(name))
             .unwrap_or_else(|| expr_type(arg, env));
@@ -1352,10 +1350,15 @@ fn int_operand_message(name: &str, arg: &Expr) -> String {
         ExprKind::Arithmetic(_) => "an arithmetic expansion is int-typed".to_string(),
         _ => "that operand is int-typed".to_string(),
     };
+    let example_args = if name == "arg" {
+        "N \"${…}\""
+    } else {
+        "\"${…}\" …"
+    };
     format!(
         "`{name}` is a string operation but {operand} — an int is not \
          implicitly text. Convert explicitly by double-quoting the operand, \
-         e.g. `$({name} \"${{…}}\" …)`"
+         e.g. `$({name} {example_args})`"
     )
 }
 
@@ -1448,7 +1451,7 @@ fn check_test_operand(
 /// **argv[0]**, a wrong answer rather than a diagnostic.
 ///
 /// Only the first operand is an int sink. `arg N default` takes a string
-/// default in slot 1, which is left alone.
+/// default in slot 1, checked by `check_string_intrinsic_operands`.
 fn int_sink_slots(name: &str) -> Option<usize> {
     match name {
         "exit" | "fail" | "return" | "wait" | "arg" => Some(1),

@@ -10,6 +10,11 @@ expansion or the new `$(arg N DEFAULT)` (DD#60 addendum). This DD constrains
 what that operand may be, and in doing so closes a pre-existing taint hole.
 Decided 2026-08-17 (DG), during the `arg N DEFAULT` design.
 
+This is a historical account, not the current argument contract. DD65 owns
+literal-only `:-`/`:?` operands. DD101's 2026-11-26 revision admits ordinary
+eager string defaults for `arg`/`getenv`; it does not revive this DD's special
+purity or `random` restrictions.
+
 ## The rule
 
 <del>
@@ -43,8 +48,8 @@ tainted variable read.
 
 </del>
 
-DD#65's final literal-only rule supersedes this read discipline, as the
-closing amendment records.
+DD65's literal-only rule superseded this read discipline, as the closing
+amendment records. Lookup defaults now follow DD101's ordinary operand rules.
 
 ## Why — the taint hole this closes
 
@@ -186,14 +191,16 @@ The withdrawal above was the first half. DG took the second:
 > the `:-` default, let's change it to match the `:?` so eager/side-effects are
 > a non-issue.
 
-A disposition default is now a **literal** in all three spellings — `${x:-D}`,
-`@{a:-D}`, `$(arg N D)` — and a `$` in one is SB4070 (DD#65, follow-on
-2026-09-30). Everything this DD constrains is therefore unreachable by
-construction, and the machinery is deleted:
+A disposition default is a **literal** in `${x:-D}` and `@{a:-D}`, and a `$`
+in one is SB4070 (DD65, follow-on 2026-09-30).
+~~This applied to all three spellings, including `$(arg N D)`. Everything
+this DD constrains was therefore unreachable by construction.~~ The old
+machinery was deleted; the lookup extension is now superseded by DD101:
 
 - **The read discipline is gone.** It required an operand to be a clean read.
-  An operand cannot be a read at all now, so `check_param_expansion_taint` no
-  longer walks one. The real taint hole Stage 1 closed — a tainted value
+  A `:-`/`:?` operand cannot be a read at all now, so
+  `check_param_expansion_taint` no longer walks one. The real taint hole
+  Stage 1 closed — a tainted value
   reaching a clean sink through a default, with no `read` — is closed by the
   grammar instead of by a checker.
 - **SB5035 is gone**, along with `flag_random_default`, `random_default_diag`,
@@ -206,10 +213,13 @@ construction, and the machinery is deleted:
   question as it stood then: given an interpolating operand, bash parity was
   the correct tiebreak. Removing the operand removes the question.
 
-So Scope's premise — that a default "may contain arbitrary expansions" and must
-therefore be constrained — no longer holds for any of the three forms. **This
-DD retains no live rule.** It is kept for the account of the taint hole and for
-the two errors recorded against it, both of which generalise:
+~~So Scope's premise — that a default "may contain arbitrary expansions" and must
+therefore be constrained — no longer holds for any of the three forms.~~
+It still does not hold for `:-`/`:?`; general lookup defaults instead use
+ordinary type/taint checks and eager evaluation, not a default-specific
+discipline. **This DD retains no live rule.** It is kept for the account of
+the taint hole and for the two errors recorded against it, both of which
+generalise:
 
 1. **Uniformity written into a Scope section outlived the Stage that
    contradicted it.** Stage 1 said `:?` had "nothing to check"; Scope claimed

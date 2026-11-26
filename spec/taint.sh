@@ -2133,14 +2133,13 @@ map m=([k]=$(/bin/echo "$t"))'
 [[ $rc != 0 && -z $out && $err == *":2:24: error [SB5020] tainted variable \$t"* \
    && $(grep -c ':2:24: error \[SB5020\]' <<< "$err") = 1 \
    && $err == *":2:12: error [SB5021] tainted value cannot be placed in map 'm'"* ]]; chk capwalk.10
-# capwalk.11 ... in an `arg` default, where it was reported three times
-#           (SB4070 is the default's own rule: no `$` in a default)
+# capwalk.12 ... in an ordinary `arg` default, still reported exactly once
 run_sash 'argv 1 a
 t=$(- getenv HOME)
 x=$(arg 1 $t)'
 [[ $rc != 0 && -z $out && $err == *":3:11: error [SB5020] tainted variable \$t"* \
    && $(grep -c ':3:11: error \[SB5020\]' <<< "$err") = 1 \
-   && $err == *":3:11: error [SB4070]"* ]]; chk capwalk.11
+   && $err != *SB4070* ]]; chk capwalk.12
 
 # ── div.1-div.9 — DD#121 R2: the "don't fall through" exemption ──
 # R2 exempts a path that diverts: "A path that does not fall through (`exit` /

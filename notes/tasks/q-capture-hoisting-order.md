@@ -82,6 +82,16 @@ reversions pin these routes in both backends. This does not close general
 argument-list ordering, the two status rows above, capture entry checking
 or attached-redirect timing.
 
+General `arg`/`getenv` defaults ([journal 674](../journal/674-general-lookup-defaults.md),
+2026-11-26) additionally materialize defaulted lookups in shared lowering:
+retain name/index before default effects, evaluate both operands before lookup,
+and retain the result before a later argument runs. `lookup.69`, `.70`,
+`.72`-`.75`, `.82` and `.83` pin word composition, eagerness, retained operands,
+failure ordering and stage classification in native/C. This uses the existing
+total value walker and retention helpers, not a second recursive evaluator.
+General argument-list ordering, the status rows and attached redirects remain
+open; this delivery is bounded to the defaulted-lookup path.
+
 `[[ && || ]]` operands and DD66 dispatch patterns are already lazy, since
 F8 (B87, journal 550) and F9 (B86, journal 551): one that is never reached
 never runs. Preserve that while repairing the order inside each reached

@@ -1,4 +1,4 @@
-title: DD#101 — Scalar input lookup results and literal defaults
+title: DD#101 — Scalar input lookup results and defaults
 status: implemented
 depends: [DD53, DD88, DD24]
 
@@ -8,14 +8,16 @@ depends: [DD53, DD88, DD24]
    discard it inside `$(- arg N)` / `$(- getenv NAME)`. An unhandled bare
    lookup is a compile error; using its string does not handle presence.
 3. `$(arg N DEFAULT)` and `$(getenv NAME DEFAULT)` return only a string:
-   the present value or literal DEFAULT on absence, never on present-empty.
+   the present value or DEFAULT on absence, never on present-empty.
    The default handles absence; no status remains to test or discard.
 4. All four forms acquire tainted data, including absent/default outcomes.
    Presence handling, discard or a default does not validate contents;
    `:!` and taint bypass do not discharge a bare lookup's status obligation.
-5. Evaluate each lookup once. DD65's literal-default and DD60/DD112's
-   index rules apply; malformed or negative indices are not missing input
-   and a default does not legalize them.
+5. Evaluate the name/index and supplied DEFAULT once, left to right, before
+   the lookup. DEFAULT is an ordinary eager string operand (DD105), including
+   variables, composed words and calls. Retain earlier values before later
+   effects. DD60/DD112's index rules apply; malformed or negative indices
+   are not missing input and a default does not legalize them.
 6. Preserve ordinary consumer, adjacency and body/operand boundaries.
    A discarded status cannot also be consumed; acquisition-failure fallback
    is not failed-attest resolution (DD55/DD88/DD121/DD127/DD128).
@@ -30,6 +32,11 @@ The complete four-form contract is implemented in native and C, including
 mandatory bare-lookup handling and converter-generated explicit discards.
 [`require-getenv-status-handling`](../tasks/require-getenv-status-handling.md)
 and [journal 663](../journal/663-symmetric-input-lookups.md) record delivery.
+
+DG generalized the defaults on 2026-11-26: **"implement arg and getenv
+supporting general values for the default"**. The native/C implementation
+and its ordered evaluation are recorded in
+[journal 674](../journal/674-general-lookup-defaults.md).
 
 ## Shared lookup contract
 
@@ -53,7 +60,7 @@ malformed/negative indices remain errors, with or without a default.
 Present-but-empty is a **successful lookup** in both lookups. Presence cannot
 be reconstructed from the text, because absence also supplies `""`.
 
-### Literal-default forms
+### Defaulted forms
 
 | lookup | without default | with default |
 |---|---|---|
@@ -62,8 +69,22 @@ be reconstructed from the text, because absence also supplies `""`.
 
 With DEFAULT, a present input supplies its value unchanged, including `""`;
 only absence selects DEFAULT. An explicitly empty DEFAULT is still a supplied
-default and selects the value-only form. The default must satisfy DD65's
-existing literal-only rule, not contain a variable read or other expansion.
+default and selects the value-only form.
+
+~~The default must satisfy DD65's existing literal-only rule, not contain a
+variable read or other expansion.~~ DEFAULT is an ordinary string argument.
+Variables, cells, interpolation, arithmetic converted to text and nested
+calls follow their normal type, taint and failure rules. Quote an integer
+explicitly to convert it to text, for example `$(arg 1 "$n")`; `arg`'s
+first operand remains an integer.
+
+Arguments are **eager**: evaluate and retain the name/index, then evaluate
+and retain DEFAULT, then perform the lookup. DEFAULT runs exactly once even
+when the input is present or present-empty. Its writes and failures are
+ordinary effects; selecting the supplied input does not undo or suppress
+them. Complete this lookup before evaluating the next reached operand.
+Use a bare lookup with `||` for an explicitly lazy fallback instead.
+This changes neither DD65's literal-only `:-`/`:?` operands nor their triggers.
 
 Supplying DEFAULT **handles absence within the lookup**. The resulting
 operation exposes only the selected string: it supplies neither a presence
@@ -116,7 +137,7 @@ Use the existing untyped capture-condition consumers: `if`/`elif`,
 `while`/`until`, outer negation and logical-list decisions. Existing RHS
 shape and declaration restrictions remain. A typed declaration or a capture
 inside an argument/interpolation does not consume a bare lookup's status merely
-by using the string; use explicit discard or a literal default when no legal
+by using the string; use explicit discard or a default when no legal
 status consumer applies.
 No new bare-command, redirect or anonymous-body result form is introduced.
 
@@ -144,7 +165,7 @@ found.
 That was the rationale for `getenv`'s original presence result. The same
 distinction applies to `arg`: a valid argument index may have no supplied
 value, just as an environment name may be absent. DD88's existing consumers
-handle either bare lookup. A literal default is the complementary value-only
+handle either bare lookup. A default is the complementary value-only
 choice, not silent disregard of an unanswered presence result.
 
 ## Why not abort
@@ -170,7 +191,7 @@ and says nothing about environment lookups.
 **default argument**, `getenv` does not. DG chose status-and-`||` instead.~~
 The November 13 decision adopts both forms for both lookups. Missing optional
 program arguments and missing environment names can both be expected; code
-may branch on absence, discard presence or supply a literal default.
+may branch on absence, discard presence or supply a default.
 
 ## Presence and value validation are independent
 
@@ -233,7 +254,7 @@ example focused on taint; it must not be inserted silently by the compiler.
 - ~~**Not a breaking change.** Every program that compiles today still compiles
   and behaves identically; the new status is simply unread.~~ That described
   the original status addition. Formerly unhandled `getenv` and implicit-
-  assertion `arg` calls need explicit handling, discard or a literal default.
+  assertion `arg` calls need explicit handling, discard or a default.
 - DD88 admits the two **bare lookup forms**, not intrinsics generally.
   Their defaulted forms remain value-only; classification must distinguish
   the legal forms rather than whitelist either builtin name wholesale.
@@ -256,7 +277,8 @@ example focused on taint; it must not be inserted silently by the compiler.
 - DD#53 — env var isolation; `getenv` is the explicit env read
 - DD#24 — taint and legal value reads
 - DD#60 — program arguments and the unchanged `argc`/`argv` forms
-- DD#65 — literal-only defaults
+- DD#65 — the separate literal-only disposition operands
+- DD#105 — string-operand typing, including both lookup defaults
 - DD#112 — argument-index validation, independent of presence
 - `notes/tasks/bug-getenv-status-unvalidated.md` — ~~`getenv`/`status` have no
   `type_check.rs` entry at all; fix that first, since this work adds a second

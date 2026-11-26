@@ -5,7 +5,7 @@ status: accepted
    statement, where it is rewritten to a value. It has no ordinary
    statement-position meaning, including elsewhere in a capture body.
 2. Capturing a statusless value leaves no result for `-` to discard.
-   This includes `arg`/`getenv` with a literal default (DD101).
+   This includes `arg`/`getenv` with a default (DD101).
 3. Bare `arg`/`getenv` supply separate presence status requiring explicit
    handling or discard. Every lookup form's string remains tainted.
 4. `$(mkdtemp)` supplies a direct clean/NUL-free pathname and operational
@@ -51,7 +51,7 @@ with no separate status to discard (DD55, 2026-11-08; journal 590).
 The capture consumes their value. DD101's bare `arg` and `getenv` forms
 instead supply a separate lookup status. Consume or discard that status,
 even when the string is used; `$(- arg N)` / `$(- getenv NAME)` discard
-only presence and leave the value tainted. With a literal default, either
+only presence and leave the value tainted. With a default, either
 lookup returns only a value, so an inner `-` discards nothing and rejects.
 The 2026-11-12/13 lookup changes are implemented in native and C
 (`require-getenv-status-handling`, journal 663); general statusless-prefix

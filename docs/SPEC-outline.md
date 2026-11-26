@@ -226,10 +226,12 @@
         1. `argv [INDEX] ARRAY` supplies the tail, default index zero, beyond-end empty.
         2. `$(argv [INDEX])` is a source splat only as the sole `for` source.
         3. `$1` and `$#` are function-only; program arguments use the explicit intrinsics.
-    6. `$(arg INDEX [LITERAL_DEFAULT])` reads one program argument; `$(getenv NAME [LITERAL_DEFAULT])` reads one environment name.
+    6. `$(arg INDEX [DEFAULT])` reads one program argument; `$(getenv NAME [DEFAULT])` reads one environment name.
         1. Without a default: string plus presence status; present-empty succeeds, absent returns empty and false.
         2. Explicit presence handling or discard is mandatory: `$(- arg INDEX)` / `$(- getenv NAME)` discard only status. Using the string is not handling.
-        3. With a literal default: only the selected string; absence selects the default, present-empty never does. No status remains to test or discard.
+        3. With a default: only the selected string; absence selects the default, present-empty never does. No status remains to test or discard.
+            1. The default is an ordinary string argument: variables, cells, composed words and calls follow normal type/taint rules; quote integers explicitly.
+            2. Evaluate and retain the name/index and default left-to-right before lookup, even when the input is present. Use bare lookup with `||` for a lazy fallback.
         4. Argument-index literals are nonnegative decimal digits, leading zeros allowed; computed indices are integers. Malformed/negative indices remain errors, default or not.
     7. Both `keys` forms snapshot keys in map iteration order; `$(keys MAP)` is legal only as the sole `for` source and snapshots once at loop entry.
         1. Visit each captured key once; source-map insertion, deletion, reinsertion, clearing or replacement does not change that sequence.
@@ -247,7 +249,7 @@
     4. Every value read is checked, not just external-command arguments; ordinary use requires legal validation or an explicit forced read.
         1. Literal elements, appends and cell writes require clean values.
         2. Passing scalar arguments is a value read; `args` is clean and permits no attest-all.
-        3. Lookup handling, discard and literal defaults do not clear taint; value validation does not handle bare-lookup presence.
+        3. Lookup handling, discard and defaults do not clear taint; value validation does not handle bare-lookup presence.
     5. `attest SUBJECT [[ PREDICATE ]]` validates unchanged data; unary shorthand and collection-wide forms share the predicate rules.
         1. `attest ELEMENT in ARRAY [[...]]`; `attest KEY VALUE in MAP [[...]]`; binders are predicate-local.
         2. `attest SUBJECT OP` applies unary `OP`; collection shorthand applies it to every binder, including both map binders.

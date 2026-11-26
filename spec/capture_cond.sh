@@ -6,7 +6,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=117
+plan=129
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -513,15 +513,41 @@ b=\$(getenv SASH_SPEC_UNSET 'costs \$5')
 echo \"[\${a:!}][\${b:!}]\""
 [[ $rc = 0 && $out = '[costs $5][costs $5]' && -z $err ]]; chk lookup.21
 
-# A present input cannot make a computed default legal.
-run_sash 'str d=fallback; x=$(getenv SASH_SPEC_SET $d); echo "${x:!}"'
-[[ $rc != 0 && $err == *SB4070* ]]; chk lookup.22
+# Computed defaults retain the same absence-only, value-only contract.
+run_sash 'str d="fallback text"
+a=$(getenv SASH_SPEC_SET $d)
+b=$(getenv SASH_SPEC_EMPTY "$d")
+c=$(getenv SASH_SPEC_UNSET $d)
+x=$(arg 1 $d)
+y=$(arg 2 "$d")
+z=$(arg 3 $d)
+echo "[${a:!}][${b:!}][${c:!}][${x:!}][${y:!}][${z:!}]"' alpha ''
+[[ $rc = 0 && $out = '[/spec/value][][fallback text][alpha][][fallback text]' &&
+   -z $err && -z $rerr ]]; chk lookup.68
 
-run_sash 'x=$(getenv SASH_SPEC_SET "value$(( 1 + 1 ))"); echo "${x:!}"'
-[[ $rc != 0 && $err == *SB4070* ]]; chk lookup.23
+# Components keep source order, including collection cells and nested calls.
+run_sash 'str word=old
+array pieces=(x)
+map by=([k]=y)
+fn change_word { word=new; echo M }
+x=$(getenv SASH_SPEC_UNSET "$word$(change_word)$word-${pieces[0]}-${by[k]}-$(( 1 + 1 ))")
+y=$(arg 9 "$(toupper $word)")
+echo "[${x:!}][${y:!}]"'
+[[ $rc = 0 && $out = '[oldMnew-x-y-2][NEW]' && -z $err && -z $rerr ]]; chk lookup.69
 
-run_sash 'x=$(getenv SASH_SPEC_SET "$(getcwd)"); echo "${x:!}"'
-[[ $rc != 0 && $err == *SB4070* ]]; chk lookup.24
+# Evaluate each default exactly once, even for present and present-empty input.
+# An integer call returns its value without capturing its stdout side effect.
+run_sash 'int calls=0
+fn tick -> int { (( calls += 1 )); echo tick; return $calls }
+a=$(getenv SASH_SPEC_SET "$(tick)")
+b=$(getenv SASH_SPEC_EMPTY "$(tick)")
+c=$(getenv SASH_SPEC_UNSET "$(tick)")
+x=$(arg 1 "$(tick)")
+y=$(arg 2 "$(tick)")
+z=$(arg 3 "$(tick)")
+echo "[${a:!}][${b:!}][${c:!}][${x:!}][${y:!}][${z:!}]:$calls"' alpha ''
+[[ $rc = 0 && $out = $'tick\ntick\ntick\ntick\ntick\ntick\n[/spec/value][][3][alpha][][6]:6' &&
+   -z $err && -z $rerr ]]; chk lookup.70
 
 # Source discard is not the lowering flag used by a legitimate consumer.
 run_sash 'x=$(- getenv SASH_SPEC_UNSET fallback); echo "${x:!}"'
@@ -677,15 +703,97 @@ run_sash 'fail 1; ERR {
 }'
 [[ $rc = 1 && $out = 'fallback fallback' && -z $err && -z $rerr ]]; chk lookup.62
 
-# The source wrapper cannot hide an invalid default behind its later prefix error.
+# A computed default does not create a separate status for source discard.
 run_sash 'str d=fallback; x=$(- arg 1 "$d"); echo "${x:!}"' alpha
-[[ $rc != 0 && $err == *SB4070* && $err != *SB4076* ]]; chk lookup.63
+[[ $rc != 0 && $err == *SB4076* && $err == *"defaulted"* &&
+   $err != *SB4070* ]]; chk lookup.71
 
 run_sash '- x="$(arg 99 fallback)"; echo "${x:!}"'
 [[ $rc != 0 && $err == *SB4076* && $err == *"binding's result"* ]]; chk lookup.64
 
 run_sash '- x=prefix$(getenv SASH_SPEC_UNSET fallback); echo "${x:!}"'
 [[ $rc != 0 && $err == *SB4076* && $err == *"binding's result"* ]]; chk lookup.65
+
+# Retain the name/index before a default capture mutates its source storage.
+run_sash 'str key=SASH_SPEC_SET
+int index=1
+fn change { key=SASH_SPEC_UNSET; index=9; echo fallback }
+a=$(getenv $key "$(change)")
+index=1
+b=$(arg $index "$(change)")
+echo "[${a:!}][${b:!}]:$key:$index"' alpha
+[[ $rc = 0 && $out = '[/spec/value][alpha]:SASH_SPEC_UNSET:9' &&
+   -z $err && -z $rerr ]]; chk lookup.72
+
+# Discarding the enclosing output status cannot suppress a default's body failure.
+SASH_CFLAGS=--no-taint run_sash 'fn broken -> int { /bin/false; return 1 }
+- echo "$(arg 1 "$(broken)")"
+echo after' alpha
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"/bin/false: command failed"* ]]; chk lookup.73
+
+run_sash 'str empty
+x=$(getenv SASH_SPEC_SET "${empty:?default-required}")
+echo "${x:!}"'
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *default-required* ]]; chk lookup.74
+
+# All operands precede the lookup, including its invalid-index check.
+run_sash 'int index=-1
+str empty
+x=$(arg $index "${empty:?default-before-lookup}")
+echo "${x:!}"'
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *default-before-lookup* && $rerr != *"argv index"* ]]; chk lookup.75
+
+# The mixed arg signature is integer index, string default; cells obey their type.
+run_sash 'int n=7; x=$(arg 1 $n); echo "${x:!}"' alpha
+[[ $rc != 0 && $err == *SB4030* && $err == *"int variable"* &&
+   $err == *'$(arg N "${…}")'* && $err != *SB4070* ]]; chk lookup.76
+
+run_sash 'int array numbers=(7)
+x=$(getenv SASH_SPEC_SET ${numbers[0]})
+echo "${x:!}"'
+[[ $rc != 0 && $err == *SB4030* && $err == *"int-typed"* &&
+   $err != *SB4070* ]]; chk lookup.77
+
+# A default is still a read, even if a present value will be selected.
+run_sash 'd=$(- getenv SASH_SPEC_SET)
+x=$(getenv SASH_SPEC_SET $d)
+echo "${x:!}"'
+[[ $rc != 0 && $err == *"SB5020] tainted variable \$d"* &&
+   $err != *SB4070* ]]; chk lookup.78
+
+# Materializing ordinary defaults must not launder the lookup's result.
+SASH_CFLAGS=--no-taint-cst run_sash 'str d=fallback
+x=$(arg 1 $d); echo "$x"'
+[[ $rc != 0 && $err == *"tainted variable"* && $err != *SB4070* ]]; chk lookup.79
+
+SASH_CFLAGS=--no-taint-cst run_sash 'str d=fallback
+x=$(getenv SASH_SPEC_UNSET $d); echo "$x"'
+[[ $rc != 0 && $err == *"tainted variable"* && $err != *SB4070* ]]; chk lookup.80
+
+run_sash "str d=\$'x\\x00y'
+x=\$(arg 9 \"\$d\")
+y=\$(getenv SASH_SPEC_UNSET \"\$d\")
+echo \"\${x:!}:\${y:!}\" | /usr/bin/od -An -tx1"
+[[ $rc = 0 && ${out// /} = 7800793a7800790a &&
+   -z $err && -z $rerr ]]; chk lookup.81
+
+# Complete the lookup before moving to the next command argument.
+SASH_CFLAGS=--no-taint run_sash 'int index=-1
+str d=fallback
+fn later -> int { echo later >&2; return 9 }
+- echo $(arg $index $d) $(later)'
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *"argv index out of range"* && $rerr != *later* ]]; chk lookup.82
+
+# A stage needs the same ordered lowering even without nested captures.
+SASH_CFLAGS=--no-taint run_sash 'int index=-1
+str empty
+echo "$(arg $index "${empty:?stage-default-before-lookup}")" | /bin/cat'
+[[ $rc = 1 && -z $out && -z $err &&
+   $rerr == *stage-default-before-lookup* && $rerr != *"argv index"* ]]; chk lookup.83
 
 set -e
 tally

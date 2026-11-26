@@ -2,7 +2,7 @@ title: DD#24 — Taint Quarantine and Bless
 status: implemented
 
 1. Environment and program-argument values are tainted, even when a lookup
-   selects a literal default. Fd/pipe reads, including kernel-backed captures,
+   selects a default. Fd/pipe reads, including kernel-backed captures,
    introduce taint; compiler-owned buffer copies introduce none and do not
    clear existing taint.
 2. Quarantine applies at every value-use site, not only dangerous sinks.
@@ -37,7 +37,7 @@ A binding acquires taint from:
   a user function or an anonymous body
 
 DD101 requires bare `arg`/`getenv` presence status to be handled or explicitly
-discarded. A literal default instead resolves absence and makes the lookup
+discarded. A default instead resolves absence and makes the lookup
 value-only. All four forms remain tainted, including absent/default outcomes;
 neither handling nor fallback validates contents, and attest or `:!` does not
 consume a bare lookup's status.

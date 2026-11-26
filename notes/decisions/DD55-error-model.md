@@ -20,7 +20,7 @@ status: implemented
    without ordinary handling reaching operand/body failures; DD136 defines
    the provisional ERR-owned call exception.
    Bare `arg`/`getenv` lookup status likewise requires handling or discard;
-   literal-default forms return only tainted text (DD101).
+   defaulted forms return only tainted text (DD101).
 6. Anonymous stdout bodies may return void, not explicit statuses.
    Process-replacing exec is excluded from stdout bodies and their callees;
    direct integer captures retain their integer channel through redirects.
@@ -896,7 +896,7 @@ effects and taint. The body remains independently checked.
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
 owns implementation. ~~This is not `getenv`'s exception to mandatory
 handling.~~ DD101 now requires explicit handling or discard for bare lookup
-status too; literal-default lookups instead return only a value. That lookup
+status too; defaulted lookups instead return only a value. That lookup
 contract is implemented separately (`require-getenv-status-handling`,
 journal 663); named-predicate captures are implemented on the DD136 trial
 branch, without completing the separate file-read extension.

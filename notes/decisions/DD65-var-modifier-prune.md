@@ -1,10 +1,9 @@
 title: DD#65 — Prune the ${var:OP} modifier family
 status: accepted
 
-1. `:-` defaults, `:?` messages, `arg N DEFAULT` and `getenv NAME DEFAULT`
-   take literal operands.
-   A dollar in a disposition operand requires whole-operand single quoting;
-   lookup defaults reject expansions structurally.
+1. `:-` defaults and `:?` messages take literal operands.
+   A dollar in a disposition operand requires whole-operand single quoting.
+   The ordinary eager defaults of `arg` and `getenv` follow DD101 instead.
 2. `:-` selects its default for the subject's meaningful zero: empty string
    or integer zero. Integer defaults are integer literals. Arithmetic string
    conversion uses DD77's validity-based disposition instead.
@@ -370,13 +369,18 @@ Specs: `vm.req4`-`vm.req10` (var_modifiers.sh), `dd78.8`-`dd78.12` (taint.sh),
 
 ## Follow-on (2026-09-30) — `:-` is a literal too, and so is `arg N DEFAULT`
 
+The lookup extension in this historical follow-on was superseded on
+2026-11-26: `arg` and `getenv` now take ordinary eagerly evaluated string
+defaults (DD101, journal 674). The `:-` and `:?` rules below remain.
+
 The rule above is no longer `:?`-specific. DG, on reading the `:?` account:
 
 > the `:-` default, let's change it to match the `:?` so eager/side-effects are
 > a non-issue.
 
-So **all three disposition defaults take a literal operand**, and a `$` in one
-is SB4070 unless the whole operand is single-quoted:
+So ~~all three disposition defaults~~ **the `:-` and `:?` disposition operands**
+take a literal, and a `$` in one is SB4070 unless the whole operand is
+single-quoted:
 
 ```sh
 str v=${x:-plain}          # ok
@@ -384,6 +388,11 @@ str v=${x:-'costs $5'}     # ok — the value is:  costs $5
 str v=${x:-$y}             # SB4070
 str v=${x:-$(f)}           # SB4070
 echo @{a:-$t}              # SB4070 — the array form, same rule
+```
+
+<del>
+
+```sh
 x=$(arg 5 $t)              # SB4070 — the `arg` form, same rule
 ```
 
@@ -395,11 +404,16 @@ there instead, by walking the parsed expression for any expansion
 `SingleQuoted` carries no expansion to find. The code is the same, SB4070,
 because the rule is the same rule.
 
-DD101's symmetric lookup decision (DG, 2026-11-13) applies that same literal
-operand contract to `getenv NAME DEFAULT`; native/C implementation is recorded
-in `require-getenv-status-handling` and journal 663. Both defaulted lookups
-return only the selected tainted string. Their trigger is **absence**, not an empty present
-value or `:-`'s meaningful-zero rule.
+</del>
+
+~~DD101's symmetric lookup decision (DG, 2026-11-13) applies that same literal
+operand contract to `getenv NAME DEFAULT`.~~ That was implemented in
+`require-getenv-status-handling` and journal 663; journal 674 replaces the
+lookup-only restriction with ordinary string-operand checking and eager
+evaluation. Both defaulted lookups still return only the selected tainted
+string. Their trigger is **absence**, not an empty present value or `:-`'s
+meaningful-zero rule. The old SB5035 `random` restriction is not revived:
+effects in a lookup default are ordinary eager argument effects.
 
 **What this retires.** The interpolating-word operand was the *only* reason
 these existed, and all of them are now deleted:
@@ -433,5 +447,6 @@ now extends to `:-`. Use a conditional. Pinned by `vm.dv2`.
 
 Specs: `vm.dv*`/`vm.bl*` (var_modifiers.sh), `61.1`-`61.7` / `dd78.1`-`dd78.7` /
 `91.24`-`91.33` (taint.sh), `bkstp.5`/`7`/`11`/`12` (taint_switch.sh), `gs.11`,
-`gs.45`, `av.d4`, `av.d7`, `ud.13`, `31.47`, and `cov.92`/`190`/`220`/`223`/
+`gs.45`, ~~`av.d4`, `av.d7`~~, `ud.13`, `31.47`, and `cov.92`/`190`/`220`/`223`/
 `224`/`225`/`254`.
+The two retired `arg` refusals are replaced by `lookup.66`/`.67` in journal 674.
