@@ -93,6 +93,7 @@ fn recoverable(inst: &SsaInst, in_condition: bool) -> Option<Failure> {
         | SsaInst::MatchInto { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
+        | SsaInst::SliceFill { .. }
         | SsaInst::CaptureStart { .. }
         | SsaInst::CaptureEnd { .. }
         | SsaInst::RedirectPop { .. }
@@ -148,6 +149,7 @@ fn command_failure(kind: &BuiltinCmd, checked: bool, redirect: bool) -> Option<F
         | BuiltinCmd::Len
         | BuiltinCmd::Strlen
         | BuiltinCmd::Keys
+        | BuiltinCmd::Slice
         | BuiltinCmd::Join
         | BuiltinCmd::Sub
         | BuiltinCmd::Gsub

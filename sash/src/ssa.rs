@@ -150,6 +150,8 @@ pub enum BuiltinCmd {
     Strlen,
     /// `$(keys arr)` — associative-array key list.
     Keys,
+    /// `slice SOURCE START [COUNT] DEST` — typed indexed-array snapshot.
+    Slice,
     /// `$(join [sep] @arr)` — join elements.
     Join,
     /// `$(sub SUBJECT PATTERN REPL)` — DD#63 regex replace, first match.
@@ -220,6 +222,7 @@ impl BuiltinCmd {
             "len" => Self::Len,
             "strlen" => Self::Strlen,
             "keys" => Self::Keys,
+            "slice" => Self::Slice,
             "join" => Self::Join,
             "sub" => Self::Sub,
             "gsub" => Self::Gsub,
@@ -293,6 +296,7 @@ impl BuiltinCmd {
             | Self::Attest
             | Self::Mapfile
             | Self::Argv
+            | Self::Slice
             | Self::Glob
             | Self::Rglob
             | Self::Break
@@ -373,6 +377,7 @@ impl BuiltinCmd {
             Self::Cd | Self::Close | Self::Wait | Self::Unset | Self::Signal => true,
             // Write a variable or collection of the process that runs them.
             Self::Argv
+            | Self::Slice
             | Self::Glob
             | Self::Rglob
             | Self::Read
@@ -684,6 +689,12 @@ pub enum SsaInst {
     KeysFill {
         source: VarRef,
         target: VarRef,
+    },
+    SliceFill {
+        source: VarRef,
+        target: VarRef,
+        start: SsaValue,
+        count: Option<SsaValue>,
     },
     /// DD#131: fill a private clean batch; success is independent of population.
     GlobFill {
@@ -1106,6 +1117,21 @@ impl SsaInst {
             SsaInst::KeysFill { source, .. } => {
                 vec![(TaintRead::Binding(source), "a keys source".to_string())]
             }
+            SsaInst::SliceFill {
+                source,
+                start,
+                count,
+                ..
+            } => {
+                let mut reads = vec![
+                    (TaintRead::Binding(source), "a slice source".to_string()),
+                    (TaintRead::Value(start), "a slice start".to_string()),
+                ];
+                if let Some(count) = count {
+                    reads.push((TaintRead::Value(count), "a slice count".to_string()));
+                }
+                reads
+            }
             SsaInst::Attest { test, .. } | SsaInst::AttestAll { test, .. } if propagation => {
                 let mut reads = Vec::new();
                 push_test_reads(test, &mut reads);
@@ -1200,6 +1226,7 @@ pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
         | SsaInst::CaptureEnd { target, .. }
         | SsaInst::ArgvFill { target, .. }
         | SsaInst::KeysFill { target, .. }
+        | SsaInst::SliceFill { target, .. }
         | SsaInst::GlobFill { target, .. }
         | SsaInst::SplitValue { target, .. }
         | SsaInst::MapFromArray { target, .. }
@@ -1244,6 +1271,7 @@ pub(crate) fn instruction_write(inst: &SsaInst) -> Option<&str> {
         | SsaInst::CaptureEnd { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
+        | SsaInst::SliceFill { .. }
         | SsaInst::GlobFill { .. }
         | SsaInst::SplitValue { .. }
         | SsaInst::MapFromArray { .. }
@@ -2101,6 +2129,7 @@ pub(crate) fn sets_condition_status(inst: &SsaInst) -> bool {
         | SsaInst::SplitValue { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
+        | SsaInst::SliceFill { .. }
         | SsaInst::CaptureStart { .. }
         // A capture condition (`if x=$(cmd)`, DD#88) reads the body's status
         // through the capture's close and the assignment of its target.

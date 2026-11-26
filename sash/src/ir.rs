@@ -1282,6 +1282,17 @@ pub struct Command {
 }
 
 impl Command {
+    pub(crate) fn slice_operands(&self) -> Option<(&Expr, &[Expr], &Expr)> {
+        if !matches!(&self.name.kind, ExprKind::Literal(name) if name == "slice")
+            || !matches!(self.args.len(), 3 | 4)
+        {
+            return None;
+        }
+        let (source, rest) = self.args.split_first()?;
+        let (destination, bounds) = rest.split_last()?;
+        Some((source, bounds, destination))
+    }
+
     /// An unset target denotes storage; only its index is evaluated.
     pub(crate) fn value_args(&self) -> impl Iterator<Item = &Expr> {
         let unset = matches!(&self.name.kind, ExprKind::Literal(name) if name == "unset");

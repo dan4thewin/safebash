@@ -1148,6 +1148,45 @@ pub unsafe extern "C" fn sash_keys_snapshot(src: *const SashTable) -> *mut SashT
     t
 }
 
+/// Dense typed snapshot in live-entry order. Value bytes are immutable; only
+/// the new table and keys are owned, like other private filler batches.
+#[no_mangle]
+pub unsafe extern "C" fn sash_slice_snapshot(
+    src: *const SashTable,
+    start: i64,
+    count: i64,
+) -> *mut SashTable {
+    if start < 0 || count < 0 {
+        let message = b"sash: slice start and count must be nonnegative\n";
+        diag_write(message.as_ptr(), message.len() as i64);
+        sash_abort(1);
+    }
+    let count = count.min((i64::from((*src).live_count) - start).max(0));
+    let result = sash_table_new(count.max(4));
+    if count == 0 {
+        return result;
+    }
+    let mut skipped = 0;
+    let mut copied: i64 = 0;
+    for i in 0..(*src).entry_count as usize {
+        let entry = &*(*src).entries.add(i);
+        if entry.deleted {
+            continue;
+        }
+        if skipped < start {
+            skipped += 1;
+            continue;
+        }
+        let key = copied.to_ne_bytes();
+        sash_table_set(result, key.as_ptr(), 8, entry.val_ptr, entry.val_len);
+        copied += 1;
+        if copied == count {
+            break;
+        }
+    }
+    result
+}
+
 /// DD#69: resolve an external `@{a:…}` splat to the table to expand.
 /// Non-empty array → the array itself. Empty array: `:?` (abort=1) aborts
 /// (exit 1, `<argv0>: WORD` on stderr); `:-` with a WORD (has_word=1) → a

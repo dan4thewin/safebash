@@ -70,6 +70,7 @@ fn try_builtin(
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
         BuiltinCmd::Argv => Some(handle_argv(c, ssa, state, *block)),
         BuiltinCmd::Keys => Some(handle_keys(c, ssa, state, *block)),
+        BuiltinCmd::Slice => Some(handle_slice(c, ssa, state, *block)),
         BuiltinCmd::Glob | BuiltinCmd::Rglob => Some(handle_glob(c, ssa, state, *block)),
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
@@ -765,6 +766,43 @@ pub(super) fn fill_keys(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::KeysFill { source, target });
+}
+
+fn handle_slice(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    let (source, bounds, destination) = c
+        .slice_operands()
+        .expect("validated slice has source, bounds and destination");
+    let source = resolve_args_name(literal_name_of(source), state);
+    let destination = resolve_args_name(literal_name_of(destination), state);
+    let mut bounds = super::functions::unsuppressed(state, |state| {
+        bounds
+            .iter()
+            .map(|arg| {
+                let value = arg_to_value(arg, state);
+                let value = lift_int_func_calls(value, ssa, state, &mut block);
+                super::functions::retain_arith_value(value, ssa, state, block)
+            })
+            .collect::<Vec<_>>()
+    })
+    .into_iter();
+    let start = bounds.next().expect("slice has a start");
+    let count = bounds.next();
+    let array = super::statements::collection_fill_target(&destination, false, ssa, state, block);
+    let source = state.lookup(&source);
+    let target = state.define_replacement(&array);
+    ssa.block_mut(block).insts.push(SsaInst::SliceFill {
+        source,
+        target,
+        start,
+        count,
+    });
+    super::statements::publish_collection(&destination, &array, ssa, state, block);
+    block
 }
 
 fn handle_glob(

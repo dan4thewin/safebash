@@ -189,6 +189,17 @@ Empty batches change nothing, and EOF/no-match truth belongs to the producer,
 not the accumulated population. Assignment, scalar `readline` and map
 conversion retain replacement semantics.
 
+The provisional [DD137 slice filler](../notes/decisions/DD137-array-slice.md)
+on `slice-trial` reuses that publication path for string and integer arrays.
+Its `SliceFill` instruction snapshots present values in splat order after
+evaluating and retaining the bounds. The runtime copies raw typed cells into
+a private table with dense keys, preserving integer encoding and counted
+string bytes; it need not duplicate immutable string backing. Source-derived
+element types propagate through intermediate results and forwarded slots.
+Slicing function `args` marks the function variadic without adding a required
+position. Source reads, scratch lifetimes, taint and proof ownership retain
+their existing checks. This is an independent copy, not a view or `shift`.
+
 Array-to-map declarations and existing-map assignments share one lowering
 path, resolving both collection slots before constructing a private map.
 Replacement-form `CollectionPublish` installs it only after conversion

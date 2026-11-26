@@ -231,6 +231,7 @@ pub(super) struct ExternFuncs {
     pub(super) argv_get: cranelift_module::FuncId,
     pub(super) argv_snapshot: cranelift_module::FuncId,
     pub(super) keys_snapshot: cranelift_module::FuncId,
+    pub(super) slice_snapshot: cranelift_module::FuncId,
     pub(super) splat_disposition: cranelift_module::FuncId,
     pub(super) require_value: cranelift_module::FuncId,
     pub(super) signal_flag: cranelift_module::FuncId,

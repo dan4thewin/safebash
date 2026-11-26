@@ -164,6 +164,22 @@ impl SsaInst {
                     ctx,
                 );
             }
+            SsaInst::SliceFill {
+                source,
+                target,
+                start,
+                count,
+            } => {
+                return super::inst_handlers::handle_slice_fill(
+                    &source.name,
+                    &target.name,
+                    start,
+                    count.as_ref(),
+                    builder,
+                    module,
+                    ctx,
+                );
+            }
             SsaInst::GlobFill {
                 target,
                 directory,
@@ -373,6 +389,7 @@ impl SsaInst {
             | BuiltinCmd::Len
             | BuiltinCmd::Strlen
             | BuiltinCmd::Keys
+            | BuiltinCmd::Slice
             | BuiltinCmd::Join
             | BuiltinCmd::Sub
             | BuiltinCmd::Gsub

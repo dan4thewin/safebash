@@ -884,7 +884,9 @@ fn definition_taint<'a>(
                 .map(|target| (target, Taint::Tainted, false));
         }
         SsaInst::ArgvFill { .. } => (Taint::Tainted, false),
-        SsaInst::KeysFill { .. } | SsaInst::GlobFill { .. } => (Taint::Clean, true),
+        SsaInst::KeysFill { .. } | SsaInst::GlobFill { .. } | SsaInst::SliceFill { .. } => {
+            (Taint::Clean, true)
+        }
         SsaInst::SplitValue { source, .. } => {
             (value_is_tainted(source, taint, user_functions), true)
         }

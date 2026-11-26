@@ -1582,6 +1582,48 @@ pub(super) fn handle_keys_fill(
     false
 }
 
+pub(super) fn handle_slice_fill(
+    source: &str,
+    array: &str,
+    start: &SsaValue,
+    count: Option<&SsaValue>,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    let src = find_array_slot(ctx.vars, source, "array")
+        .str_ptr()
+        .load(builder);
+    let start = super::values::lower_value_as_int(
+        start,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+        ctx.exit_status_var,
+    );
+    let count = match count {
+        Some(value) => super::values::lower_value_as_int(
+            value,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.externs,
+            ctx.exit_status_var,
+        ),
+        None => builder.ins().iconst(I64, i64::MAX),
+    };
+    let callee = module.declare_func_in_func(ctx.externs.slice_snapshot, builder.func);
+    let call = builder.ins().call(callee, &[src, start, count]);
+    let table = builder.inst_results(call)[0];
+    find_array_slot(ctx.vars, array, "array")
+        .str_ptr()
+        .store(builder, table);
+    false
+}
+
 pub(super) fn handle_glob_fill(
     array: &str,
     directory: Option<&SsaValue>,

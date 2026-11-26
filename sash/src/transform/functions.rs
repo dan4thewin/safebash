@@ -505,7 +505,7 @@ fn lift_arith_binary(
     }
 }
 
-fn retain_arith_value(
+pub(super) fn retain_arith_value(
     value: SsaValue,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
@@ -1346,6 +1346,12 @@ fn fixed_min(sig: &ArgSig, max: usize, defects: &mut Vec<ArityDefect>) -> usize 
 /// external `@args` rule, and a `(( … ))` statement's bare positional reads.
 fn sig_scan_own(stmt: &Statement, sig: &mut ArgSig) {
     crate::ir::walk_own_exprs(stmt, &mut |e| sig_record_expr(e, sig));
+    if matches!(&stmt.kind, StmtKind::Command(c)
+        if c.slice_operands().is_some_and(|(source, _, _)|
+            matches!(&source.kind, ExprKind::Literal(name) if name == "args")))
+    {
+        sig.variadic = true;
+    }
     // DD#81: a bare @args into an external requires at least one argument;
     // builtins and for-in handle an empty array themselves.
     if splats_args_into_external(stmt) {

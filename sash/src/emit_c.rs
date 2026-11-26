@@ -274,6 +274,11 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern void* sash_keys_snapshot(const void* m);").unwrap();
     writeln!(
         out,
+        "extern void* sash_slice_snapshot(const void* source, i64 start, i64 count);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern void* sash_splat_disposition(void* tbl, const char* w, \
          i64 wl, i64 has_word, i64 abort);"
     )
@@ -1334,6 +1339,12 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         } => emit_match_into_c(e, subject, pattern, array, *all, types),
         SsaInst::ArgvFill { target, start } => emit_argv_fill_c(e, &target.name, *start),
         SsaInst::KeysFill { source, target } => emit_keys_fill_c(e, &source.name, &target.name),
+        SsaInst::SliceFill {
+            source,
+            target,
+            start,
+            count,
+        } => emit_slice_fill_c(e, &source.name, &target.name, start, count.as_ref(), types),
         SsaInst::GlobFill {
             target,
             directory,
@@ -2358,6 +2369,7 @@ fn emit_command_body(
         | BuiltinCmd::Len
         | BuiltinCmd::Strlen
         | BuiltinCmd::Keys
+        | BuiltinCmd::Slice
         | BuiltinCmd::Join
         | BuiltinCmd::Sub
         | BuiltinCmd::Gsub
@@ -3415,6 +3427,28 @@ fn emit_keys_fill_c(e: &mut Emit, source: &str, array: &str) {
         t = t,
         src = src,
         base = base
+    )
+    .unwrap();
+}
+
+fn emit_slice_fill_c(
+    e: &mut Emit,
+    source: &str,
+    array: &str,
+    start: &SsaValue,
+    count: Option<&SsaValue>,
+    types: &VarTypes,
+) {
+    let start = lower_value_as_int(e, start, types);
+    let count = count
+        .map(|count| lower_value_as_int(e, count, types))
+        .unwrap_or_else(|| i64::MAX.to_string());
+    let source = c_var_name(source, 0);
+    let target = c_var_name(array, 0);
+    writeln!(
+        e.out,
+        "    {target}_ptr = (const char*)sash_slice_snapshot({source}_ptr, {start}, {count}); \
+         {target}_len = 0;"
     )
     .unwrap();
 }

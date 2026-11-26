@@ -223,6 +223,7 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         // and the for-in splat never reaches here), so it belongs on this side
         // rather than falling through to a bare external named `keys`.
         BuiltinCmd::Keys
+        | BuiltinCmd::Slice
         | BuiltinCmd::MatchAll
         | BuiltinCmd::Write
         | BuiltinCmd::Test

@@ -748,7 +748,7 @@ struct CollectionSignature {
     slots: [Option<CollectionType>; MAX_COLLECTION_SLOTS],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum SlotBinding {
     Collection(CollectionType),
     Forwarded(usize),
@@ -799,27 +799,41 @@ fn propagate_collection_signatures(
 fn scope_collections(
     stmts: &[Statement],
     owner: &str,
-    inherited: &HashMap<String, CollectionType>,
-) -> HashMap<String, CollectionType> {
+    inherited: &HashMap<String, SlotBinding>,
+) -> HashMap<String, SlotBinding> {
     let mut visible = inherited.clone();
-    walk_scoped_structural_stmts(stmts, owner, &mut |stmt, in_fn| {
-        if in_fn == owner {
-            record_collection_types(stmt, &mut visible);
-        }
-    });
     if !owner.is_empty() {
         visible.insert(
             "args".to_string(),
-            CollectionType {
+            SlotBinding::Collection(CollectionType {
                 is_map: false,
                 element: VarType::String,
-            },
+            }),
         );
+    }
+    loop {
+        let previous = visible.clone();
+        record_scope_collection_types(stmts, owner, &mut visible);
+        if visible == previous {
+            break;
+        }
     }
     visible
 }
 
-fn record_collection_types(stmt: &Statement, out: &mut HashMap<String, CollectionType>) {
+fn record_scope_collection_types(
+    stmts: &[Statement],
+    owner: &str,
+    visible: &mut HashMap<String, SlotBinding>,
+) {
+    walk_scoped_structural_stmts(stmts, owner, &mut |stmt, in_fn| {
+        if in_fn == owner {
+            record_collection_types(stmt, visible);
+        }
+    });
+}
+
+fn record_collection_types(stmt: &Statement, out: &mut HashMap<String, SlotBinding>) {
     if let StmtKind::Declaration(d) = &stmt.kind {
         record_declared_collection_types(d, out);
     }
@@ -830,25 +844,38 @@ fn record_collection_types(stmt: &Statement, out: &mut HashMap<String, Collectio
         return;
     };
     let name = expr_to_name(target);
+    let Some(kind) = collection_fill_binding(c, out) else {
+        return;
+    };
     if !name.is_empty() && !is_collection_slot(&name) {
-        out.entry(name).or_insert(CollectionType {
-            is_map: false,
-            element: VarType::String,
-        });
+        out.entry(name).or_insert(kind);
     }
 }
 
-fn record_declared_collection_types(d: &Declaration, out: &mut HashMap<String, CollectionType>) {
+fn collection_fill_binding(
+    c: &Command,
+    visible: &HashMap<String, SlotBinding>,
+) -> Option<SlotBinding> {
+    match c.slice_operands() {
+        Some((source, _, _)) => collection_binding(&expr_to_name(source), visible),
+        None => Some(SlotBinding::Collection(CollectionType {
+            is_map: false,
+            element: VarType::String,
+        })),
+    }
+}
+
+fn record_declared_collection_types(d: &Declaration, out: &mut HashMap<String, SlotBinding>) {
     let Some(is_map) = declared_collection_kind(d) else {
         return;
     };
     for a in &d.assignments {
         out.insert(
             a.name.clone(),
-            CollectionType {
+            SlotBinding::Collection(CollectionType {
                 is_map,
                 element: d.var_type,
-            },
+            }),
         );
     }
 }
@@ -856,7 +883,7 @@ fn record_declared_collection_types(d: &Declaration, out: &mut HashMap<String, C
 fn collect_collection_calls(
     stmts: &[Statement],
     owner: &str,
-    inherited: &HashMap<String, CollectionType>,
+    inherited: &HashMap<String, SlotBinding>,
     functions: &HashSet<String>,
     out: &mut Vec<CollectionCall>,
 ) {
@@ -874,7 +901,7 @@ fn collect_collection_calls(
 fn collect_nested_collection_calls(
     stmt: &Statement,
     owner: &str,
-    visible: &HashMap<String, CollectionType>,
+    visible: &HashMap<String, SlotBinding>,
     functions: &HashSet<String>,
     out: &mut Vec<CollectionCall>,
 ) {
@@ -889,7 +916,7 @@ fn collect_nested_collection_calls(
 fn record_collection_call(
     stmt: &Statement,
     owner: &str,
-    visible: &HashMap<String, CollectionType>,
+    visible: &HashMap<String, SlotBinding>,
     functions: &HashSet<String>,
     out: &mut Vec<CollectionCall>,
 ) {
@@ -902,17 +929,7 @@ fn record_collection_call(
     }
     let args = collection_args(&c.args)
         .iter()
-        .map(|name| {
-            visible
-                .get(name)
-                .copied()
-                .map(SlotBinding::Collection)
-                .or_else(|| {
-                    (0..MAX_COLLECTION_SLOTS)
-                        .position(|j| collection_slot_name(j) == *name)
-                        .map(SlotBinding::Forwarded)
-                })
-        })
+        .map(|name| collection_binding(name, visible))
         .collect();
     out.push(CollectionCall {
         caller: owner.to_string(),
@@ -920,6 +937,14 @@ fn record_collection_call(
         args,
         span: stmt.span,
     });
+}
+
+fn collection_binding(name: &str, visible: &HashMap<String, SlotBinding>) -> Option<SlotBinding> {
+    visible.get(name).copied().or_else(|| {
+        (0..MAX_COLLECTION_SLOTS)
+            .position(|j| collection_slot_name(j) == name)
+            .map(SlotBinding::Forwarded)
+    })
 }
 
 fn record_arith_collection_calls(
@@ -2306,6 +2331,7 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
 
     check_join_operand(c, span, env, errors);
     check_keys_operand(c, span, env, errors);
+    check_slice_bounds(c, env, errors);
     check_len_operand(c, span, env, errors);
     check_string_intrinsic_operands(c, span, env, errors);
     check_int_sink_operands(c, span, env, errors);
@@ -2317,6 +2343,7 @@ fn collection_fill_target(c: &Command) -> Option<&Expr> {
         "argv" | "read" => c.args.last(),
         "match" | "matchall" if c.args.len() == 3 => c.args.last(),
         "keys" if c.args.len() == 2 => c.args.last(),
+        "slice" => c.slice_operands().map(|(_, _, destination)| destination),
         "glob" | "rglob" => c.args.first(),
         _ => None,
     }
@@ -2406,18 +2433,64 @@ fn register_collection_target(
         return;
     };
     let name = expr_to_name(last);
+    let Some(element) = collection_fill_element(c, span, env, errors) else {
+        return;
+    };
     if name.is_empty() || env.is_slot(&name) {
         return;
     }
-    if let Some(message) = collection_fill_error(c, &name, env) {
+    if let Some(message) = collection_fill_error(c, &name, element, env) {
         errors.push(TypeError { message, span });
         return;
     }
-    env.declare(&name, VarType::String);
+    env.declare(&name, element);
     env.collections.insert(name);
 }
 
-fn collection_fill_error(c: &Command, name: &str, env: &TypeEnv) -> Option<String> {
+fn collection_fill_element(
+    c: &Command,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) -> Option<VarType> {
+    let Some((source, _, _)) = c.slice_operands() else {
+        return Some(VarType::String);
+    };
+    let name = expr_to_name(source);
+    if !env.is_collection(&name) || env.assoc_arrays.contains(&name) {
+        errors.push(TypeError {
+            message: format!("`slice` needs an indexed array source, not `{name}`"),
+            span,
+        });
+        return None;
+    }
+    Some(env.var_type(&name))
+}
+
+fn check_slice_bounds(c: &Command, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let Some((_, bounds, _)) = c.slice_operands() else {
+        return;
+    };
+    for arg in bounds {
+        let negative = matches!(&arg.kind, ExprKind::Literal(text)
+            if text.parse::<i64>().is_ok_and(|n| n < 0));
+        if !operand_satisfies_int_sink(arg, env) || negative {
+            errors.push(TypeError {
+                message: "`slice` start and count must be nonnegative integers; \
+                          convert strings explicitly with `$(( ... ))`"
+                    .to_string(),
+                span: arg.span,
+            });
+        }
+    }
+}
+
+fn collection_fill_error(
+    c: &Command,
+    name: &str,
+    element: VarType,
+    env: &TypeEnv,
+) -> Option<String> {
     if env.vars.contains_key(name) && !env.collections.contains(name) {
         return Some(format!(
             "cannot fill the collection `{}` with `{}` — `{}` is already a \
@@ -2446,14 +2519,30 @@ fn collection_fill_error(c: &Command, name: &str, env: &TypeEnv) -> Option<Strin
             name
         ));
     }
-    if env.var_type(name) == VarType::Int {
-        return Some(format!(
-            "cannot fill int collection `{name}` with `{}` — this builtin \
-                 produces string elements; fill a string array and convert explicitly",
-            expr_to_name(&c.name)
-        ));
+    match env.vars.get(name) {
+        Some(&actual) if actual != element => {
+            Some(collection_element_error(c, name, actual, element))
+        }
+        _ => None,
     }
-    None
+}
+
+fn collection_element_error(c: &Command, name: &str, actual: VarType, element: VarType) -> String {
+    if element == VarType::String {
+        format!(
+            "cannot fill int collection `{name}` with `{}` — this builtin \
+             produces string elements; fill a string array and convert explicitly",
+            expr_to_name(&c.name)
+        )
+    } else {
+        format!(
+            "cannot fill {} collection `{name}` with `{}` — this builtin \
+             produces {} elements; use a matching array or convert explicitly",
+            type_name(actual),
+            expr_to_name(&c.name),
+            type_name(element),
+        )
+    }
 }
 
 /// DD#61: the attest form must match the attested entity's kind.

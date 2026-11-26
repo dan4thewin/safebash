@@ -115,6 +115,7 @@ fn builtin_denotation(k: BuiltinCmd) -> Option<ArithDenotation> {
         | B::Read
         | B::Mapfile
         | B::Argv
+        | B::Slice
         | B::Glob
         | B::Rglob
         | B::Break

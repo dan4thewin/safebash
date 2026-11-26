@@ -196,6 +196,12 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_keys_snapshot", Linkage::Import, &keys_snapshot_sig)
         .expect("declare sash_keys_snapshot");
 
+    let mut slice_snapshot_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut slice_snapshot_sig, 3, 1);
+    let slice_snapshot_func = module
+        .declare_function("sash_slice_snapshot", Linkage::Import, &slice_snapshot_sig)
+        .expect("declare sash_slice_snapshot");
+
     // sash_splat_disposition(tbl, word_ptr, word_len, has_word, abort) -> tbl
     // (DD#69 external `@{a:-WORD}` / `@{a:?WORD}` empty-disposition)
     let mut splat_disposition_sig = Signature::new(CallConv::SystemV);
@@ -1000,6 +1006,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         argv_get: argv_get_func,
         argv_snapshot: argv_snapshot_func,
         keys_snapshot: keys_snapshot_func,
+        slice_snapshot: slice_snapshot_func,
         splat_disposition: splat_disposition_func,
         require_value: require_value_func,
         signal_flag: signal_flag_func,
@@ -1579,6 +1586,7 @@ fn map_inst_versioned(
         // and is now a compiler ICE naming this function.
         | SsaInst::ArgvFill { target, .. }
         | SsaInst::KeysFill { target, .. }
+        | SsaInst::SliceFill { target, .. }
         | SsaInst::GlobFill { target, .. }
         | SsaInst::ReadArray { target, .. }
         | SsaInst::SplitValue { target, .. }

@@ -1330,6 +1330,7 @@ fn validate_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 }
 
 fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition: bool) {
+    check_slice_result_use(stmt, in_condition, diags);
     match &stmt.kind {
         StmtKind::Command(c) => validate_command(c, stmt.span, diags),
         StmtKind::Declaration(d) => validate_declaration_stmt(d, stmt.span, in_condition, diags),
@@ -1367,6 +1368,26 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
     for body in stmt.cmdsub_bodies() {
         validate_children(body, false, diags);
     }
+}
+
+fn check_slice_result_use(stmt: &Statement, in_condition: bool, diags: &mut Vec<Diagnostic>) {
+    let (body, suppressed, negated) = stmt.stage_marks();
+    let StmtKind::Command(c) = &body.kind else {
+        return;
+    };
+    if expr_literal_str(&c.name) != "slice" {
+        return;
+    }
+    let code = match (suppressed, in_condition || negated) {
+        (true, _) => "SB4076",
+        (false, true) => "SB4025",
+        (false, false) => return,
+    };
+    diags.push(Diagnostic::error_span(
+        stmt.span,
+        code,
+        "`slice` fills its destination but has no result to test, return or discard".to_string(),
+    ));
 }
 
 /// DD#70/#71: a typed declaration is a value binding, not a boolean/exit
@@ -4160,6 +4181,7 @@ const BUILTINS: &[&str] = &[
     "len",
     "strlen",
     "keys",
+    "slice",
     "join",
     "sub",
     "gsub",
@@ -4615,6 +4637,7 @@ fn check_command_head(
         // the spelling, not on the name. It cannot be in
         // `VALUE_ONLY_INTRINSICS` for the same reason `argv` cannot.
         "keys" => return diags.extend(keys_form_diag(c, pos)),
+        "slice" => return diags.extend(slice_form_diag(c)),
         // A value-producing intrinsic (`$(getenv NAME)`, `$(status)`, …) is
         // legal only as a command-substitution head. In statement position its
         // value has nowhere to go, and it used to fall through to `sash_exec`
@@ -5476,6 +5499,7 @@ fn command_arg_elidable(name: &str, index: usize) -> bool {
         | B::Read
         | B::Mapfile
         | B::Argv
+        | B::Slice
         | B::Unset
         | B::Wait
         | B::Close
@@ -6055,6 +6079,9 @@ fn command_writes_args(c: &Command) -> bool {
         // DD#75: `keys m k` — the target is the second argument. One argument
         // is the `$(keys m)` splat, which writes nothing.
         "keys" => c.args.len() == 2 && c.args.last().map(expr_literal_str) == Some("args"),
+        "slice" => c
+            .slice_operands()
+            .is_some_and(|(_, _, destination)| expr_literal_str(destination) == "args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
         "unset" => crate::ir::unset_targets(c)
             .is_some_and(|targets| targets.iter().any(|target| target.name == "args")),
@@ -7991,7 +8018,7 @@ fn taint_command(
 fn command_can_abort(name: &str, handled: bool) -> bool {
     use crate::ssa::BuiltinCmd;
     match BuiltinCmd::from_name(name) {
-        BuiltinCmd::Fail => true,
+        BuiltinCmd::Fail | BuiltinCmd::Slice => true,
         BuiltinCmd::Other => !handled && (name.starts_with('/') || name == "mkdtemp"),
         BuiltinCmd::Echo
         | BuiltinCmd::Write
@@ -9044,7 +9071,7 @@ fn check_collection_reader_taint(
     let ExprKind::Literal(cmd) = &c.name.kind else {
         return;
     };
-    if cmd != "join" {
+    if !matches!(cmd.as_str(), "join" | "slice") {
         return;
     }
     let Some(arg) = c.args.first() else {
@@ -9054,7 +9081,7 @@ fn check_collection_reader_taint(
         return;
     };
     let msg = format!(
-        "join of tainted collection '{name}' without attest — attest-all \
+        "{cmd} of tainted collection '{name}' without attest — attest-all \
          it first: `attest … in {name} [[ … ]]`"
     );
     push_taint_use(tainted, name, arg.span, msg, diags);
@@ -9159,6 +9186,7 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
         // DD#75: `keys m k` snapshots the map's keys into the array named
         // last. One argument is the `$(keys m)` splat, which binds nothing.
         "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
+        "slice" if c.slice_operands().is_some() => insert_last_literal_arg(&c.args, set),
         _ => {}
     }
 }
@@ -9598,7 +9626,7 @@ fn record_value_fn_operand(c: &Command, set: &mut HashSet<String>) {
     // expansion the generic scan already records.
     if name == "len" {
         record_len_operand(c, set);
-    } else if name == "join" || name == "keys" {
+    } else if matches!(name, "join" | "keys" | "slice") {
         record_collection_operand(c, set);
     }
 }
@@ -10053,6 +10081,7 @@ fn insert_auto_collection_target(kind: &StmtKind, set: &mut HashSet<String>) {
         "glob" | "rglob" => insert_last_literal_arg(&c.args[..c.args.len().min(1)], set),
         // DD#75: `keys m k` likewise. One argument is the splat form.
         "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
+        "slice" if c.slice_operands().is_some() => insert_last_literal_arg(&c.args, set),
         _ => {}
     }
 }
@@ -11826,6 +11855,7 @@ fn fill_target_spec(c: &Command) -> Option<Vec<&str>> {
         // DD#75: `keys m k` — the out-array is the second argument. One
         // argument is the splat and has no target.
         "keys" if c.args.len() == 2 => last_arg_target(c),
+        "slice" if c.slice_operands().is_some() => last_arg_target(c),
         // DD#63: the out-array is the third argument. `match S P` is the
         // two-arg boolean form and has no target at all, and a wrong arity
         // is SB4045's to report — do not preempt it.
@@ -13292,6 +13322,24 @@ fn keys_form_diag(c: &Command, pos: CmdPos) -> Option<Diagnostic> {
         }
     };
     Some(Diagnostic::error_span(c.name.span, "SB5073", complaint))
+}
+
+fn slice_form_diag(c: &Command) -> Option<Diagnostic> {
+    let Some((source, _, _)) = c.slice_operands() else {
+        return Some(Diagnostic::error_span(
+            c.name.span,
+            "SB4045",
+            "`slice` takes SOURCE START [COUNT] DEST".to_string(),
+        ));
+    };
+    if !is_plain_identifier(expr_literal_str(source)) {
+        return Some(Diagnostic::error_span(
+            source.span,
+            "SB5062",
+            "`slice` takes a bare indexed-array source name, not a value or splat".to_string(),
+        ));
+    }
+    None
 }
 
 fn match_arity_diag(name: &str, n: usize, span: Span) -> Option<Diagnostic> {

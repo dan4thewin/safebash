@@ -356,9 +356,17 @@
         3. Mixed words with an unquoted source star reject; use explicit `glob` for computed patterns.
 17. Array fills
     1. String-array fillers: `read`, `argv`, `keys`, `match`, `matchall`, `glob`, `rglob`.
-    2. Ordinary destinations append a complete batch; eligible undeclared targets start empty.
-    3. Scratch destinations construct a fresh immutable batch.
-    4. Failure publishes no partial batch: an existing ordinary destination is unchanged; a new or scratch destination is empty.
+    2. Provisional: `slice SOURCE START [COUNT] DEST` copies a string/int array range; names are bare, including function `args` and typed slots, never maps.
+        1. Positions are zero-based in present-value splat order, skipping holes; selected keys start at zero.
+        2. Nonnegative integer bounds evaluate once, left-to-right; snapshot the source after their effects.
+        3. Omitted COUNT selects the remainder; zero COUNT or beyond-end START is empty; oversized COUNT truncates.
+        4. Preserve exact strings and integers in an independent batch; ordinary self-source append is legal.
+        5. Slicing `args` makes a function variadic without requiring skipped positions; explicit positional reads retain their arity constraints.
+        6. Source reads remain checked; copying transfers no taint resolution, regex/nonemptiness proof or special `args` splat exemption.
+        7. No result to test, return or discard; runtime negative bounds are terminal.
+    3. Ordinary destinations append a complete batch; eligible undeclared targets start empty.
+    4. Scratch destinations construct a fresh immutable batch.
+    5. Failure publishes no partial batch: an existing ordinary destination is unchanged; a new or scratch destination is empty.
         1. EOF/no-match describes this operation, not accumulated contents.
         2. Publication does not roll back consumed input, argument effects or file operations.
 18. Descriptors and process replacement

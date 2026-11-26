@@ -707,6 +707,7 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
         | SsaInst::MatchInto { .. }
         | SsaInst::ArgvFill { .. }
         | SsaInst::KeysFill { .. }
+        | SsaInst::SliceFill { .. }
         | SsaInst::GlobFill { .. }
         | SsaInst::CaptureStart { .. }
         | SsaInst::CaptureEnd { .. }
