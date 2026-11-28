@@ -189,8 +189,8 @@ Empty batches change nothing, and EOF/no-match truth belongs to the producer,
 not the accumulated population. Assignment, scalar `readline` and map
 conversion retain replacement semantics.
 
-The provisional [DD137 slice filler](../notes/decisions/DD137-array-slice.md)
-on `slice-trial` reuses that publication path for string and integer arrays.
+The [DD137 slice filler](../notes/decisions/DD137-array-slice.md)
+reuses that publication path for string and integer arrays.
 Its `SliceFill` instruction snapshots present values in splat order after
 evaluating and retaining the bounds. The runtime copies raw typed cells into
 a private table with dense keys, preserving integer encoding and counted

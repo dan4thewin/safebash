@@ -272,10 +272,10 @@ temporary; a prefix and counter alone are not a uniqueness guarantee.
 **`shift` dropped** (see §5 amendment note and `research-array-slice`): it was a
 degenerate slice. Removed the opcode, handler, codegen, and spec 48.2.
 
-[DD137](DD137-array-slice.md) now trials an independent typed slice filler
-on `slice-trial`. It selects ordinal present values into another array under
-the existing accumulation/scratch rules; it neither restores `shift` nor
-makes function `args` writable. Adoption remains DG's later decision.
+[DD137](DD137-array-slice.md) defines an independent typed slice filler.
+It selects ordinal present values into another array under the existing
+accumulation/scratch rules; it neither restores `shift` nor makes function
+`args` writable.
 
 ~~**Deferred** (see `dd75-args-model-polish`): `$(len/join/keys args)` (intrinsic
 recognition still gates on `collections.contains("args")`); `$*` removal (still

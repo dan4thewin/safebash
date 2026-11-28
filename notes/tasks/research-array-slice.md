@@ -1,5 +1,5 @@
-title: Implement and evaluate the provisional array-slice filler
-status: in-progress
+title: Implement the array-slice filler
+status: done
 priority: P2
 kind: work
 depends: []
@@ -8,17 +8,16 @@ gates:
   - Preserve sparse ordinal order, exact values, types, readonly sources and independent snapshots
   - Preserve taint, scratch, slot and function-arity contracts
   - Focused before and independent reversion controls, then the predicted ordinary gate
-  - Commit and push the separate provisional branch; DG decides later adoption
+  - Publish the accepted implementation and tour examples on main
 
-# Provisional array-slice filler
+# Array-slice filler
 
-DG authorized implementation on a new provisional branch on 2026-11-26.
+DG accepted the implemented array-slice filler for main on 2026-11-28.
 [DD137](../decisions/DD137-array-slice.md) is the contract:
 `slice SOURCE START [COUNT] DEST`, an independent, typed ordinal snapshot
 published under the existing accumulating/scratch filler rules.
 
-Branch `slice-trial` starts from accepted main `727fe371`. Do not promote
-DD137 or land this branch without DG's later adoption decision. The earlier
+Implementation began on `slice-trial` from main `727fe371`. The earlier
 shift research below supplies the motivation, not a competing current spec.
 
 ## Delivered trial, 2026-11-26
@@ -36,9 +35,15 @@ positive build exactly. The full gate passes with 124 new IDs, no flips or
 retirements, and 13,364 checks. See
 [journal 677](../journal/677-provisional-array-slices.md) for the evidence.
 
-This owner stays open for DG's evaluation of utility and ramifications,
-then an adoption decision. It does not represent unfinished compiler work.
-Main remains at the accepted baseline; converter migration stays separate.
+## Accepted on main, 2026-11-28
+
+DG requested slice examples in the tour, then directed:
+
+> drop the provisional language, we'll take this to main
+
+[Journal 679](../journal/679-slice-tour-and-acceptance.md) records the
+acceptance, executable tour examples and main landing. This owner is complete;
+converter migration remains separate.
 
 ## Why
 
@@ -61,7 +66,7 @@ element-wise-taint sketch predates the whole-binding checked-read model;
 slice does not copy unresolved taint into another binding.
 
 The original research remains available in this file at `727fe371`.
-No view/COW machinery or converter rewrite is required for this trial.
+No view/COW machinery or converter rewrite is introduced by this implementation.
 
 ## Notes
 

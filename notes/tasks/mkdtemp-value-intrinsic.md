@@ -121,5 +121,5 @@ fails exactly the 26 new parent-behavior cases in each mode; nine independent
 reversions pin the changed mechanisms and are restored. The ordinary gate
 passes with 13416 checks, 54 first-ever mode IDs, no flips and exactly the
 two retired `mkd.13` IDs. [Journal 678](../journal/678-mkdtemp-parent-directory.md)
-records the full evidence. Delivery is on `slice-trial`; main and the
-array-slice feature's provisional status remain unchanged.
+records the full evidence. The extension joined main with DD137's acceptance;
+[journal 679](../journal/679-slice-tour-and-acceptance.md) records that landing.

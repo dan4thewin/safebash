@@ -10,8 +10,8 @@ Every `sash` snippet in this tour is a complete program. The
 [GitHub edition](README.md) includes recorded output.
 
 This edition includes directory selectors, immutable scratch values,
-validated regexes, checked disposal and ERR-owned call attempts, all
-accepted and implemented on `main`.
+validated regexes, array slicing, checked disposal and ERR-owned call
+attempts, all accepted and implemented on `main`.
 
 **When running under presenterm** (`mk -p 1 tour`):
 
@@ -706,6 +706,53 @@ Scratch works for scalars too, without an extra `const`. Assignment, append,
 cell updates, `unset` and helper writes cannot change an instance; an
 initializer cannot read its own preceding instance.
 Bare `_` remains the unreadable discard binder.
+
+<!-- end_slide -->
+
+Slicing arrays
+===
+
+```bash +exec:sash
+array items=(apple banana cherry date)
+unset items[1]
+slice items 1 2 _middle
+items[2]=pear
+echo source: $(join items ", ")
+echo slice: $_middle[0], $_middle[1]
+```
+
+`slice SOURCE START [COUNT] DEST` copies present values in splat order.
+Positions start at zero and skip holes; the new batch has dense keys.
+Here position 1 is `cherry`, not the absent key 1.
+
+A slice is an independent snapshot and never shortens its source.
+Later source edits leave it unchanged, and string/int element types are
+retained. Ordinary destinations append; `_middle` is fresh immutable scratch.
+
+`slice` has no status result: use it as a statement, not an `if` condition.
+
+<!-- end_slide -->
+
+Slicing function arguments
+===
+
+```bash +exec:sash
+fn show_tail {
+  slice args 1 _rest
+  echo $# arguments, tail: [$(join _rest ", ")]
+}
+show_tail skipped one "two words"
+show_tail
+```
+
+Omitting `COUNT` selects the remainder. Function `args` starts with the
+first argument at position zero, so this skips one argument without
+changing `args` or needing `shift`.
+
+Using `args` this way makes the function variadic. A start at or beyond
+the end gives an empty batch, so the zero-argument call is valid too.
+The destination has ordinary array rules: use `@{_rest:~}` to forward it
+to an external command when an empty tail should contribute no arguments.
 
 <!-- end_slide -->
 

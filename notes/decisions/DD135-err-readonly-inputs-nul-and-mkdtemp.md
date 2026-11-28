@@ -50,10 +50,10 @@ package ([journal 641](../journal/641-mkdtemp-and-tour-cleanup.md)).
 mandatory ERR NUL-proof component, together with SB5101. Readonly imports,
 counted predicates, filename guards and the constructor remain implemented.
 DG approved the optional-parent extension on 2026-11-26. It is implemented
-in native and C on `slice-trial`;
+in native and C on main;
 [journal 678](../journal/678-mkdtemp-parent-directory.md) records delivery.
-This does not move main or change the separate array-slice trial's
-provisional status.
+[Journal 679](../journal/679-slice-tour-and-acceptance.md) records its main
+landing together with the accepted array-slice operation.
 
 ## Readonly at the ERR boundary
 

@@ -52,7 +52,7 @@
     1. A command has a fixed head followed by argument words; arguments retain connector/redirection syntax.
     2. `echo` joins arguments with spaces and adds newline; `write` omits newline. Neither takes flags.
     3. Bare or redirect-only `:` is a successful noop; use `_=` or `array _=(...)` for value/list disposal.
-        1. Provisional ERR-owned `: VOID_FUNCTION ARG...` attempts one call; it is a resultless statement, not operand disposal.
+        1. ERR-owned `: VOID_FUNCTION ARG...` attempts one call; it is a resultless statement, not operand disposal.
     4. `cd DIRECTORY` takes exactly one directory.
     5. External command heads resolve to absolute executable regular-file paths at compilation.
         1. Bare names use compile-time `PATH`, skipping relative entries; relative command paths and runtime head expansion reject.
@@ -357,7 +357,7 @@
         3. Mixed words with an unquoted source star reject; use explicit `glob` for computed patterns.
 17. Array fills
     1. String-array fillers: `read`, `argv`, `keys`, `match`, `matchall`, `glob`, `rglob`.
-    2. Provisional: `slice SOURCE START [COUNT] DEST` copies a string/int array range; names are bare, including function `args` and typed slots, never maps.
+    2. `slice SOURCE START [COUNT] DEST` copies a string/int array range; names are bare, including function `args` and typed slots, never maps.
         1. Positions are zero-based in present-value splat order, skipping holes; selected keys start at zero.
         2. Nonnegative integer bounds evaluate once, left-to-right; snapshot the source after their effects.
         3. Omitted COUNT selects the remainder; zero COUNT or beyond-end START is empty; oversized COUNT truncates.
@@ -450,7 +450,7 @@
         5. ERR remains checked; an unchecked failure outside an eligible attempt terminates cleanup.
         6. Runtime NUL guards remain terminal; authored `0?` and NUL-excluding predicates need no separate static ERR proof.
         7. Restore invoker stdin/stdout/stderr before entry, not interrupted temporary redirects.
-    7. Provisional ERR-owned attempts enclose one colon-prefixed void call or caught status-function call, including its arguments and attached redirects.
+    7. ERR-owned attempts enclose one colon-prefixed void call or caught status-function call, including its arguments and attached redirects.
         1. Explicit `fail` and existing unchecked operational results abandon the full helper chain; locally handled results do not.
         2. Normal returns retain their result; abnormal completion is false even for `fail 0`, before authored negation.
         3. Integer calls cannot establish attempts; no unfinished value is fabricated.

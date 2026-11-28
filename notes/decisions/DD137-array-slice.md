@@ -1,8 +1,7 @@
 title: DD#137 - Array slice filler
-status: provisional
+status: accepted
 
-1. This is a separate-branch trial, not accepted on main. DG will evaluate
-   the implemented operation before deciding on adoption.
+1. Array slicing is accepted for main and implemented in native and C.
 2. `slice SOURCE START [COUNT] DEST` selects a batch from an indexed array.
    SOURCE and DEST are bare collection names; string and integer arrays,
    function `args` and correctly typed collection slots are supported.
@@ -52,11 +51,16 @@ or `${@:2}`, discussed the snapshot/filler model, and on 2026-11-26 directed:
 > take the current branch to main as accepted (no longer provisional),
 > then start a new branch and implement slice as provisional
 
-The preceding ERR-attempt branch is accepted separately in journal 676.
-This trial starts as `slice-trial` from accepted main `727fe371`.
-The existing [slice owner](../tasks/research-array-slice.md) now tracks
-implementation and evaluation; its earlier first-class-value, element-taint
-and out-of-range research sketches are superseded by this contract.
+The preceding ERR-attempt branch was accepted separately in journal 676.
+The slice implementation began on `slice-trial` from main `727fe371`.
+On 2026-11-28, while requesting slice examples in the tour, DG accepted it:
+
+> drop the provisional language, we'll take this to main
+
+The existing [slice owner](../tasks/research-array-slice.md) records the
+completed implementation and adoption. Its earlier first-class-value,
+element-taint and out-of-range research sketches are superseded by this
+contract.
 
 ## Examples
 
@@ -87,9 +91,9 @@ perform the named collection operation. This also makes an effectful bound's
 mutation of SOURCE visible to the snapshot. It does not permit a later
 bound to change the already evaluated START.
 
-## Implementation and delivery boundary
+## Implementation and delivery
 
-The AI implemented the trial on `slice-trial` using shared operand roles,
+The AI implemented the operation using shared operand roles,
 source-derived collection types, retained integer bounds and a typed
 `SliceFill` instruction. Both native and C call the same runtime snapshot
 and use the existing private-batch publication path.
@@ -97,6 +101,6 @@ and use the existing private-batch publication path.
 The 62 dual-mode specs, matched before controls, thirteen independent
 reversions and predicted ordinary gate are recorded in
 [journal 677](../journal/677-provisional-array-slices.md). Every temporary
-mutation is restored. The language contract remains provisional until DG's
-later adoption decision; converter automation for Bash `shift` is not part
-of this trial.
+mutation is restored. [Journal 679](../journal/679-slice-tour-and-acceptance.md)
+records DG's acceptance, the tour examples and main landing. Converter
+automation for Bash `shift` is not part of this delivery.

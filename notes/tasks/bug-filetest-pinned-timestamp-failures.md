@@ -44,3 +44,30 @@ The unchanged replacement gate at rows 7504307-7517532 passes all three
 cases and every other assertion (13213 passing, 13 existing skips).
 That permits the independently verified lookup-default delivery; it does not
 establish a cause or repair for these intermittent failures.
+
+## Recurrence during slice acceptance, 2026-11-28
+
+The documentation-only acceptance gate at `fb467db2` recorded rows
+7570793-7584208 and failed the same three native IDs. Every other status
+matches the preceding sweep, including the passing C counterparts.
+The xtrace again records successful compilation and `no`, not the requested
+`yes`. Compiler, runtime, helpers and both lockfiles retain their baseline
+identities; no implementation or spec changes accompany this acceptance.
+
+One observed run of the unchanged native file passes all 115 checks.
+A session-only observer records the fixture timestamps before and after
+compilation/execution, generated executable hashes, and the runtime's
+`newfstatat` results. The three selected fixtures keep their requested
+timestamps throughout, including `n5`'s 100-versus-900-nanosecond pair.
+The kernel fields agree with those snapshots.
+
+This passing control still does not establish the failed sweep's cause:
+its failing binaries' observed timestamps remain unavailable. No predicate,
+fixture or assertion is changed. The failed native/passing C xtraces and
+observation records are retained in `files/tour-slice-20261128/`.
+
+One unchanged replacement gate, rows 7584209-7597624, passes with exactly
+the three expected corrections: 13403 passing and 13 existing skips.
+All 13416 pre-acceptance statuses are restored, with no new or retired IDs.
+This permits slice acceptance without weakening the assertions; the cause
+and repair gates above remain open.
