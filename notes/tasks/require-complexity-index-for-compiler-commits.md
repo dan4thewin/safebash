@@ -1,5 +1,5 @@
 title: "Require the complexity index for compiler-source commits"
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
@@ -29,8 +29,9 @@ AGENTS.md's complexity section is the contributor-policy authority.
 Journal 606 records the decision. Q1 in `q-complexity-gate-without-index`
 is answered as policy; DG subsequently settled Q2 by choosing refusal of
 mismatched checked inputs (journal 607). That existing task now owns
-Q2 enforcement. This task owns the missing-index refusal; neither change
-is implemented yet.
+Q2 enforcement. This task's missing-index refusal is implemented; Q2 remains
+pending. [Journal 685](../journal/685-unattended-required-complexity-index.md)
+records the implementation and controls.
 
 ## Scope and preservation
 
@@ -97,3 +98,39 @@ checked inputs, or an earlier snapshot refusal could mask the absent guard.
 A docs-only/no-index preservation case must likewise satisfy the input
 agreement rule. No automatic stashing or isolated staged-tree check is
 introduced by either task.
+
+## Resolution, 2026-11-28
+
+The hook obtains scope from `git diff --cached --name-only --no-renames --
+'sash/src/'`. Disabling rename pairing exposes both sides, including a move
+out of the compiler. Empty additions, deletions and non-Rust paths in this
+scope require the index even when the existing Rust hunk extractor produces
+no positive line ranges.
+
+Missing required measurement refuses explicitly. Out-of-scope commits and
+`SKIP_COMPLEXITY_GATE=1` report their distinct reasons for not measuring;
+`SKIP_COMPLEXITY=1` remains report-only. Staged-path and hunk inspection
+failures have explicit refusal messages. The required SQL query, rubric,
+freshness command, formatting, lint and totality logic are unchanged.
+The stale comment proposing future 2x/1.5x thresholds now agrees with
+AGENTS.md's existing decision to retain 3x.
+
+Twenty-eight actual-hook cases ran in fully staged private Git repositories.
+Cargo and totality results were controlled, while real Git diffs and the
+hook's actual SQL operated on deterministic fixture databases. No live index
+was moved, replaced or removed. The original hook failed sixteen assertions:
+ten missing-index refusals, one scope-error refusal, four bypass/out-of-scope
+notices and the hunk-error message. The original hunk error already refused;
+it was not another permissive failure.
+
+The repaired hook passes all 28. A guard-only reversion makes exactly the
+ten missing-index assertions fail again, leaving the other eighteen intact.
+Both independent complexity axes, both dispatcher exemptions, grandfathering,
+required-query refusal, nonfatal report errors and the other enforced checks
+are covered. Fixture source, staging and stash remain unchanged by the hook.
+The live hook was never reverted.
+
+The ordinary gate passes with `NEW=0 FLIPS=0 RETIRED=0 TOTAL=13529`,
+rows **7678577-7692105**: 13516 passing, thirteen existing skips, no failures,
+flips, retirements, ghosts or plan mismatches. This closes only Q1, not the
+separately owned checked-input agreement repair.

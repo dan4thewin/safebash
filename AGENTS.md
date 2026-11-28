@@ -1564,8 +1564,8 @@ Bypass for one commit: `SKIP_COMPLEXITY_GATE=1 git commit ...`
 (prefer fixing the function or amending the surrounding code if at
 all possible; bypass should be rare and never routine).
 
-**Missing-index policy (DG, 2026-11-09; enforcement pending).** A commit
-whose staged changes touch `sash/src/` must be blocked when
+**Missing-index policy (DG, 2026-11-09; enforced).** A commit
+whose staged changes touch `sash/src/` is blocked when
 `.indexnudge-rust.db` is unavailable, unless `SKIP_COMPLEXITY_GATE=1` is
 explicitly set. Missing tooling is not an automatic exemption. Without
 staged changes in that scope, this gate needs no index; documentation-only
@@ -1577,11 +1577,13 @@ the hunk extractor found added lines. The compiler-only rubric, current
 means, dispatcher exemptions and explicit override remain unchanged.
 `SKIP_COMPLEXITY=1` skips the report, not this requirement.
 
-The hook currently still warns and passes when the index is missing.
-`notes/tasks/require-complexity-index-for-compiler-commits.md` owns the
-enforcement change. The separate checked-input rule below also applies:
-not needing a complexity index does not waive the other checks' requirement
-to assess the staged source.
+The hook distinguishes missing measurement, explicit bypass and out-of-scope
+changes, and refuses failed staged-path or hunk inspection. The completed
+`notes/tasks/require-complexity-index-for-compiler-commits.md` and journal 685
+record actual-hook controls in isolated repositories; never move the live
+index to test its absence. The separate checked-input rule below remains
+pending: not needing a complexity index does not waive the other checks'
+requirement to assess the staged source.
 
 **Residuals vs. Mozilla.** Both metrics are close to
 `rust-code-analysis-cli` but not identical. The large majority of functions
@@ -1645,8 +1647,9 @@ override does not waive consistency for other checks; no new bypass is
 selected.
 
 `notes/tasks/q-complexity-gate-without-index.md` now owns this enforcement
-work. Its two policy questions are answered, but neither this guard nor the
-separately owned missing-index refusal is implemented yet.
+work. Its policy is settled, but this agreement guard is not implemented yet.
+The separately owned missing-index refusal is implemented; index presence
+does not prove staged/worktree agreement.
 
 ## Completion checklist
 

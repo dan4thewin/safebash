@@ -124,21 +124,34 @@ fi
 # retired 2026-06-06 because deferral was entrenching the violation
 # rather than driving it down.)
 #
-# Threshold is 3× current means (recalculated per commit) — a ratchet
-# that tightens as the codebase improves. Plan: 3× → 2× → 1.5× as the
-# population of pre-existing violators clears.
+# Threshold stays at 3× current means (recalculated per commit) — a
+# ratchet that tightens as the codebase improves.
 #
-# Without the index the gate cannot measure anything. It still lets the
-# commit through, as before, but it says so instead of passing in silence.
-if [ "${SKIP_COMPLEXITY_GATE:-0}" != "1" ] && [ ! -f .indexnudge-rust.db ]; then
-    red "pre-commit: complexity gate SKIPPED: .indexnudge-rust.db not found, so nothing was measured"
+# Path scope includes changes with no positive added-line hunk ranges.
+compiler_paths=""
+if [ "${SKIP_COMPLEXITY_GATE:-0}" = "1" ]; then
+    gray "pre-commit: complexity gate BYPASSED: SKIP_COMPLEXITY_GATE=1"
+else
+    compiler_paths=$(git diff --cached --name-only --no-renames -- 'sash/src/') || {
+        rc=$?
+        red "pre-commit: complexity gate FAIL: cannot determine staged compiler paths (git rc $rc)"
+        exit 1
+    }
+    if [ -z "$compiler_paths" ]; then
+        gray "pre-commit: complexity gate not required: no staged paths in sash/src/"
+    elif [ ! -f .indexnudge-rust.db ]; then
+        red "pre-commit: complexity gate FAIL: .indexnudge-rust.db not found; staged compiler changes were not measured"
+        red "    prepare the index with indexnudge and retry"
+        red "    bypass for one commit: SKIP_COMPLEXITY_GATE=1 git commit ..."
+        exit 1
+    fi
 fi
-if [ "${SKIP_COMPLEXITY_GATE:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
+if [ -n "$compiler_paths" ]; then
     gray "pre-commit: complexity gate (3× mean, grandfather-on-modify)"
 
     # Collect staged hunk ranges as (file, start, end) tuples.
     hunks=$(git diff --cached --unified=0 -- \
-                'sash/src/*.rs' 'sash/src/**/*.rs' 2>/dev/null | \
+                'sash/src/*.rs' 'sash/src/**/*.rs' | \
             awk '
                 /^\+\+\+ b\// { file = substr($0, 7); next }
                 /^@@ / {
@@ -151,7 +164,11 @@ if [ "${SKIP_COMPLEXITY_GATE:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
                         }
                     }
                 }
-            ')
+            ') || {
+        rc=$?
+        red "  FAIL: cannot inspect staged compiler hunks (git/awk rc $rc)"
+        exit 1
+    }
 
     if [ -n "$hunks" ]; then
         # Build SQL VALUES list from the hunks

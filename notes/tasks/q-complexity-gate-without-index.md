@@ -17,8 +17,9 @@ that commit the hook *says* when the gate measured nothing. DG settled both
 policy questions on 2026-11-09, recorded in journals 606 and 607.
 This existing task retains its slug and P3 priority but now owns Q2
 enforcement; Q1 has its separate implementation owner below. Both remain
-unimplemented. Journal 556's controls remain historical measurements,
-not new runs at either decision date.
+independent: Q1 is implemented as of 2026-11-28, while Q2 remains pending.
+Journal 556's controls remain historical measurements, not new runs at
+either decision date.
 
 ## Q1. Settled: require the index for compiler-source commits
 
@@ -44,20 +45,19 @@ before/reversion controls. The 3x-current-means rubric, dispatcher exemptions,
 compiler-only scope and deliberate override remain. This is not a new
 requirement to install indexnudge for every documentation edit.
 
-### Current implementation, unchanged by the ruling
+### Implemented, 2026-11-28
 
-Both the complexity report and the gate in `.githooks/pre-commit` are guarded
-by `[ -f .indexnudge-rust.db ]`. Without the index (a fresh clone, an rsync
-that skipped it, a deleted file) the enforced gate does not run and the commit
-goes through. It used to do so silently, with `all gates green` as the
-hook's last line; it now prints
-`complexity gate SKIPPED: .indexnudge-rust.db not found, so nothing was
-measured`.
+The hook now establishes staged compiler scope independently of its hunk
+extractor and refuses a missing required index. Rename pairing is disabled
+for the path probe, so both rename directions, deletions and empty additions
+remain visible. Failed path/hunk inspection also refuses explicitly.
+Bypass and out-of-scope notices are distinct from successful measurement.
+`SKIP_COMPLEXITY=1` still controls only the report.
 
-The source still has that warning-and-pass branch. DG's ruling replaces
-the policy for compiler-source commits; it does not claim the hook has
-already changed. `SKIP_COMPLEXITY=1` controls only the report and must not
-become an alternative gate bypass.
+[Journal 685](../journal/685-unattended-required-complexity-index.md) records
+28 actual-hook controls, the original permissive missing-index cases, a
+guard-only reversion and the ordinary gate. This does not establish agreement
+between checked worktree inputs and the staged snapshot.
 
 ## Q2. Settled: refuse mismatched checked inputs
 
@@ -112,10 +112,11 @@ With unstaged edits in checked inputs:
 - the gate can attribute a staged hunk to whichever function holds that line
   in the worktree.
 
-The latest hook change is still `d8e6491e` at the recording baseline
-`f22bd1e3`. Its worktree checks and staged hunk selection have not been
-modified. The earlier note about manually stashing unrelated work was a
-practice description, not authorization for the hook to automate it.
+At the recording baseline `f22bd1e3`, the latest hook change was `d8e6491e`.
+The subsequent Q1 repair still checks worktree inputs and selects staged
+hunks; it does not compare the two snapshots. The earlier note about manually
+stashing unrelated work was a practice description, not authorization for
+the hook to automate it.
 
 ### Implementation and proof
 
