@@ -1806,7 +1806,7 @@ fn hands_back_result(
 
 /// [`Absent::Unknown`]: drop each function that is not yet a status and hands
 /// its result to a name with no exit summary, or to a function dropped
-/// already — some definitions of that name may yield a status.
+/// already: its result cannot yet be classified.
 fn drop_unknown(undecided: &mut Undecided<'_>, exits: &HashMap<String, ExitSummary>) {
     let mut unknown = HashSet::new();
     while let Some(i) = undecided.iter().position(|(_, callees)| {
@@ -1818,22 +1818,14 @@ fn drop_unknown(undecided: &mut Undecided<'_>, exits: &HashMap<String, ExitSumma
     }
 }
 
-/// DD#55: each function's class whatever the call site, decided over every
-/// definition before any body is lowered, for the `fn_NAME` templates (an
-/// uncalled body is checked too). A real call runs the definition in force,
-/// so only a name defined once has one class everywhere; a redefined name,
-/// and every function whose class it decides, is left to the real call sites.
+/// DD#55: classes for templates, including uncalled bodies. The early DD#86
+/// guard has already established one source definition per name.
 pub(super) fn static_classes(
     program: &Program,
     known: &HashSet<String>,
 ) -> HashMap<String, FnClass> {
-    let mut definitions: HashMap<&str, usize> = HashMap::new();
-    for f in program.function_defs() {
-        *definitions.entry(f.name.as_str()).or_default() += 1;
-    }
     let exits = program
         .function_defs()
-        .filter(|f| definitions[f.name.as_str()] == 1)
         .map(|f| (f.name.clone(), exit_summary(f, |n| known.contains(n))))
         .collect();
     classify(&exits, Absent::Unknown)

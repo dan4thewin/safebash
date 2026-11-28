@@ -335,9 +335,9 @@ found", at the `-`. As an argument a keyword is still a word (skw.34).
 
 The lexer gives these keywords their own tokens in every position
 (`classify_word_token`), and the parser accepts all eight where it expects
-a name (`expect_word`), which is how `str fi=x` reaches SB5092. DD#125 says
-instead that `in` and `do` lex as ordinary words outside their one
-position; correcting it is filed as `doc-keyword-lexing-claims`. A parse
+a name (`expect_word`), which is how `str fi=x` reaches SB5092. DD#125 now
+describes the same distinction; its earlier contextual-lexing explanation
+was incorrect (`doc-keyword-lexing-claims`). A parse
 error stops the passes after the parser, so `fn in { … }` followed by a
 call `in` is now SB4072 at the call, where it was SB5092 at the definition.
 The definition alone is still SB5092.

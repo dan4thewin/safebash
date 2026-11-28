@@ -4033,12 +4033,13 @@ echo after'
 [[ $rc != 0 && -z $out && $err == *':4:1: error [SB4016]'* \
    && $err == *"function 'b' returns a status"* && $err != *':3:1:'* ]]; chk nonvoid.7
 
-# the definition in force decides the class
+# A call after the duplicate does not turn it into a replacement.
 run_sash 'fn f { echo one }
 fn f { return 3 }
 f
 echo after'
-[[ $rc != 0 && -z $out && $err == *':3:1: error [SB4016]'* ]]; chk nonvoid.8
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* && $err != *SB4016* ]]; chk fnuniq.14
 
 # b is defined after the body that calls it
 run_sash 'fn a { b }
@@ -4104,13 +4105,14 @@ echo "[$y]"'
 [[ $rc != 0 && -z $out && $err == *':2:9: error [SB4076]'* \
    && $err == *"function 'v' returns nothing"* ]]; chk nonvoid.18
 
-# nonvoid.19-nonvoid.24 are accepted.
 run_sash 'fn f { return 3 }
 fn f { echo two }
 f
 echo after'
-[[ $rc = 0 && $out = $'two\nafter' && -z $err && -z $rerr ]]; chk nonvoid.19
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.15
 
+# nonvoid.20-nonvoid.24 are accepted.
 # `return 0` on one path and an int call on the other is an int function
 run_sash 'str v=y
 fn g -> int { return 7 }
@@ -4150,42 +4152,44 @@ fn s { echo s; return 3 }
 echo after'
 [[ $rc = 0 && $out = $'v\ns\nv\ns\nafter' && -z $err && -z $rerr ]]; chk nonvoid.24
 
-# nonvoid.25-nonvoid.29: a call is checked against the definition it runs,
-# the one in force where it stands, not a later redefinition.
+# DD86: duplicates reject before result-kind analysis can choose a definition.
 run_sash 'fn f -> int { return 3 }
 f
 fn f { echo two }
 echo after'
-[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4016]'* \
-   && $err == *"function 'f' returns an int"* ]]; chk nonvoid.25
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* && $err == *'first defined at 1:1'* &&
+   $err != *SB4016* ]]; chk fnuniq.1
 
-# g's body runs the int f, so its bare call is the error
 run_sash 'fn f -> int { return 3 }
 fn g { f }
 g
 fn f { echo two }
 echo after'
-[[ $rc != 0 && -z $out && $err == *':2:8: error [SB4016]'* \
-   && $err == *"function 'f' returns an int"* ]]; chk nonvoid.26
+[[ $rc != 0 && -z $out && $err == *':4:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* && $err == *'first defined at 1:1'* &&
+   $err != *SB4016* ]]; chk fnuniq.2
 
 run_sash 'fn f { return 3 }
 f
 fn f { echo two }
 echo after'
-[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4016]'* \
-   && $err == *"function 'f' returns a status"* ]]; chk nonvoid.27
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* && $err != *SB4016* ]]; chk fnuniq.3
 
 run_sash 'fn f { echo one }
 f
 fn f -> int { return 3 }
 echo after'
-[[ $rc = 0 && $out = $'one\nafter' && -z $err && -z $rerr ]]; chk nonvoid.28
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.4
 
 run_sash 'fn f { echo one }
 f
 fn f { return 3 }
 echo after'
-[[ $rc = 0 && $out = $'one\nafter' && -z $err && -z $rerr ]]; chk nonvoid.29
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.5
 
 # noreach.1-noreach.17: `-` discards only the status of its own command or
 # call (DD#55 2026-10-30). It does not reach into a user function's body,

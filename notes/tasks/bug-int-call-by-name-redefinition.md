@@ -1,5 +1,5 @@
 title: "bug: an int call is chosen by name, so a redefinition miscompiles it"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: [reject-duplicate-function-definitions]
@@ -8,13 +8,22 @@ gates:
   - "the duplicate refusal, not an unrelated result/type error, is pinned by focused specs and negative/reversion controls"
   - "valid single-definition captures and integer calls retain their results and output routing"
 
+## Delivery, 2026-11-28
+
+Closed with the early duplicate-definition guard on
+`unattended-backlog-20261128` (journal 681).
+`fnuniq.10`-`.12` retain i1-i3 and require SB5109 at the second
+definition, with no output. They fail on the original compiler and
+under the final-tree guard reversion in both modes. The full naming
+gate passes; legal unique captures and integer calls retain their results.
+
 ## Decision, 2026-11-06
 
 DG rejects all duplicate function definitions, including identical and
 same-kind repeats (DD86/DD55, journal 582). The new P1
 `reject-duplicate-function-definitions` owns enforcement and directly
-dependent bookkeeping. This bug remains open until the duplicate programs
-below are rejected; the policy recording is not a fix.
+dependent bookkeeping. This bug remained open until the duplicate programs
+below were rejected; the policy recording was not a fix.
 
 The original "make the selected definition run correctly" gates are
 superseded. i3 no longer depends on a diagnostic choice for a single
@@ -51,7 +60,7 @@ echo "n=$n"
 fn f -> int { return 3 }
 ```
 
-## Cause
+## Historical cause
 
 `register_functions` (`transform/entry.rs`) adds the name of every `-> int`
 definition to `function_int_typed`, whichever definition a call will run.

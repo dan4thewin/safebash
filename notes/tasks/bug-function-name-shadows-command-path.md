@@ -1,5 +1,5 @@
 title: "Enforce conservative identifier-only function names"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -12,6 +12,21 @@ gates:
   - "reestablish valid-name taint controls under current DD127/DD128; invalid path-name programs and the former clean-function shortcut are not preservation evidence"
   - "converter impact is measured and affected names are handled explicitly without changing identities or silently presenting unhandled names as valid native output"
   - "specs for the new refusals fail before the naming guard and under its reversion; valid-name controls and existing unit/static/spec gates pass with measured predictions"
+
+## Delivery, 2026-11-28
+
+Implemented on `unattended-backlog-20261128` (journal 681).
+The shared identifier reader rejects malformed word names with located
+SB4014 in both function-definition readers. `fnident.1`-`.3` pin the
+name/spelling/path matrix, including numeric return collisions; `.4`-`.5`
+preserve valid names and external filenames. `convname.1`-`.3` pin
+identity-preserving MANUAL guidance and literal controls in normal and
+annotated converter output.
+
+The three compiler regressions and two converter regressions fail before
+the fixes and under independent final-tree reversions. Twelve original/fixed
+native/C controls preserve valid-name taint refusals. The naming gate passes
+with 13,467 checks, 55 new mode IDs, 14 retirements and no flips.
 
 ## Decision, 2026-11-09
 
@@ -35,11 +50,11 @@ name and is unaffected.
 
 The narrower collision-only ban and arbitrary-name/function-first lookup
 alternatives were not selected. This deliberately costs compatibility with
-Bash names such as `read-file`; converter exposure is not yet measured,
-and no automatic renaming scheme has been chosen.
+Bash names such as `read-file`; converter exposure was left for implementation,
+and no automatic renaming scheme was chosen.
 
-Only the policy question is closed. This P2 bug remains open for enforcement;
-no compiler or converter change is claimed by the decision.
+The policy recording alone did not fix this bug. The delivery above records
+the measured compiler and converter changes.
 
 ## Found
 

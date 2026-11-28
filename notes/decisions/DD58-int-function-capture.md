@@ -196,8 +196,8 @@ named `f` coexisting is a compile error. This eliminates ambiguity inside
 
 DD#86 governs scope and shadowing. Function names are global and each has
 one source definition, not local shadows or source-order replacements.
-Duplicate rejection is accepted but remains pending in
-`reject-duplicate-function-definitions` (DG, 2026-11-06; journal 582).
+Duplicate rejection is implemented by the early SB5109 guard (journal 681),
+following DG's 2026-11-06 decision (journal 582).
 
 ## Interaction with existing syntax
 

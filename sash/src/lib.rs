@@ -602,7 +602,7 @@ fn check_flags(flags: &[&str]) {
 /// before command resolution so a rejected construct surfaces its own
 /// diagnostic rather than a spurious SB4032 on the tokens it leaves behind.
 fn run_structural_checks(input: &str, program: &crate::ir::Program) {
-    // SB5092 (DD#125), the *binding* half — the very first gate, on purpose.
+    // Naming guards precede checks that assume each name has one meaning.
     // A naming violation is logically prior to every semantic check: once a
     // program binds `status`, the DD#125 desugar reads a bare `status` in
     // `$(( … ))` as the intrinsic, and the SB5012 availability error that
@@ -612,7 +612,8 @@ fn run_structural_checks(input: &str, program: &crate::ir::Program) {
     //
     // `CommandTargets` deliberately stays in the later batch — see
     // `ReservedScope`.
-    let reserved = validate::check_reserved_names(program, validate::ReservedScope::Bindings);
+    let mut reserved = validate::check_reserved_names(program, validate::ReservedScope::Bindings);
+    reserved.extend(validate::check_duplicate_function_definitions(program));
     if !reserved.is_empty() {
         print_diags(input, &reserved);
         std::process::exit(1);

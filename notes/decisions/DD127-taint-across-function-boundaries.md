@@ -673,14 +673,10 @@ unless `capture_purity::capture_body_is_pure` admits the buffer path.
 
 That is the existing lowering predicate, moved out of `transform` for shared
 use, not a new definition of purity. Its eligibility rules are unchanged.
-Until DD#86's duplicate-definition rejection lands, the source classifier
-includes every definition of a function name; one integer-return definition
-cannot hide another definition's stdout. Lowering uses the body active at
-the call, so source classification can conservatively reject a redefined
-name whose particular call would buffer. This is a temporary implementation
-boundary, not a supported redefinition contract. The task
-`reject-duplicate-function-definitions` owns refusal of those programs;
-do not add per-definition taint specialization to support them.
+DD#86's early SB5109 guard now guarantees one source definition per name
+(journal 681). Source classification and lowering therefore cannot select
+different definitions for a repeated name. No per-definition taint
+specialization or clean-function-name exemption is introduced.
 
 Every fd reader taints its target directly; the preceding pipeline stages
 are no longer used to infer trust. `read SRC ARR` remains a value split.

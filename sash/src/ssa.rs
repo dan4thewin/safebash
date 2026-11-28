@@ -2687,16 +2687,13 @@ pub struct VersionState {
     pub(crate) loop_jumps: HashMap<BlockId, Vec<LoopJump>>,
     /// Return target block for `return` in inlined functions.
     pub return_target: Option<usize>,
-    /// DD#55: the exits of each function definition in force — the last one
-    /// lowered for its name — updated at each `fn` statement.
+    /// DD#55: exits of the unique function bodies registered so far.
     pub(crate) exits_in_force: HashMap<String, ExitSummary>,
     /// DD#55: the class of each function in force, recomputed from
     /// `exits_in_force` at each `fn` statement: what a call lowered here runs.
     pub(crate) class_in_force: HashMap<String, FnClass>,
-    /// DD#55: the class of each function whatever the call site
-    /// (`functions::static_classes`), for a `fn_NAME` template, which has no
-    /// call site. A redefined name is absent, as is any function whose result
-    /// it decides.
+    /// DD#55: classes over all unique definitions (`functions::static_classes`)
+    /// for a `fn_NAME` template, which has no call site.
     pub(crate) class_static: HashMap<String, FnClass>,
     /// Functions declared with `-> int` return type.
     pub function_int_typed: std::collections::HashSet<String>,

@@ -1,5 +1,5 @@
 title: Reject duplicate function definitions
-status: open
+status: done
 priority: P1
 kind: work
 depends: []
@@ -10,6 +10,17 @@ gates:
   - "the i1-i3 reproducers in bug-int-call-by-name-redefinition reject in both modes; no miscompiled output is accepted as a result"
   - "unique definitions retain forward calls, result-kind handling, inferred signatures, capture behavior, taint summaries and legal self-tail calls"
   - "focused native/C specs and negative/reversion controls prove the refusal; affected nonvoid specs migrate at fresh ids and the predicted ordinary gate passes"
+
+## Delivery, 2026-11-28
+
+Implemented on `unattended-backlog-20261128`; journal 681 records the
+shared inventory, early SB5109 guard and removal of the duplicate-only
+template-class filter. `fnuniq.1`-`.15` cover the duplicate matrix,
+including i1-i3, signatures, unused bodies and repeated original-site
+reporting. All fifteen fail on the original compiler and with the guard
+disabled, in both modes. Seven old contracts retire at fresh IDs.
+The predicted gate passes with 55 new mode IDs, 14 retirements, no flips
+and 13,467 total checks. Existing unique-definition behavior remains green.
 
 ## Settled contract
 
@@ -54,6 +65,5 @@ Anonymous-capture status-return rejection is also settled separately
 The single-definition function-name-as-variable bug also remains
 independently owned by `bug-function-name-read-as-variable`.
 
-This task records required work, not an implemented guard. No diagnostic
-code or sweep-count prediction has been selected before the implementation
-inventory.
+The sections above retain the implementation scope set before delivery;
+journal 681 supplies its measured outcome rather than a policy-only closure.

@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=227
+plan=230
 echo "1..$plan" >&3
 
 set +e
@@ -1637,6 +1637,38 @@ trap "echo cleanup" EXIT'
 [[ $rc = 0 && $out == *'MANUAL: trap body'* &&
    $out == *'checked EXIT { ... }'* && $out == *'ERR { ... } with explicit failure handling'* &&
    $out != *'END {'* && -z $err ]]; chk 57.193
+
+run_convert 'read-file() { echo dash; }
+read_file() { echo underscore; }
+read-file
+read_file'
+converted=$out
+[[ $rc = 0 && -z $err && $converted == *'# MANUAL: function name `read-file`'* &&
+   $converted == *'[A-Za-z_][A-Za-z0-9_]*'* &&
+   $converted == *'read-file() { echo dash; }'*'read_file() { echo underscore; }'* &&
+   $converted == *$'\nread-file\nread_file'* ]]
+convert_ok=$?
+run_sash "$converted"
+[[ $convert_ok = 0 && $rc != 0 && $err == *'invalid name `read-file`'* ]]; chk convname.1
+
+bad=0
+for source in 'function a.b { echo dot; }; a.b' \
+              '/bin/true() { echo path; }; /bin/true' \
+              'é() { echo unicode; }; é'; do
+    run_convert_annotate "$source"
+    [[ $rc = 0 && -z $err && $out == *'# MANUAL: function name `'* &&
+       $out == *'rename the definition and every call consistently'* &&
+       $out == *"$source"* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk convname.2
+
+run_convert '__helper2() { echo fine; }
+# read-file() { echo comment; }
+echo "read-file() { echo literal; }"
+__helper2'
+[[ $rc = 0 && -z $err && $out != *'# MANUAL: function name'* &&
+   $out == *'__helper2() { echo fine; }'* &&
+   $out == *'echo "read-file() { echo literal; }"'* ]]; chk convname.3
 
 set -e
 tally

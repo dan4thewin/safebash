@@ -833,8 +833,8 @@ unconsumed-value rule, not the implicit-check rule.
 
 Each function name has one source definition (DD#86; DG, 2026-11-06).
 A repeated definition is an error regardless of body, signature, result
-kind or use. Duplicate rejection is accepted but not yet implemented;
-`reject-duplicate-function-definitions` owns enforcement.
+kind or use. The early SB5109 guard implements duplicate rejection
+(journal 681).
 
 ### Return kinds (DG, 2026-11-06)
 
@@ -1197,15 +1197,12 @@ definition-in-force behavior: duplicate source definitions are rejected,
 including same-kind and identical definitions (DD#86). Every call and
 template must describe the same single body and its result kind.
 
-Enforcement remains pending in `reject-duplicate-function-definitions`.
-F6 currently recomputes the classes as definitions are lowered, and its
-template table excludes redefined names and their dependents.
-`nonvoid.25`-`nonvoid.29` record that old behavior, not an exception to the
-new rule; migrate the affected cases when enforcement lands.
-Preserve classification of forward references to unique definitions
-(`nonvoid.9`). The name-based integer-call miscompile is tracked by
-`bug-int-call-by-name-redefinition` until its duplicate-definition
-reproducers are rejected.
+Journal 681 implements the early SB5109 guard and removes the template
+table's duplicate-count filter. The seven old redefinition contracts
+(`nonvoid.8`, `.19`, `.25`-`.29`) are retired at fresh `fnuniq` IDs.
+Classification of forward references to unique definitions (`nonvoid.9`)
+is preserved. The integer-call-redefinition reproducers now reject at
+their duplicate definitions rather than selecting inconsistent bodies.
 
 **A status function's status is handled or discarded (B15).** A call is
 handled as a condition (`if`, `while`, the left side of `&&` or `||`), or

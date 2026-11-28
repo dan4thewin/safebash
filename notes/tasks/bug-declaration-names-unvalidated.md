@@ -1,5 +1,5 @@
 title: "Bug: a declaration or a `for` binds any word as a variable name (`str a-b=1`, `int /bin/x=1`, `str 9z=1`, `int a[0]=5`)"
-status: open
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -7,6 +7,20 @@ gates:
   - "every program in the first table is a compile error at the name, naming it and the rule a name follows, in both backends; none binds a variable"
   - "the controls keep their results"
   - "a spec pins each rejected shape in both backends; each fails on the pre-fix binary"
+
+## Delivery, 2026-11-28
+
+Implemented on `unattended-backlog-20261128` (journal 681).
+Declaration names and `for` binders now use the canonical ASCII identifier
+predicate through `expect_identifier`; malformed word names get SB4014 at
+their own span, before dead-binding/type analysis. The existing parser
+predicate delegates to the same implementation. Attest targets are unchanged.
+
+`declident.1`-`.4` cover the historical malformed-name families, including
+digit-led names that were actually read and subscript-looking declarations.
+All four fail on the original compiler and under the identifier-guard
+reversion, in both modes. `.5`-`.6` preserve valid declarations, loop values
+and the existing keyword diagnostics. The full naming gate passes.
 
 ## Found
 

@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=107
+plan=113
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -786,6 +786,67 @@ run_sash 'int status=5
 echo $(( status ))'
 [[ $rc != 0 && -z $out && $err == *SB5092* && $err != *SB5012* ]]; chk 125.22
 
+bad=0
+for keyword in str int const; do
+    for name in a-b /bin/x 9z x+y é; do
+        run_sash "$keyword $name=1"
+        [[ $rc != 0 && $err == *SB4014* && $err == *"invalid name \`$name\`"* &&
+           $err == *'[A-Za-z_][A-Za-z0-9_]*'* && $err != *SB5050* ]] || ((bad++))
+    done
+done
+for source in 'str 9z=1; echo "${9z}"' 'int 9z=1; echo "$(( ${9z} + 1 ))"'; do
+    run_sash "$source"
+    [[ $rc != 0 && -z $out && $err == *SB4014* &&
+       $err == *'invalid name `9z`'* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk declident.1
+
+bad=0
+for source in 'array /x=(1)' 'map a-b=([key]=value)' \
+              'str s=1 /x=2; echo "$s"' 'int n=1 /bin/echo hi; echo "$n"'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4014* && $err == *'invalid name `'* &&
+       $err == *'[A-Za-z_][A-Za-z0-9_]*'* && $err != *SB5050* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk declident.2
+
+bad=0
+for source in 'array a=(1 2); int a[0]=5; echo "${a[0]}"' \
+              'map m=(); str m[k]=v; echo "${m[k]}"'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4014* && $err == *'invalid name `'* &&
+       $err == *'[A-Za-z_][A-Za-z0-9_]*'* && $err != *SB5050* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk declident.3
+
+bad=0
+for name in a-b 'a[0]' 9z /x é; do
+    run_sash "for $name in x { echo hi }"
+    [[ $rc != 0 && $err == *':1:5: error [SB4014]'* &&
+       $err == *"invalid name \`$name\`"* && $err != *SB5050* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk declident.4
+
+run_sash 'int n=1 m=2 c
+c=3
+str _x1=ok
+str x="a"b=1
+echo "$n$m$c:$_x1:$x"
+for row_2 in aa bb { echo "$row_2" }'
+[[ $rc = 0 && $out = $'123:ok:ab=1\naa\nbb' && -z $err && -z $rerr ]]; chk declident.5
+
+# These are keyword tokens admitted by expect_word, not context-sensitive lexing.
+bad=0
+for keyword in in do done then fi else elif esac; do
+    run_sash "int $keyword=5"
+    [[ $rc != 0 && $err == *SB5092* && $err != *'invalid name'* ]] || ((bad++))
+done
+for keyword in if while fn; do
+    run_sash "int $keyword=5"
+    [[ $rc != 0 && $err == *SB4014* &&
+       $err == *'expected variable name in declaration'* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk declident.6
 
 set -e
 tally

@@ -348,12 +348,11 @@ pub(crate) fn head_may_take_redirect(name: &str) -> bool {
     kind.may_take_redirect()
 }
 
-/// Words the parser gives a meaning of their own. Most are already
-/// unusable as a variable name because the lexer turns them into a
-/// non-`Word` token, so `int if=5` fails to parse — but that is an
-/// accident of tokenization, not a rule, and it does not cover the
-/// *contextual* keywords: `in` and `do` lex as `Tok::Word` everywhere
-/// except their one position, so `int in=5` and `int do=5` compiled.
+/// Reserved parser words. Structural keywords, including `in` and `do`,
+/// have position-independent tokens. `expect_word` admits eight continuing
+/// or closing keywords as names, so those reach SB5092; opening keywords
+/// instead fail to parse with SB4014. Command-like entries such as `return`
+/// remain `Word` tokens but are still reserved.
 /// Kept in sync with `parse::lexer::classify_word_token`.
 const KEYWORDS: &[&str] = &[
     "if", "then", "else", "elif", "fi", "while", "until", "do", "done", "for", "in", "case",

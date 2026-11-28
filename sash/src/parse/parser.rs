@@ -973,26 +973,8 @@ fn parse_for(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     }
 
     // Standard for: for var in words...; do body; done
-    let variable = expect_word(scanner, span, "expected variable name after 'for'")?;
-
-    // Optional semicolons/newlines between var and 'in'
-    skip_terminators(scanner);
-
-    let mut words = Vec::new();
-    if matches!(scanner.peek().token, Tok::In) {
-        scanner.next(); // consume 'in'
-                        // Collect words until ; or newline or 'do' or '{' (DD#68)
-        while !scanner.at_eof()
-            && !matches!(
-                scanner.peek().token,
-                Tok::Semi | Tok::Newline | Tok::Do | Tok::Eof | Tok::LBrace
-            )
-        {
-            words.push(parse_expr(scanner)?);
-        }
-        skip_terminators(scanner);
-    }
-
+    let variable = expect_identifier(scanner, span, "expected variable name after 'for'")?;
+    let words = parse_for_words(scanner)?;
     let body = parse_loop_body(scanner, span)?;
 
     Ok(Statement {
@@ -1003,6 +985,24 @@ fn parse_for(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
         }),
         span,
     })
+}
+
+fn parse_for_words(scanner: &mut Scanner) -> Result<Vec<Expr>, Diagnostic> {
+    skip_terminators(scanner);
+    let mut words = Vec::new();
+    if matches!(scanner.peek().token, Tok::In) {
+        scanner.next();
+        while !scanner.at_eof()
+            && !matches!(
+                scanner.peek().token,
+                Tok::Semi | Tok::Newline | Tok::Do | Tok::Eof | Tok::LBrace
+            )
+        {
+            words.push(parse_expr(scanner)?);
+        }
+        skip_terminators(scanner);
+    }
+    Ok(words)
 }
 
 /// DD#68: parse a loop body — `{ … }` (brace form) or `do … done` (sugar).
@@ -1043,7 +1043,7 @@ fn parse_function(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'fn' or 'function'
 
-    let name = expect_word(scanner, span, "expected function name")?;
+    let name = expect_identifier(scanner, span, "expected function name")?;
 
     parse_optional_empty_parens(scanner, span)?;
     finish_function_def(scanner, name, span)
@@ -1055,7 +1055,7 @@ fn parse_function(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
 fn parse_paren_function(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
-    let name = expect_word(scanner, span, "expected function name")?;
+    let name = expect_identifier(scanner, span, "expected function name")?;
     expect(
         scanner,
         &Tok::LParen,
@@ -1285,7 +1285,7 @@ fn parse_one_decl_assignment(
     scanner: &mut Scanner,
     span: Span,
 ) -> Result<DeclAssignment, Diagnostic> {
-    let name = expect_word(scanner, span, "expected variable name in declaration")?;
+    let name = expect_identifier(scanner, span, "expected variable name in declaration")?;
 
     if matches!(scanner.peek().token, Tok::Eq) {
         scanner.next(); // consume =
@@ -4113,6 +4113,23 @@ fn expect(scanner: &mut Scanner, expected: &Tok, span: Span, msg: &str) -> Resul
     }
 }
 
+fn expect_identifier(scanner: &mut Scanner, span: Span, msg: &str) -> Result<String, Diagnostic> {
+    let start = scanner.peek().span.start;
+    let name_span = span_from(scanner, start);
+    let name = expect_word(scanner, span, msg)?;
+    if !is_plain_identifier(&name) {
+        Err(parse_error(
+            name_span,
+            "SB4014",
+            format!(
+                "invalid name `{name}`; use [A-Za-z_][A-Za-z0-9_]* (ASCII letters, digits and `_`, not starting with a digit)"
+            ),
+        ))
+    } else {
+        Ok(name)
+    }
+}
+
 fn expect_word(scanner: &mut Scanner, span: Span, msg: &str) -> Result<String, Diagnostic> {
     match &scanner.peek().token {
         Tok::Word(w) => {
@@ -4120,13 +4137,8 @@ fn expect_word(scanner: &mut Scanner, span: Span, msg: &str) -> Result<String, D
             scanner.next();
             Ok(w)
         }
-        // Some keywords can also be used as identifiers in certain contexts.
-        // The spelling comes from `keyword_to_str`, the single reserved-word
-        // list — never from the variant's `Debug` name. Deriving it as
-        // `format!("{:?}", tok).to_lowercase()` is a second, silent answer to
-        // "how is this keyword spelled?" that happens to agree only because
-        // every variant here is a single lowercase word; it would have
-        // produced `dblbracketopen` for a variant whose name is not its text.
+        // Admit these keyword tokens as names so SB5092 can explain the clash.
+        // Their source spelling comes from keyword_to_str, not Debug rendering.
         Tok::In | Tok::Do | Tok::Done | Tok::Then | Tok::Fi | Tok::Else | Tok::Elif | Tok::Esac => {
             let name = keyword_to_str(&scanner.peek().token)
                 .expect("every variant in this arm is in keyword_to_str's domain")

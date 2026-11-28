@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=253
+plan=266
 echo "1..$plan" >&3
 
 set +e
@@ -1860,6 +1860,104 @@ f skip | /bin/cat
 f skip &
 - wait'
 [[ $rc = 0 && $out = $'[seen]\n[]\n[]' && -z $err ]]; chk flife.8
+
+# Identical, uncalled and same-kind definitions still have distinct source sites.
+run_sash 'fn f { echo unused }
+fn f { echo unused }'
+[[ $rc != 0 && $err == *':2:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* && $err == *'first defined at 1:1'* ]]; chk fnuniq.6
+
+run_sash 'fn f { return 3 }
+fn f { return 4 }'
+[[ $rc != 0 && $err == *':2:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.7
+
+run_sash 'fn f -> int { return 3 }
+fn f -> int { return 3 }'
+[[ $rc != 0 && $err == *':2:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.8
+
+run_sash 'fn f { echo "$1" }
+fn f { echo "$1:$2" }'
+[[ $rc != 0 && $err == *':2:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.9
+
+# The old name-only integer classification must not select a different body.
+run_sash 'fn f { echo one }
+x=$(f)
+echo "x=[$x]"
+fn f -> int { return 3 }
+echo after'
+[[ $rc != 0 && -z $out && $err == *':4:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.10
+
+run_sash 'fn f -> int { return 3 }
+x=$(f)
+echo "x=[$x]"
+fn f { echo one }
+x=$(f)
+echo "x=[$x]"'
+[[ $rc != 0 && -z $out && $err == *':4:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.11
+
+run_sash 'fn f { echo one }
+int n=$(( f ))
+echo "n=$n"
+fn f -> int { return 3 }'
+[[ $rc != 0 && -z $out && $err == *':4:1: error [SB5109]'* &&
+   $err == *'duplicate function definition `f`'* ]]; chk fnuniq.12
+
+run_sash 'fn f { echo first }
+fn f { echo second }
+fn f { echo third }'
+[[ $rc != 0 && $err == *':2:1: error [SB5109]'*'first defined at 1:1'* &&
+   $err == *':3:1: error [SB5109]'*'first defined at 1:1'* ]]; chk fnuniq.13
+
+# DD125's grammar applies at the definition, even without a call.
+bad=0
+for name in a-b a.b %f -x 9 99999999999999999999 9z 'a[0]' /bin/true ./x é; do
+    run_sash "fn $name { echo unused }"
+    [[ $rc != 0 && $err == *':1:4: error [SB4014]'* &&
+       $err == *"invalid name \`$name\`"* &&
+       $err == *'[A-Za-z_][A-Za-z0-9_]*'* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk fnident.1
+
+bad=0
+for source in 'fn a-b() { echo unused }' 'function a-b { return 0 }' \
+              'function a-b() -> int { return 7 }' 'a-b() { echo unused }'; do
+    run_sash "$source"
+    [[ $rc != 0 && $err == *SB4014* && $err == *'invalid name `a-b`'* &&
+       $err == *'[A-Za-z_][A-Za-z0-9_]*'* ]] || ((bad++))
+done
+for name in 9 99999999999999999999; do
+    run_sash "fn $name { return 4 }; fn f { return $name }"
+    [[ $rc != 0 && $err == *':1:4: error [SB4014]'* &&
+       $err == *"invalid name \`$name\`"* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk fnident.2
+
+bad=0
+for use in '/bin/true' 'x=$(/bin/true); echo "$x"' \
+           '/bin/true | /bin/cat' 'fn f { return /bin/true }; - f'; do
+    run_sash "fn /bin/true { echo wrong }
+$use"
+    [[ $rc != 0 && -z $out && $err == *':1:4: error [SB4014]'* &&
+       $err == *'invalid name `/bin/true`'* ]] || ((bad++))
+done
+[[ $bad = 0 ]]; chk fnident.3
+
+run_sash 'fn __helper2 { echo native }
+function helper_3() { return 0 }
+helper4() -> int { return 7 }
+str text=$(__helper2)
+if helper_3 { echo "$text" }
+echo $(helper4)'
+[[ $rc = 0 && $out = $'native\n7' && -z $err && -z $rerr ]]; chk fnident.4
+
+ln -s /bin/echo name-with-dash
+run_sash "$PWD/name-with-dash external"
+[[ $rc = 0 && $out = external && -z $err && -z $rerr ]]; chk fnident.5
 
 set -e
 tally

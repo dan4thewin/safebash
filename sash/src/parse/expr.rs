@@ -454,9 +454,7 @@ fn parse_trusted_splat_op(
 
 /// A plausible `[A-Za-z_][A-Za-z0-9_]*` identifier.
 pub(crate) fn is_identifier(s: &str) -> bool {
-    let mut chars = s.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    crate::ir::is_plain_identifier(s)
 }
 
 /// `Tok::Dollar(name)` arm — a simple variable expansion. Consumes the

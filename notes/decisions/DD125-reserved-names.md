@@ -77,11 +77,12 @@ names when converting to sash. No automatic renaming scheme or spelling
 normalization is selected; conversion must preserve identities rather
 than silently collapse distinct names onto one identifier.
 
-**Enforcement is pending** in `bug-function-name-shadows-command-path`,
-including converter impact. `bug-declaration-names-unvalidated` owns the
-existing variable-grammar gaps and should share the identifier predicate.
-No new diagnostic code is selected by this recording. Journal 600 records
-the decision; SB5092 above continues to name reserved-name violations.
+**Implemented** in journal 681. Both function-definition readers,
+declaration names and `for` binders share the existing identifier predicate.
+Malformed word names receive SB4014 at the name; SB5092 continues to name
+reserved-name violations. The converter emits MANUAL guidance for invalid
+Bash function names without renaming their definitions or calls. Journal
+600 records DG's decision; the two naming implementation owners are closed.
 
 ## Why
 
@@ -108,14 +109,19 @@ It is also what makes a **bare word in arithmetic** safe to define. `$(( wait
 ))` can name the intrinsic only because no variable may be called `wait`.
 That is the enabling half of DD#126.
 
-### Contextual keywords are included
+### Continuing and closing keywords are included
 
-`in` and `do` lex as ordinary words everywhere except their one syntactic
-position, so `int in=5` and `for in in a b` used to compile. They are
-reserved too: "anything the compiler already understands" does not have an
-exception for words the lexer happens to tokenize late. The parse still
-succeeds — `keyword_to_str` renders the name — and validation rejects it, so
-the diagnostic still names the keyword by its source spelling (spec `31.88`).
+Structural keywords, including `in` and `do`, have their own lexer tokens
+in every position. It is the parser's `expect_word` that admits eight of
+those tokens as names: `in`, `do`, `done`, `then`, `fi`, `else`, `elif` and
+`esac`. That admission, not context-sensitive lexing, let `int in=5` and
+`for in in a b` compile before the reserved-name guard.
+
+These names now reach SB5092. `keyword_to_str` preserves their source
+spelling in the diagnostic (spec `31.88`). Opening structural keywords
+instead fail to parse with SB4014; this decision does not require uniform
+diagnostic precedence. Command-like reserved words such as `return` remain
+ordinary `Word` tokens, but are still in the reserved set.
 
 ### What is *not* reserved
 

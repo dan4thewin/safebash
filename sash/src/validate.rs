@@ -13422,6 +13422,26 @@ pub enum ReservedScope {
     CommandTargets,
 }
 
+pub fn check_duplicate_function_definitions(program: &Program) -> Vec<Diagnostic> {
+    let mut first_sites: HashMap<&str, Span> = HashMap::new();
+    let mut diags = Vec::new();
+    for (function, span) in program.function_def_sites() {
+        if let Some(first) = first_sites.get(function.name.as_str()) {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5109",
+                format!(
+                    "duplicate function definition `{}`; first defined at {}:{} (DD#86 permits one definition per name)",
+                    function.name, first.line, first.col
+                ),
+            ));
+        } else {
+            first_sites.insert(&function.name, span);
+        }
+    }
+    diags
+}
+
 /// DD#125: a name the compiler already understands is not the user's to
 /// bind. Walks every site that *introduces* a name — the same set
 /// `collect_scope_names` enumerates (assignment LHS, declarations, `for`

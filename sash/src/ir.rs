@@ -1112,8 +1112,12 @@ impl Program {
 
     /// Program-level function definitions. SB5071 rejects every other placement.
     pub(crate) fn function_defs(&self) -> impl Iterator<Item = &Function> {
+        self.function_def_sites().map(|(f, _)| f)
+    }
+
+    pub(crate) fn function_def_sites(&self) -> impl Iterator<Item = (&Function, Span)> {
         self.statements.iter().filter_map(|stmt| match &stmt.kind {
-            StmtKind::Function(f) => Some(f),
+            StmtKind::Function(f) => Some((f, stmt.span)),
             _ => None,
         })
     }

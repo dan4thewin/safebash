@@ -158,6 +158,7 @@ fn walk_node(
         patches.push(Patch::insert_at(node.end_byte(), "\""));
     }
     match node.kind() {
+        "function_definition" => add_function_name_hint(node, source, prefix_lines),
         "declaration_command" => {
             if convert_declaration(node, source, patches, prefix_lines, annotate, collections) {
                 return;
@@ -349,6 +350,25 @@ fn walk_node(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         walk_node(child, source, patches, prefix_lines, annotate, collections);
+    }
+}
+
+fn add_function_name_hint(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize, String)>) {
+    let Some(name) = node.child_by_field_name("name") else {
+        return;
+    };
+    let text = node_text(name, source);
+    let mut bytes = text.bytes();
+    let valid = matches!(bytes.next(), Some(c) if c.is_ascii_alphabetic() || c == b'_')
+        && bytes.all(|c| c.is_ascii_alphanumeric() || c == b'_');
+    if !valid {
+        prefix_lines.push((
+            node.start_position().row,
+            format!(
+                "# MANUAL: function name `{}` is not a sash identifier ([A-Za-z_][A-Za-z0-9_]*); rename the definition and every call consistently",
+                summarize_span(text)
+            ),
+        ));
     }
 }
 

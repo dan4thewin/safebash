@@ -138,18 +138,18 @@ DG chose rejection over same-signature replacement or changing definitions.
 One name therefore denotes one body, one result kind and one inferred
 signature, without a textual "definition in force" choice.
 
-**Enforcement is pending** in `reject-duplicate-function-definitions`.
-That task also removes the accepted duplicate-definition programs behind
-`bug-int-call-by-name-redefinition`; neither task is complete merely because
-the policy is settled. DD#55's former definition-in-force contract is
-replaced by this rule. Journal 582 records the decision.
+**Implemented** in journal 681: SB5109 identifies each repeated definition
+and its original site, before definition-keyed analysis. The canonical
+definition inventory supplies both functions and their spans. The duplicate
+and integer-call-redefinition owners are closed. DD#55's former
+definition-in-force contract is replaced by this rule; journal 582 records
+DG's decision.
 
 Function-name spelling is separately settled by DD#125 (2026-11-09):
 the ASCII variable-identifier grammar, with existing reserved-name rules.
 Invalid definitions must reject even if unused; no path/numeric-name
-lookup exception remains. Enforcement is queued in
-`bug-function-name-shadows-command-path`, independently of duplicate
-definition rejection.
+lookup exception remains. Journal 681 implements this with an independent
+SB4014 parser guard, shared with declaration names and `for` binders.
 
 ## Declaring globals — the `str` keyword
 
