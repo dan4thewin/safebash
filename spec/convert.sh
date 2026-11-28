@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=230
+plan=235
 echo "1..$plan" >&3
 
 set +e
@@ -1669,6 +1669,68 @@ __helper2'
 [[ $rc = 0 && -z $err && $out != *'# MANUAL: function name'* &&
    $out == *'__helper2() { echo fine; }'* &&
    $out == *'echo "read-file() { echo literal; }"'* ]]; chk convname.3
+
+bad=0
+for source in 'for x; do echo "[$x]"; done' \
+    $'for x\ndo echo "[$x]"; done' 'for x do echo "[$x]"; done'; do
+    for annotation in '' --annotate; do
+        if [[ -n $annotation ]]; then run_convert_annotate "$source"; else run_convert "$source"; fi
+        [[ $rc = 0 && $out == *'in $(argv 1)'* \
+            && $out == *'tighten the attest predicate on `x`'* \
+            && $out != *'could not parse'* && -z $err ]] || bad=1
+        converted=$out
+        for mode in native c; do
+            SASH_MODE=$mode run_sash "$converted" a 'b c'
+            [[ $rc = 0 && $out = $'[a]\n[b c]' && -z $err && -z $rerr ]] || bad=1
+            SASH_MODE=$mode run_sash "$converted"
+            [[ $rc = 0 && -z $out && -z $err && -z $rerr ]] || bad=1
+        done
+    done
+done
+[[ $bad = 0 ]]; chk convfor.1
+
+bad=0
+for header in 'for x;' $'for x\n' 'for x'; do
+    run_convert "f() { $header do echo \"[\$x]\"; done; }
+f a 'b c' ''
+f"
+    converted=$out
+    [[ $rc = 0 && $out == *'in @args'* && $out != *'$(argv 1)'* \
+        && $out != *'attest x'* && $out != *'could not parse'* && -z $err ]] || bad=1
+    for mode in native c; do
+        SASH_MODE=$mode run_sash "$converted"
+        [[ $rc = 0 && $out = $'[a]\n[b c]\n[]' && -z $err && -z $rerr ]] || bad=1
+    done
+done
+[[ $bad = 0 ]]; chk convfor.2
+
+bad=0
+for source in 'for x in; do echo "[$x]"; done' \
+    $'for x in\ndo echo "[$x]"; done'; do
+    run_convert "$source"
+    [[ $rc = 0 && $out == *'for x in'* && $out == *'echo "[$x]"'* \
+        && $out != *'$(argv 1)'* && $out != *'@args'* && -z $err ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convfor.3
+
+run_convert 'echo "for x do" '\''for y do'\''
+# for z do
+for x in a; do echo "$x"; done'
+converted=$out
+run_sash "$converted"
+[[ $rc = 0 && $out = $'for x do for y do\na' && -z $err && -z $rerr ]]; chk convfor.4
+
+run_convert_annotate 'f() { for x do for y do echo "$x:$y"; done; done; }
+f a b'
+converted=$out
+bad=0
+[[ $rc = 0 && $converted == *'for x in @args'*'for y in @args'* \
+    && $converted != *'could not parse'* && -z $err ]] || bad=1
+for mode in native c; do
+    SASH_MODE=$mode run_sash "$converted"
+    [[ $rc = 0 && $out = $'a:a\na:b\nb:a\nb:b' && -z $err && -z $rerr ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convfor.5
 
 set -e
 tally

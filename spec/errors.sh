@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=723
+plan=729
 echo "1..$plan" >&3
 
 set +e
@@ -2919,8 +2919,8 @@ run_sash '/bin/echo hi
 # advice to define it nobody can take (SB5092 forbids `fn fi`). Each is now
 # SB4072, like a stray `}`, at a statement head and in every position a
 # command may stand (skw.1-skw.17). SB4072's `}` text now says when a `}`
-# does close a block (skw.18, skw.19), and the `else` and `elif` texts say
-# that after a brace body the clause must share the `}`'s line (skw.20). A
+# does close a block (skw.18, skw.19). Brace clauses may cross only newlines
+# and comments (clausenl.1 replaces the old same-line skw.20 contract). A
 # block that runs into a closer it cannot take is reported at that closer,
 # as bash does, where it was SB4014 or SB4027 at the `if` or `while`
 # (skw.21-skw.25). An `elif` or `else` clause's
@@ -2935,8 +2935,8 @@ skw_in='an `in` here continues nothing — an `in` may only follow the loop vari
 skw_esac='an `esac` here closes nothing — sash has no `case`; use the `[[ ]]` dispatch form: `[[ $x == pat { … } other { … } || { … } ]]` (exact match) or `[[ $x =~ regex { … } || { … } ]]` (regex match)'
 skw_fi='a `fi` here closes nothing — a `fi` ends the innermost open block only if that block is an `if … then` body (or its `elif … then` or `else` part), and only as a statement of its own'
 skw_done='a `done` here closes nothing — a `done` ends the innermost open block only if that block is the `do` body of a `while`, `until` or `for`, and only as a statement of its own'
-skw_else=$'an `else` here continues nothing — an `else` continues the innermost open block only if that block is an `if … then` or `elif … then` body, and only as a statement of its own; after a brace-form body it must directly follow that body\'s closing `}`, on the same line (`} else {`)'
-skw_elif=$'an `elif` here continues nothing — an `elif` continues the innermost open block only if that block is an `if … then` or `elif … then` body, and only as a statement of its own; after a brace-form body it must directly follow that body\'s closing `}`, on the same line (`} elif … {`)'
+skw_else=$'an `else` here continues nothing — an `else` continues the innermost open block only if that block is an `if … then` or `elif … then` body, and only as a statement of its own; after a brace-form body it must follow that body\'s closing `}` with only whitespace or comments between them (no `;` or intervening statement)'
+skw_elif=$'an `elif` here continues nothing — an `elif` continues the innermost open block only if that block is an `if … then` or `elif … then` body, and only as a statement of its own; after a brace-form body it must follow that body\'s closing `}` with only whitespace or comments between them (no `;` or intervening statement)'
 skw_rb=$'a `}` here closes nothing — a `}` ends the innermost open block only if that block is a `{ … }` one, and never right after a `|`, `&&`, `||` or `!` that still needs a command. For a literal brace, quote it (`\'a}b\'`)'
 skw_sub='unterminated `$(` — it is never closed before the end of the source, so everything after it was read as part of it'
 # skw.1-skw.8 each keyword at a statement head; skw.7 and skw.8 close one
@@ -2988,16 +2988,14 @@ run_sash '{ /bin/echo a | }'
 [[ $rc != 0 && -z $out && $err == *":1:17: error [SB4072] $skw_rb"* ]]; chk skw.18
 run_sash '- }'
 [[ $rc != 0 && -z $out && $err == *":1:3: error [SB4072] $skw_rb"* ]]; chk skw.19
-# skw.20 an `else` on the line after a brace body's `}` continues nothing.
-#        The `}` that follows it is a known parse-error cascade, unasserted
-#        (notes/tasks/bug-parse-error-in-block-cascades-sb4072.md)
+# DD68 permits a next-line clause. This is not an error-recovery test.
 run_sash 'if /bin/true {
   /bin/echo a
 }
 else {
   /bin/echo b
 }'
-[[ $rc != 0 && -z $out && $err == *":4:1: error [SB4072] $skw_else"* ]]; chk skw.20
+[[ $rc = 0 && $out = a && -z $err && -z $rerr ]]; chk clausenl.1
 # skw.21-skw.25 a header with no `then` or `do` runs into a closer: an `if`
 #               and a `while` header, an `elif` header, and an inner `if`
 #               body cut short by its loop's `done`. skw.25 is a `fi` that
@@ -3743,9 +3741,9 @@ run_sash '-'
 [[ $rc != 0 && -z $out && $err == *SB5011* \
    && $err == *"command '-' not found"* ]]; chk pcold.1
 
-run_sash 'for x'
+run_sash 'for x in a'
 [[ $rc != 0 && -z $out && $err == *SB4014* \
-   && $err == *'expected a `{ }` body or `do`'* ]]; chk pcold.2
+   && $err == *'expected a `{ }` body or `do`'* ]]; chk pcold.3
 
 # A quoted segment in a brace-less default still owes its own closer.
 run_sash "echo \$x:-\$(echo 'broken)"
@@ -4519,6 +4517,64 @@ if (( n == 1 )) {
 }
 echo done'
 [[ $rc != 0 && -z $out && $err == *':5:8: error [SB5043]'* ]]; chk tpos.5
+
+bad=0
+for source in 'if /bin/true { echo a }; else { echo b }' \
+    $'if /bin/true { echo a }\n;\nelse { echo b }' \
+    $'if /bin/true { echo a }\necho between\nelse { echo b }' \
+    $'fn f { if /bin/true { echo a }\n}\nelse { echo b }' \
+    $'if /bin/true { echo a }\nelse { echo b }\nelse { echo c }' \
+    $'if /bin/true { echo a }\nelse { echo b }\nelif /bin/true { echo c }'; do
+    run_sash "$source"
+    [[ $rc != 0 && -z $out && $err == *'SB4072'* \
+        && $err == *'no `;` or intervening statement'* ]] || bad=1
+done
+[[ $bad = 0 ]]; chk clausenl.5
+
+run_sash 'if /bin/false { echo a }
+# Keep the actual elif location.
+
+elif { echo b }'
+[[ $rc != 0 && -z $out && $err == *':4:6: error [SB4027]'* \
+    && $err == *'a `{ }` group cannot be a condition'* ]]; chk clausenl.6
+
+run_sash 'if /bin/true { echo visible }
+> /dev/null'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4014]'* \
+    && $err == *'expected expression'* ]]; chk clausenl.7
+
+bad=0
+for flags in '' --no-taint --no-taint-cst; do
+    for source in 'for x { echo "$x" }' 'for x do echo "$x"; done'; do
+        SASH_CFLAGS="$flags" run_sash "$source"
+        [[ $rc != 0 && -z $out && $err == *':1:7: error [SB4014]'* \
+            && $err == *'word-list `for` requires `in`'* ]] || bad=1
+    done
+done
+[[ $bad = 0 ]]; chk forhead.1
+
+bad=0
+for flags in '' --no-taint --no-taint-cst; do
+    for source in 'for x; in a b { echo "$x" }' \
+        'for x; in a b; do echo "$x"; done' 'for x; do echo "$x"; done'; do
+        SASH_CFLAGS="$flags" run_sash "$source"
+        [[ $rc != 0 && -z $out && $err == *':1:6: error [SB4014]'* \
+            && $err == *'a semicolon before `in` is not allowed'* ]] || bad=1
+    done
+done
+[[ $bad = 0 ]]; chk forhead.2
+
+bad=0
+for flags in '' --no-taint --no-taint-cst; do
+    for source in 'for x in { echo "$x" }' \
+        'for x in { echo "$x" } >/dev/null' \
+        'for x in; do echo "$x"; done' $'for x in\ndo echo "$x"; done'; do
+        SASH_CFLAGS="$flags" run_sash "$source"
+        [[ $rc != 0 && -z $out && $err == *':1:7: error [SB4014]'* \
+            && $err == *'at least one source item after `in`'* ]] || bad=1
+    done
+done
+[[ $bad = 0 ]]; chk forhead.3
 
 set -e
 tally

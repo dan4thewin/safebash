@@ -1,5 +1,5 @@
 title: "Require `in` and source items in word-list `for`; reject `;` before `in`"
-status: open
+status: done
 priority: P2
 kind: work
 depends: []
@@ -21,8 +21,23 @@ DG ruled:
 
 DD68 is authoritative, DD70 records the pointless-code rationale,
 and DD75 records the argument/converter boundary. Journal 598 records
-the discussion. This task keeps its slug and P2 priority as open
-implementation work; both policy questions are closed.
+the discussion. Implementation is complete on the unattended session
+branch, 2026-11-28; journal 682 records delivery and the full gate.
+
+Located SB4014 distinguishes missing `in`, a semicolon before `in` and
+an empty source list. `forhead.1`-`.5` preserve runtime emptiness,
+empty-string items and legal layouts while pinning the three refusals.
+`pcold.3` preserves the missing-body assertion with a populated header;
+the now-invalid old header in `pcold.2` retires.
+
+`convfor.1`-`.5` cover all three omitted-list Bash spellings, functions,
+top-level arguments, nested loops and explicit-empty/literal controls.
+Normal and `--annotate` output are exercised; the current converter has
+no separate canonical-output mode. Top-level loops reuse the existing
+argv-loop attest guidance. Narrow CST-token recovery supplies separators
+that stock tree-sitter-bash misses without guessing from source text.
+Before controls and four independent final-tree reversions pin the header,
+conversion, explicit-empty distinction and nested recovery.
 
 ## Accepted rule
 

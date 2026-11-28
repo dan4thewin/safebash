@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=140
+plan=145
 echo "1..$plan" >&3
 
 set +e
@@ -949,6 +949,50 @@ SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash '[[ $(/bin/sh -c "echo once >
 echo done'
 [[ $rc = 0 && $out = $'C\nS\ndone' && -z $err && $rerr = once ]]; chk dsplazy.15
 
+
+run_sash 'fn choose {
+  if [[ $1 == a ]] { echo a }
+  # A comment-only line is not a barrier.
+
+  elif [[ $1 == b ]] { echo b }
+  else if [[ $1 == c ]] { echo c }
+  else { echo d }
+}
+choose a
+choose b
+choose c
+choose d'
+[[ $rc = 0 && $out = $'a\nb\nc\nd' && -z $err && -z $rerr ]]; chk clausenl.2
+
+run_sash 'if /bin/true {
+  if /bin/false { echo wrong }
+  else { echo inner }
+}
+# The outer closer, not the inner one, owns this else.
+else { echo wrong }
+echo after'
+[[ $rc = 0 && $out = $'inner\nafter' && -z $err && -z $rerr ]]; chk clausenl.3
+
+run_sash 'if /bin/true { echo before }
+str next=after
+echo $next
+if /bin/false { echo wrong }
+echo independent'
+[[ $rc = 0 && $out = $'before\nafter\nindependent' && -z $err && -z $rerr ]]; chk clausenl.4
+
+run_sash 'for x
+# A newline is allowed before in.
+in a b; do echo "$x"; done
+for y
+in c d { echo "$y" }'
+[[ $rc = 0 && $out = $'a\nb\nc\nd' && -z $err && -z $rerr ]]; chk forhead.4
+
+run_sash 'for x in "" { echo "empty=[$x]" }
+array a=()
+for y in @a { echo "$y" }
+for z in $(argv 1) { attest z [[ -n $z ]]; echo "$z" }
+echo done'
+[[ $rc = 0 && $out = $'empty=[]\ndone' && -z $err && -z $rerr ]]; chk forhead.5
 
 set -e
 tally

@@ -404,14 +404,14 @@ fn stray_keyword_message(tok: &Tok) -> Option<String> {
         Tok::Else => "an `else` here continues nothing — an `else` continues the \
                       innermost open block only if that block is an `if … then` or \
                       `elif … then` body, and only as a statement of its own; after a \
-                      brace-form body it must directly follow that body's closing `}`, \
-                      on the same line (`} else {`)"
+                      brace-form body it must follow that body's closing `}` with only \
+                      whitespace or comments between them (no `;` or intervening statement)"
             .to_string(),
         Tok::Elif => "an `elif` here continues nothing — an `elif` continues the \
                       innermost open block only if that block is an `if … then` or \
                       `elif … then` body, and only as a statement of its own; after a \
-                      brace-form body it must directly follow that body's closing `}`, \
-                      on the same line (`} elif … {`)"
+                      brace-form body it must follow that body's closing `}` with only \
+                      whitespace or comments between them (no `;` or intervening statement)"
             .to_string(),
         Tok::Esac => format!(
             "an `esac` here closes nothing — sash has no `case`; use the `[[ ]]` \
@@ -895,6 +895,7 @@ fn parse_if_brace(
     let mut elif_clauses = Vec::new();
     let mut else_body = None;
     loop {
+        skip_clause_newlines(scanner);
         match scanner.peek().token {
             Tok::Elif => {
                 let elif_span = clause_keyword_span(scanner);
@@ -909,6 +910,18 @@ fn parse_if_brace(
         }
     }
     Ok(make_if(span, condition, then_body, elif_clauses, else_body))
+}
+
+fn skip_clause_newlines(scanner: &mut Scanner) {
+    let mut count = 0;
+    while matches!(scanner.peek_n(count).token, Tok::Newline) {
+        count += 1;
+    }
+    if matches!(scanner.peek_n(count).token, Tok::Elif | Tok::Else) {
+        for _ in 0..count {
+            scanner.next();
+        }
+    }
 }
 
 /// DD#68: one `elif COND { … }` clause of a brace `if` (the `elif` is
@@ -988,21 +1001,49 @@ fn parse_for(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
 }
 
 fn parse_for_words(scanner: &mut Scanner) -> Result<Vec<Expr>, Diagnostic> {
-    skip_terminators(scanner);
+    let in_span = expect_for_in(scanner)?;
     let mut words = Vec::new();
-    if matches!(scanner.peek().token, Tok::In) {
-        scanner.next();
-        while !scanner.at_eof()
-            && !matches!(
-                scanner.peek().token,
-                Tok::Semi | Tok::Newline | Tok::Do | Tok::Eof | Tok::LBrace
-            )
-        {
-            words.push(parse_expr(scanner)?);
-        }
-        skip_terminators(scanner);
+    while !scanner.at_eof()
+        && !matches!(
+            scanner.peek().token,
+            Tok::Semi | Tok::Newline | Tok::Do | Tok::Eof | Tok::LBrace
+        )
+    {
+        words.push(parse_expr(scanner)?);
     }
+    if words.is_empty() {
+        return Err(parse_error(
+            in_span,
+            "SB4014",
+            "word-list `for` requires at least one source item after `in`".into(),
+        ));
+    }
+    skip_terminators(scanner);
     Ok(words)
+}
+
+fn expect_for_in(scanner: &mut Scanner) -> Result<Span, Diagnostic> {
+    while matches!(scanner.peek().token, Tok::Newline) {
+        scanner.next();
+    }
+    let start = scanner.peek().span.start;
+    let span = span_from(scanner, start);
+    match scanner.peek().token {
+        Tok::In => {
+            scanner.next();
+            Ok(span)
+        }
+        Tok::Semi => Err(parse_error(
+            span,
+            "SB4014",
+            "word-list `for` requires `in`; a semicolon before `in` is not allowed".into(),
+        )),
+        _ => Err(parse_error(
+            span,
+            "SB4014",
+            "word-list `for` requires `in` before its source items".into(),
+        )),
+    }
 }
 
 /// DD#68: parse a loop body — `{ … }` (brace form) or `do … done` (sugar).

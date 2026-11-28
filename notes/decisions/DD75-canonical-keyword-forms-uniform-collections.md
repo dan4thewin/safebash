@@ -239,7 +239,7 @@ program-arg model (`argv`/`arg`/`argc`).
 A word-list `for` must contain `in` and at least one source item;
 omitting the list does not implicitly select arguments, and writing
 an empty `in` list is a pointless-code error. Runtime-empty data is
-different. Enforcement is pending in `q-for-without-in-list`.
+different. Enforcement is complete in `q-for-without-in-list` (journal 682).
 
 ### Implemented (2026-08-21) — core
 
@@ -300,8 +300,9 @@ The converter emits the canonical forms and accepts the bash forms as input:
   meaning; it does not add an implicit iteration source to sash.
   A genuinely empty `in` list is different and must not be rewritten
   as argument iteration or silently removed to evade DD68's error.
-  Compiler/converter enforcement is pending in `q-for-without-in-list`
-  (journal 598), including default and canonicalized body spellings.
+  Compiler/converter enforcement is complete in `q-for-without-in-list`
+  (journal 682). Both current output modes, normal and `--annotate`, are
+  covered; journal 598 records the original decision.
 
 ## 7. Follow-on bugs (not part of the decision; fix separately)
 

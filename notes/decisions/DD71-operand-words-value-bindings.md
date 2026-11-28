@@ -152,8 +152,8 @@ not two inferred commands.
 DD68 permits a brace-form `else`/`elif` to follow its preceding body
 across newlines and comments, but not across `;` or another statement.
 That clause-only exception does not attach next-line operators, redirects
-or background marks to a completed statement. Its enforcement belongs to
-`q-clause-on-next-line`; the other separator/binding-list work remains in
+or background marks to a completed statement. It is implemented in
+`q-clause-on-next-line` (journal 682); the other separator/binding-list work remains in
 `q-statement-form-residuals`.
 
 **One or more adjacent assignments form a binding list.** Plain

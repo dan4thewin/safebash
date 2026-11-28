@@ -316,8 +316,9 @@ analysis. Other eligible boolean discard retains the rule above.
 
 **Enforcement pending:** `reject-pointless-statements` owns the
 result-only effect/use check, its diagnostic and directly affected
-advice/specs. `q-for-without-in-list` separately owns the word-list
-header refusals, including the explicitly empty list (journal 598).
+advice/specs. `q-for-without-in-list` separately implements the word-list
+header refusals, including the explicitly empty list (journal 682;
+decision in journal 598).
 Neither guard's refusal is evidence that the other works. SB4018 must not
 recommend `-` or `|| :` as an unconditional escape for a pointless test.
 No diagnostic number or implementation architecture is selected here.

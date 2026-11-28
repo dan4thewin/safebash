@@ -63,12 +63,62 @@ impl Patch {
     }
 }
 
-pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> String {
+fn parse_conversion_source(source: &str) -> (std::borrow::Cow<'_, str>, tree_sitter::Tree) {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_bash::LANGUAGE.into())
         .expect("Error loading Bash grammar");
-    let tree = parser.parse(source, None).expect("Failed to parse");
+    let mut source = std::borrow::Cow::Borrowed(source);
+    let mut tree = parser
+        .parse(source.as_bytes(), None)
+        .expect("Failed to parse");
+    loop {
+        if !tree.root_node().has_error() {
+            return (source, tree);
+        }
+        let mut tokens = Vec::new();
+        collect_bash_tokens(tree.root_node(), &mut tokens);
+        let insertions: Vec<_> = tokens
+            .windows(3)
+            .filter_map(|t| implicit_for_separator(t[0], t[1], t[2]))
+            .collect();
+        if insertions.is_empty() {
+            return (source, tree);
+        }
+        for at in insertions.into_iter().rev() {
+            source.to_mut().insert(at, ';');
+        }
+        tree = parser
+            .parse(source.as_bytes(), None)
+            .expect("Failed to parse");
+    }
+}
+
+// Stock tree-sitter-bash misparses Bash's `for x do`. Add its optional
+// separator before conversion so nested loops retain their real body/scope.
+// A recovered header can straddle an ERROR node and the following do_group.
+fn collect_bash_tokens<'a>(node: Node<'a>, tokens: &mut Vec<Node<'a>>) {
+    if node.child_count() == 0 {
+        tokens.push(node);
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_bash_tokens(child, tokens);
+    }
+}
+
+fn implicit_for_separator(head: Node, variable: Node, body: Node) -> Option<usize> {
+    (head.kind() == "for"
+        && head.parent().is_some_and(|p| p.is_error())
+        && variable.kind() == "variable_name"
+        && body.kind() == "do")
+        .then_some(variable.end_byte())
+}
+
+pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> String {
+    let (source, tree) = parse_conversion_source(source);
+    let source = source.as_ref();
 
     let src = source.as_bytes();
     let mut patches: Vec<Patch> = Vec::new();
@@ -247,6 +297,7 @@ fn walk_node(
                 "# MANUAL: select — not supported in sash, rewrite as while+read menu".into(),
             ));
         }
+        "for_statement" => convert_implicit_for(node, source, patches, prefix_lines),
         "process_substitution" => {
             let line = node.start_position().row;
             prefix_lines.push((
@@ -2273,6 +2324,33 @@ fn positional_hoist(start: usize, end: usize, index: &str) -> Patch {
     }
 }
 
+fn convert_implicit_for(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let mut cursor = node.walk();
+    if node
+        .children(&mut cursor)
+        .any(|c| matches!(c.kind(), "in" | "ERROR"))
+    {
+        return;
+    }
+    let Some(variable) = node.child_by_field_name("variable") else {
+        return;
+    };
+    let in_function = has_ancestor_kind(node, "function_definition");
+    let list = if in_function { "@args" } else { "$(argv 1)" };
+    patches.push(Patch::insert_at(
+        variable.end_byte(),
+        &format!(" in {list}"),
+    ));
+    if !in_function {
+        add_argument_loop_attest(node, source, patches, prefix_lines);
+    }
+}
+
 /// `$@` / `$*`. In a for-in header this is the iterate-the-arguments idiom and
 /// converts mechanically; anywhere else it is a splat into a command, where
 /// bash's empty case has no sash spelling and the author must choose one.
@@ -2315,6 +2393,15 @@ fn convert_splat(
         original: None,
     });
 
+    add_argument_loop_attest(loop_node, source, patches, prefix_lines);
+}
+
+fn add_argument_loop_attest(
+    loop_node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
     // The loop variable is tainted per-iteration (DD#60 Q5), so the body needs
     // a leading attest. Insert it after `do` rather than as a prefix line: a
     // one-line `for …; do …; done` has no line of its own to prefix, and a

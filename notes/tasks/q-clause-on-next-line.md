@@ -1,5 +1,5 @@
 title: "Allow brace-form else/elif clauses on following lines"
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
@@ -32,8 +32,13 @@ same-line clauses, accepted header/body layouts, `else if` desugaring,
 keyword forms and explicit continuation keep their contracts. Capture/
 attest adjacency does not need its binding boundaries erased.
 
-The policy question is closed; **implementation remains open** here.
-DD71, GUIDE and journal 601 record the boundary and ownership.
+Implemented on the unattended session branch, 2026-11-28. Conditional
+newline lookahead preserves non-clause boundaries; SB4072 describes the
+accepted layout. `clausenl.1`-`.7` cover attachment, nesting, barriers,
+diagnostic positions and a non-attaching next-line redirect. `skw.20`
+retires at its changed contract. Journal 682 records before controls,
+two independent clause reversions and the passing predicted full gate.
+General block-error recovery remains separately owned.
 
 ## Bounded implementation
 
@@ -50,9 +55,10 @@ Source inspection at `6187dc14` confirms a local parser route:
 - Preserve `clause_keyword_span` (parser.rs:858-861) at the actual
   keyword. The existing AST and downstream branch semantics suffice.
 
-This is an implementation-cost assessment, not a tested patch or a
-performance measurement. No lexer redesign, new AST form or backend
-semantics are selected. Converter output need not adopt the new layout;
+This was the implementation-cost assessment for the policy recording,
+not a performance measurement. The delivered implementation uses that
+local route, without a lexer redesign, new AST form or backend semantics.
+Converter output need not adopt the new layout;
 preserve its existing valid forms rather than changing formatting policy.
 
 `stray_keyword_message` must stop claiming that a clause must be on the

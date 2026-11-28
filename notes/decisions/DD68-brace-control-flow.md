@@ -41,7 +41,7 @@ for ((init; cond; incr)) { … }
 The classic `if COND; then …; [elif …; then …;] [else …;] fi` and
 `while/until/for …; do …; done` remain accepted (DD#67 sugar).
 
-**Next-line clauses (DG, 2026-11-09; implementation pending):**
+**Next-line clauses (DG, 2026-11-09; implemented 2026-11-28):**
 after a brace-form `if` or `elif` body, its next `elif` or `else` may
 follow one or more newlines, including blank and comment-only lines.
 No backslash continuation is needed:
@@ -70,9 +70,9 @@ backslash continuation remain legal.
 DG accepted the allowance provided it was cheap. The parser already has
 buffered, comment-skipping lookahead: look past newlines for a clause
 keyword and consume those newlines only when a clause follows. No new
-AST form or backend behavior is needed. The existing P3
-`q-clause-on-next-line` owns implementation and diagnostic/spec migration;
-journal 601 records the decision and the source inspection.
+AST form or backend behavior is needed. `q-clause-on-next-line` is complete;
+journal 601 records the decision, and journal 682 records implementation,
+diagnostic/spec migration and independent boundary reversions.
 
 **Statement boundaries (DG, 2026-11-09; implementation pending):**
 the closing `}` of a completed construct, or its `fi`/`done`, needs
@@ -144,10 +144,11 @@ argument iteration to those explicit forms. A genuinely empty Bash
 `in` list is not the omitted-list form and must not become an argument
 loop or be silently erased to evade the refusal.
 
-**Enforcement is pending** in the existing P2 `q-for-without-in-list`,
-now implementation work covering compiler and converter. DD70 records
-the pointless-code rationale; journal 598 records the ruling. No new
-diagnostic code or implementation architecture is selected here.
+**Implemented 2026-11-28:** `q-for-without-in-list` covers the compiler
+and converter delivery. SB4014 distinguishes the three invalid headers.
+The converter expands omitted argument lists and preserves explicitly
+empty lists for refusal. DD70 records the pointless-code rationale;
+journal 598 records the ruling and journal 682 the implementation evidence.
 
 ## Statements do not produce results (DG, 2026-11-09)
 
