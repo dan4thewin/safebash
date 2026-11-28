@@ -1,5 +1,5 @@
 title: "Command substitutions in read sources reach SSA and codegen unlowered"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -38,31 +38,43 @@ CmdSubstBody should have been lifted during transform.
 The native CLI reports failure with exit 1; C emission panics with exit 101.
 These were compile-only controls, not executions of the operational script.
 
-## Cause and repair boundary
+## Cause and implemented repair, 2026-11-28
 
 Sed sugar carries an implicit boolean-discarding `gsub` substitution.
-`capture_value` (`sash/src/transform/expr_handlers.rs:95-118`) represents
+`capture_value` (`sash/src/transform/expr_handlers.rs`) represents
 that suppressed substitution as `SsaValue::CmdSubstBody`, pending normal
 materialization.
 
-`lower_newread` (`sash/src/transform/cmd_handlers.rs:39-73`) converts the
-source with `expr_to_value`, but invokes `lift_int_func_calls` only when an
-attached redirect scope is nonempty. Without that scope, the unlowered body
-is placed directly in `SplitValue`. The SSA backstop classifies the carrier
-as tainted (`sash/src/ssa_taint.rs:1089-1104`); disabling taint merely lets
-it reach the backend's unlowered-value guard.
+At the repair baseline `fa55ed7e`, `lower_newread`
+(`sash/src/transform/cmd_handlers.rs`) converted the source with
+`expr_to_value`, but invoked `lift_int_func_calls` only when an attached
+redirect scope was nonempty. Without that scope, the unlowered body was
+placed directly in `SplitValue`. The SSA backstop classified the carrier
+as tainted; disabling taint merely let it reach the backend's
+unlowered-value guard.
 
-Repair the missing source-lowering step, not the symptom by making an
-unlowered body clean or adding an attest/trust escape to the caller.
-Reuse the existing shared materializer; no new walker, taint exception,
-runtime interface or diagnostic policy is selected by this filing.
+Every explicit read source now passes through the shared unsuppressed
+materializer. Only the extra scalar snapshot remains conditional on an
+attached redirect scope. The repair adds no walker, taint exception,
+runtime interface or caller attest/forced read, and leaves splitting and
+collection publication unchanged.
+
+DG selected this repair from the backlog on 2026-11-28. Five real-CLI
+regressions, `readsrc.1`-`.5` in `spec/wordsplit.sh`, all fail on the original
+compiler and on the final-tree reversion in both modes; all 152 cases pass
+after restoring the repair. Separate before/after controls preserve source
+evaluation before executable redirect targets and SB5020 for tainted
+captures. The predicted full gate passes with ten new mode IDs, no flips or
+retirements, and 13,426 checks (13,413 passing, 13 existing skips).
+[Journal 680](../journal/680-computed-read-sources.md) records the proof.
 
 The [negated-test buffering limitation](q-buffer-capture-eligibility.md)
-is separate. In the original resolver, moving `!` inside `[[ ]]` removes
-the outer capture's SB5020 but exposes six downstream backstop diagnostics
+remains separate. In the original resolver, moving `!` inside `[[ ]]` removed
+the outer capture's SB5020 but exposed six downstream backstop diagnostics
 inside the function. The reduced program above has no negated test and
-still fails.
+isolates the repaired source-lowering defect.
 
-DG requested backlog recording, not implementation.
+The original 2026-11-24 request was backlog recording, not implementation.
 [Journal 669](../journal/669-capture-buffer-and-read-source-backlog.md)
-records the scope.
+retains that evidence and scope. This repair did not read or execute the
+operational script.

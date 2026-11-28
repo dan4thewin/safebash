@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=147
+plan=152
 echo "1..$plan" >&3
 
 set +e
@@ -740,6 +740,48 @@ run_sash 'u=""
 read ${u:!~} f
 echo "${f[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.20
+
+# Computed read sources must be materialized before splitting (DD99).
+# Sed sugar discards its boolean even when there is no match.
+run_sash 'fn f { read ${1:s/,/$'"'"'\x00'"'"'/g} _a; for entry in @_a { echo $entry } }
+s=$(f warm)
+echo $s'
+[[ $rc = 0 && $out = warm && -z $err && -z $rerr ]]; chk readsrc.1
+
+run_sash 'str csv=one,,two,
+array fields=(old)
+read ${csv:s/,/$'"'"'\x00'"'"'/g} fields
+echo "$(len fields):$(join fields "|"):$csv"'
+[[ $rc = 0 && $out = '4:old|one||two:one,,two,' && -z $err && -z $rerr ]]; chk readsrc.2
+
+# Earlier word parts survive a later call's writes; the call runs once.
+run_sash 'int calls=0
+str prefix=before
+fn produce { (( calls += 1 )); prefix=after; write $'"'"'one\x00two'"'"' }
+array fields=(old)
+read "$prefix:$(produce):$prefix" fields
+echo "$(join fields ,)|$calls|$prefix"'
+[[ $rc = 0 && $out = 'old,before:one,two:after|1|after' && -z $err && -z $rerr ]]; chk readsrc.3
+
+run_sash 'int calls=0
+for tag in one two {
+  read $( (( calls += 1 )); write $tag) _fields
+  echo "$(len _fields):$(join _fields ,):$calls"
+}'
+[[ $rc = 0 && $out = $'1:one:1\n1:two:2' && -z $err && -z $rerr ]]; chk readsrc.4
+
+# Handling the caller's status cannot catch a failure inside the source.
+run_sash 'array fields=(kept old)
+fn produce {
+  str value=$(/bin/false)
+  attest value [[ $value == anything ]]
+  echo $value
+}
+fn fill { read $(produce) fields; return 0 }
+ERR { echo "kept:$(len fields)" }
+if fill { echo bad } else { echo caught }
+echo continued'
+[[ $rc = 1 && $out = kept:2 && -z $err && $rerr == *'/bin/false: command failed'* ]]; chk readsrc.5
 
 # ---------------------------------------------------------------------------
 # DD#64, second half — `\<newline>` is a line continuation in an *unquoted*

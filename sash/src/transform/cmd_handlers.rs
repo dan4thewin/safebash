@@ -54,12 +54,12 @@ fn lower_newread(
         ),
     };
     let source = source.map(|source| {
-        if scope.is_empty() {
-            return source;
-        }
         let source = super::functions::unsuppressed(state, |state| {
             super::functions::lift_int_func_calls(source, ssa, state, &mut block)
         });
+        if scope.is_empty() {
+            return source;
+        }
         super::functions::retain_scalar(source, ssa, state, block)
     });
     super::statements::lower_redirect_scope(
