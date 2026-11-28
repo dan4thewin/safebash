@@ -1,5 +1,5 @@
 title: "Bug: the C backend prints i64::MIN as the bare literal `-9223372036854775808`, which C reads as unary minus on an unsigned constant"
-status: open
+status: done
 priority: P4
 kind: bug
 depends: []
@@ -8,7 +8,29 @@ gates:
   - "every site that renders an i64 into C source goes through one helper, which spells i64::MIN `(-9223372036854775807L - 1)`"
   - "m1, a9, m2 and m3 print the same values in both modes as today; a spec pins each one"
 
-## Found
+## Resolution, 2026-11-28
+
+Shared `c_int_literal` emits the signed minimum expression. Scalar/status
+values and ordinary arithmetic use it through integer-value lowering;
+substring offsets and lengths use it directly. Synthesized counter
+immediates and the omitted-slice-count constant use the same formatter.
+`cmin.1` checks the four historical value/status/arithmetic cases with
+current legal source, plus both substring operands. It also compiles real
+CLI-emitted C with `gcc -std=c11 -Wall` and rejects integer-constant
+warnings. Runtime outcomes remain unchanged in native and C.
+
+Independent reversions of parsed literals, substring offsets and substring
+lengths each fail `cmin.1` in both modes. A separate counter-immediate
+reversion stayed green: all four production constructors supply `1`, so
+ordinary source arithmetic cannot test a minimum immediate in that SSA
+variant. Shared formatting is retained for consistency, without claiming
+that source reachability or adding a rival formatter-only unit.
+[Journal 684](../journal/684-unattended-diagnostics-and-c-literals.md)
+records the controls, complete restoration and ordinary gate.
+
+## Original report
+
+### Found
 
 2026-10-27, while porting F1+F4 (journal 537), which made `return -1` a
 status value. The output is right in both backends, so nothing a user sees is

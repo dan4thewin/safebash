@@ -1848,6 +1848,24 @@ pub(crate) fn is_int_sink_literal(text: &str) -> bool {
     text.parse::<i64>().is_ok()
 }
 
+/// The first invalid substring field in its original spelling. Decimal
+/// validation retains the existing parenthesis normalization.
+pub(crate) fn bad_substring_part(text: &str) -> Option<String> {
+    let parts: Vec<&str> = text.split(':').collect();
+    match parts.as_slice() {
+        [offset] | [offset, ""] => not_an_int(offset),
+        [offset, length] => not_an_int(offset).or_else(|| not_an_int(length)),
+        _ => Some(text.to_string()),
+    }
+}
+
+fn not_an_int(part: &str) -> Option<String> {
+    part.replace(['(', ')'], "")
+        .parse::<i64>()
+        .err()
+        .map(|_| part.to_string())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RedirectOp {
     Write,     // >

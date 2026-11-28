@@ -1,11 +1,24 @@
 title: "`${a[-1]}` is reported as a \"string key\", and advised to \"use an integer\""
-status: open
+status: done
 priority: P2
 kind: diagnostic-quality
 depends: []
 gates:
   - "a negative literal subscript names negative indexing as the reason, not string-vs-int"
   - "the `map` arm keeps accepting `-1` as an ordinary string key"
+
+## Resolution, 2026-11-28
+
+Indexed-array diagnostics reuse the existing negative-literal recognizer
+and explain that literal negative indices do not count from the end.
+They advise a nonnegative decimal index, not an integer/string conversion.
+`diagmsg.5-.7` cover read, write and unset; all fail before and under the
+diagnostic reversion. `diagmsg.8` preserves dynamic negative array keys and
+negative map string keys, including unset/default behavior. No indexing
+policy changes. Both modes pass the ordinary gate; see
+[journal 684](../journal/684-unattended-diagnostics-and-c-literals.md).
+
+## Original report
 
 ```sh
 array a=(1 2 3); echo "${a[-1]}"

@@ -1,11 +1,24 @@
 title: "bug: an attest `(( … ))` near-miss co-fires SB4020 with `$(( … ))` text"
-status: open
+status: done
 priority: P3
 kind: bug
 depends: []
 gates:
   - "`s=$(- arg 1); attest s (( n = (strlen s) ))` reports SB5054 only, or a second diagnostic that names the attest's `(( … ))` correctly"
   - "a plain `x=$(( n = 1 ))` still gets SB4020's `$(( … ))` text"
+
+## Resolution, 2026-11-28
+
+Arithmetic attest predicates no longer depend on successful conversion
+classification to avoid the rvalue-mutation check. The parser constructs
+an explicit predicate after at least one lead; SB5054 rejects malformed
+conversion predicates independently. Ordinary arithmetic values still
+receive SB4020. Existing `93.42` and `93.53` require SB5054 without SB4020
+and fail before the fix and under its independent reversion, in both modes.
+[Journal 684](../journal/684-unattended-diagnostics-and-c-literals.md)
+records the construction check and passing gate.
+
+## Original report
 
 Found 2026-10-31 while porting F10 (journal 552). It reproduces on the pre-F10
 binary too.

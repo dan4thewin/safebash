@@ -4128,11 +4128,12 @@ fn reject_nonscalar_redirect_target(target: &Expr, span: Span) -> Result<(), Dia
     Err(parse_error(
         span,
         "SB4049",
-        "a redirect target must be a scalar filename — a literal/quoted path, \
-         `$x`, `${x:-default}`, or `$a[i]`. sash doesn't support a command \
-         substitution `$(…)` or arithmetic `$((…))` as a redirect target: the \
-         compiler can't know the resulting filename. Assign it to a variable \
-         first, then redirect to `$v`."
+        "a redirect target must be a provably nonempty string filename — for \
+         example, a nonempty literal/quoted path, `${x:?missing filename}`, \
+         `${x:-default}`, or `${a[0]:?missing filename}`. Direct command \
+         substitution `$(…)` and arithmetic `$((…))` targets are not supported. \
+         Assign the value to a variable first, then redirect to \
+         `${v:?missing filename}` after any required attest."
             .to_string(),
     ))
 }

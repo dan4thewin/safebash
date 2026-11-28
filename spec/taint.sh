@@ -1354,7 +1354,7 @@ attest x (( y = x * 2 ))
 run_sash 'x=$(printf 123)
 attest x (( y = 5 ))
 echo $(( y ))'
-[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.42
+[[ $rc != 0 && -z $out && $err == *SB5054* && $err != *SB4020* ]]; chk 93.42
 # 93.43 …and the predicate must be an assignment at all
 run_sash 'x=$(printf 123)
 attest x (( x ))
@@ -1387,7 +1387,7 @@ attest x y z w in a (( 1 ))
 run_sash 'array a=(1 2)
 attest e in a (( t = e ))
 /bin/echo ${a[0]}'
-[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.53
+[[ $rc != 0 && -z $out && $err == *SB5054* && $err != *SB4020* ]]; chk 93.53
 # 93.54 the scalar form is untouched
 run_sash 'x=$(printf 123)
 attest x (( y = x ))

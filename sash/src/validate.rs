@@ -2012,6 +2012,7 @@ fn check_inline_glob(c: &Command, diags: &mut Vec<Diagnostic>) {
     let args = match expr_literal_str(&c.name) {
         "glob" => return,
         "rglob" => &c.args[..c.args.len().min(2)],
+        "exec" => &c.args[c.args.len().min(1)..],
         _ => &c.args,
     };
     for arg in args {
@@ -3386,24 +3387,14 @@ fn attest_arith_near_miss(c: &Command) -> Option<ArithNearMiss<'_>> {
     }
 }
 
-/// DD#93 Part D: the `(( TARGET = SOURCE ))` an attest carries as its
-/// predicate, if it has one. Rules written for `$(( … ))` **rvalues** must
-/// skip it — it is a deliberate assignment whose store the transform emits,
-/// not a side-effect-free value expansion.
+/// An attest's `(( … ))` predicate is not a `$(( … ))` rvalue. The parser
+/// constructs literal lead names; every malformed arithmetic predicate is
+/// rejected by `check_attest_convert_names` (SB5054), not by rvalue rules.
 pub fn attest_arith_predicate(stmt: &Statement) -> Option<&Expr> {
     let StmtKind::Command(c) = &stmt.kind else {
         return None;
     };
     if expr_literal_str(&c.name) != "attest" {
-        return None;
-    }
-    // Only a predicate that actually DECODES earns the exemption. Exempting a
-    // near-miss as well is what let it slip past SB4020 into the value path and
-    // panic there; it is SB5054 now.
-    if !matches!(
-        classify_attest(&c.args),
-        Some((_, AttestPredicate::ArithConvert { .. }))
-    ) {
         return None;
     }
     let last = c.args.last()?;
@@ -3600,15 +3591,30 @@ fn walk_own_exprs_in_stmt(stmt: &Statement, f: &mut impl FnMut(&Expr, Span)) {
 
 // ── SB5012: $? availability state machine ─────────────────────
 //
-// States: Undefined → Available (after non-suppressed command) → Undefined (consumed)
+// Unavailable states retain whether status was absent, discarded, consumed or scoped away.
 // In || branches: inherited status available only for first statement.
 // SECURITY: prevents use-after-consume and uninitialized $? reads.
 
-/// $? state machine: undefined → available (after command) → undefined (consumed)
+/// Availability and the reason a status became unavailable.
 #[derive(Clone, Copy, PartialEq)]
 enum StatusState {
     Undefined,
     Available,
+    Discarded,
+    Consumed,
+    ScopeEnded,
+}
+
+impl StatusState {
+    fn unavailable_reason(self) -> Option<&'static str> {
+        match self {
+            Self::Undefined => Some("no preceding command"),
+            Self::Available => None,
+            Self::Discarded => Some("the preceding result was explicitly discarded"),
+            Self::Consumed => Some("the available status has already been consumed"),
+            Self::ScopeEnded => Some("the preceding handling scope has ended"),
+        }
+    }
 }
 
 /// DD#126: a compiler-managed value that a single statement produces as a
@@ -3655,7 +3661,7 @@ impl FlowState {
     /// After a catching construct (`if`/`while`/`for`/`case`, or a `&&`/`||`
     /// list): which branch ran is not known, so nothing survives.
     fn end_construct(&mut self) {
-        self.status = StatusState::Undefined;
+        self.status = StatusState::ScopeEnded;
         self.latch = LatchState::Stale;
     }
 }
@@ -3811,10 +3817,10 @@ fn check_dq_case(c: &crate::ir::Case, state: &mut FlowState, diags: &mut Vec<Dia
 /// what this statement does (sets, consumes, or neither).
 fn check_dq_leaf(stmt: &Statement, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     if stmt_uses_status(stmt) {
-        if state.status != StatusState::Available {
-            emit_status_unavailable(stmt, diags);
+        if let Some(reason) = state.status.unavailable_reason() {
+            emit_status_unavailable(stmt, reason, diags);
         }
-        state.status = StatusState::Undefined;
+        state.status = StatusState::Consumed;
     }
     // Reads are checked against the *incoming* latch, before this statement's
     // own transition, so `- /bin/x & ; - wait $!` reads a fresh `$!` and only
@@ -3910,7 +3916,7 @@ fn leaf_status_after(stmt: &Statement) -> Option<StatusState> {
         return leaf_status_after(&r.body);
     }
     if is_suppressed(stmt) {
-        return Some(StatusState::Undefined);
+        return Some(StatusState::Discarded);
     }
     if is_command_like(stmt) || is_assignment_from_arith(stmt) || is_capture_condition_stmt(stmt) {
         return Some(StatusState::Available);
@@ -3946,18 +3952,18 @@ fn is_capture_condition_stmt(stmt: &Statement) -> bool {
     matches!(&stmt.kind, StmtKind::Assignment(a) if is_capture_condition_rhs(&a.value))
 }
 
-/// Emit an SB5012 at every `$?` / `$(status)` in `stmt` — the status is
-/// consumed with no preceding command to have set it.
-fn emit_status_unavailable(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+/// Emit an SB5012 at every `$?` / `$(status)` in `stmt`.
+fn emit_status_unavailable(stmt: &Statement, reason: &str, diags: &mut Vec<Diagnostic>) {
     let mut spans = Vec::new();
     find_status_reads(stmt, &mut spans);
     for span in spans {
         diags.push(Diagnostic::error_span(
             span,
             "SB5012",
-            "$(status) is not available here — no preceding command \
-             (the punctuation sugar $? reads the same value)"
-                .to_string(),
+            format!(
+                "$(status) is not available here — {reason} \
+                 (the punctuation sugar $? reads the same value)"
+            ),
         ));
     }
 }
@@ -4107,7 +4113,7 @@ fn check_dq_body_branch(stmts: &[Statement], state: FlowState, diags: &mut Vec<D
             check_dq_stmt(s, &mut first_state, diags);
         } else {
             // After first statement, inherited status is consumed
-            let mut inner = FlowState::new(StatusState::Undefined);
+            let mut inner = FlowState::new(StatusState::Consumed);
             check_dq_stmt(s, &mut inner, diags);
         }
     }
@@ -12691,7 +12697,7 @@ fn arg_index_diag(e: &Expr, c: &Command) -> Option<Diagnostic> {
 
 /// A statically-negative integer literal (`-1`, `-42`) — the index form DD#60
 /// rejects at compile time. `-` followed by ASCII digits, nothing else.
-fn is_negative_int_literal(e: &Expr) -> bool {
+pub(crate) fn is_negative_int_literal(e: &Expr) -> bool {
     let s = expr_literal_str(e);
     matches!(s.strip_prefix('-'), Some(rest) if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
 }

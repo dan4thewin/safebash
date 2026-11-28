@@ -1257,8 +1257,8 @@ fn check_int_string_ops(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeEr
 /// Two spellings are legitimate and must keep working: the parenthesised form
 /// carries a negative offset (`${s:(-2)}` — the bare `${s:-2}` is the `:-`
 /// disposition, so parens are the only way to write it), and an empty length
-/// (`${s:1:}`) is 0 in bash too. `try_substring_op` strips the parens, so the
-/// operand seen here is already `-2`.
+/// (`${s:1:}`) is 0 in bash too. `try_substring_op` normalizes valid constants,
+/// so that offset is already `-2`; invalid operands retain their source text.
 fn check_substring_operand(stmt: &Statement, errors: &mut Vec<TypeError>) {
     crate::ir::walk_own_exprs(stmt, &mut |e| {
         let ExprKind::ParameterExpansion(pe) = &e.kind else {
@@ -1273,7 +1273,7 @@ fn check_substring_operand(stmt: &Statement, errors: &mut Vec<TypeError>) {
         let ExprKind::Literal(text) = &operand.kind else {
             return;
         };
-        if let Some(bad) = bad_substring_part(text) {
+        if let Some(bad) = crate::ir::bad_substring_part(text) {
             errors.push(TypeError {
                 message: format!(
                     "substring offset/length must be a decimal integer — `{bad}` is not. \
@@ -1286,25 +1286,6 @@ fn check_substring_operand(stmt: &Statement, errors: &mut Vec<TypeError>) {
             });
         }
     });
-}
-
-/// The first part of a substring operand that is not a decimal integer, or
-/// `None` if every part is fine. An empty *length* is allowed (bash reads it
-/// as 0); an empty offset cannot occur, since `try_substring_op` only accepts
-/// an operand starting with a digit, `-` or `(`. A third part was silently
-/// ignored, so the whole operand is reported for it.
-fn bad_substring_part(text: &str) -> Option<String> {
-    let parts: Vec<&str> = text.split(':').collect();
-    match parts.as_slice() {
-        [offset] | [offset, ""] => not_an_int(offset),
-        [offset, length] => not_an_int(offset).or_else(|| not_an_int(length)),
-        _ => Some(text.to_string()),
-    }
-}
-
-/// `Some(part)` when `part` is not a decimal integer.
-fn not_an_int(part: &str) -> Option<String> {
-    part.parse::<i64>().err().map(|_| part.to_string())
 }
 
 /// String-operand slots; exclude `arg`'s index and directory selectors' target.
@@ -1816,6 +1797,12 @@ fn is_int_index(expr: &Expr, env: &TypeEnv) -> bool {
 /// `${a[$s]}` sends them from one SB4030 to the same SB4030, because the
 /// spelling was never the problem — the operand's type was.
 fn array_index_error(name: &str, index: &Expr, env: &TypeEnv) -> String {
+    if crate::validate::is_negative_int_literal(index) {
+        return format!(
+            "negative literal index on indexed array '{name}' — indices do not \
+             count from the end; use a nonnegative decimal index"
+        );
+    }
     // A capture needs its own advice. The generic text below offers
     // `$(( … ))`, and `${a[$(( $(f) ))]}` is SB4035 — a capture is not an
     // arithmetic operand either. Name a route that works, an int-returning

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=729
+plan=732
 echo "1..$plan" >&3
 
 set +e
@@ -229,7 +229,7 @@ run_sash 'fn f -> int { return 0; }; int n=$(f); echo "$n"'
 
 # 55.15 - cmd; return $? → compile error ($? unavailable after -)
 run_sash 'fn f -> int { - /bin/false; return $?; }'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 55.15
+[[ $rc != 0 && -z $out && $err == *SB5012* && $err == *'explicitly discarded'* ]]; chk 55.15
 
 # 55.16 background exec failure — the CHILD reports the exec errno at the
 #       point of failure and exits 127; both messages are the child's.
@@ -3974,6 +3974,13 @@ run_sash 'if /bin/false { : } else { echo $(- status) }'
 
 run_sash '- /bin/false; echo $(- status)'
 [[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk supval.33
+
+run_sash 'if /bin/true { echo branch; }; echo "$?"'
+[[ $rc != 0 && -z $out && $err == *SB5012* && $err == *'handling scope has ended'* ]]; chk diagmsg.2
+run_sash '/bin/true; str saved="$?"; echo "$saved $?"'
+[[ $rc != 0 && -z $out && $err == *SB5012* && $err == *'already been consumed'* ]]; chk diagmsg.3
+run_sash 'if /bin/true { echo "$?"; echo "$?"; }'
+[[ $rc != 0 && -z $out && $err == *SB5012* && $err == *'already been consumed'* ]]; chk diagmsg.4
 
 # DD101: lookup.27 now pins rejection of a consumed, source-discarded lookup.
 

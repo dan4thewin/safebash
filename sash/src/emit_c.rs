@@ -1789,6 +1789,14 @@ fn lower_disposition_as_int_c(e: &mut Emit, value: &SsaValue, types: &VarTypes) 
     }
 }
 
+fn c_int_literal(value: i64) -> String {
+    if value == i64::MIN {
+        "(-9223372036854775807L - 1)".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 #[allow(clippy::only_used_in_recursion)]
 fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> String {
     if let Some(s) = lower_disposition_as_int_c(e, value, types) {
@@ -1797,7 +1805,7 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => s
             .parse::<i64>()
-            .map(|n| n.to_string())
+            .map(c_int_literal)
             .unwrap_or_else(|_| format!("sash_atoi(\"{}\", {})", c_escape(s), s.len())),
         SsaValue::Var(vref) => lower_var_as_int_c(vref),
         SsaValue::ParamExpansion { var, operator, .. } if operator == "arrlen" => {
@@ -1811,7 +1819,7 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
         // then emit_arith_op(op, lhs, iconst(operand)).
         SsaValue::ArithExpr { var, op, operand } => {
             let lhs = lower_value_as_int(e, &SsaValue::Var(var.clone()), types);
-            emit_arith_op_c(e, *op, &lhs, &operand.to_string())
+            emit_arith_op_c(e, *op, &lhs, &c_int_literal(*operand))
         }
         // codegen/values.rs:356+ for ArithBinOp: lower_value_as_int(left/right)
         // then emit_arith_op(op, l, r).
@@ -3442,7 +3450,7 @@ fn emit_slice_fill_c(
     let start = lower_value_as_int(e, start, types);
     let count = count
         .map(|count| lower_value_as_int(e, count, types))
-        .unwrap_or_else(|| i64::MAX.to_string());
+        .unwrap_or_else(|| c_int_literal(i64::MAX));
     let source = c_var_name(source, 0);
     let target = c_var_name(array, 0);
     writeln!(
@@ -3535,8 +3543,8 @@ fn emit_substring_c(e: &mut Emit, s_ptr: &str, s_len: &str, operand: &str) -> CS
         t = t,
         sp = s_ptr,
         sl = s_len,
-        off = off,
-        len = length,
+        off = c_int_literal(off),
+        len = c_int_literal(length),
         has = has_length
     )
     .unwrap();

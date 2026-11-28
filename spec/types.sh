@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=513
+plan=518
 echo "1..$plan" >&3
 
 set +e
@@ -1998,11 +1998,10 @@ run_sash 'str s="abcdef"
 echo ${s:1+1}'
 [[ $rc != 0 && $err == *SB4030* ]]; chk sub.8
 
-# sub.9 ... including the parenthesised spelling, which reaches the same check
-# because `try_substring_op` strips the parens
+# sub.9 ... including the parenthesised spelling, retained in the diagnostic.
 run_sash 'str s="abcdef"
 echo ${s:(1+1)}'
-[[ $rc != 0 && $err == *SB4030* ]]; chk sub.9
+[[ $rc != 0 && $err == *SB4030* && $err == *'`(1+1)` is not'* ]]; chk sub.9
 
 # sub.10 a third part was silently ignored
 run_sash 'str s="abcdef"
@@ -2977,6 +2976,30 @@ map m=@input:~
 if ! attest k v in m [[ $k == key && $v == accepted ]] { m=@clean:~ }
 echo ${m[key]}' key rejected
 [[ $rc = 0 && $out = fallback && -z $err && -z $rerr ]]; chk mapassign.19
+
+# A valid parenthesized offset must not hide the actually invalid length.
+run_sash 's=abc; echo "${s:(-2):$(( 1 ))}"'
+[[ $rc != 0 && $err == *SB4030* \
+   && $err == *'substring offset/length'* && $err == *'`$(( 1 ))` is not'* ]]; chk diagmsg.1
+
+run_sash 'array a=(1 2 3); echo "${a[-1]}"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'negative literal index'* \
+   && $err == *'do not count from the end'* ]]; chk diagmsg.5
+run_sash 'array a=(1 2 3); a[-1]=9; echo "${a[0]}"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'negative literal index'* ]]; chk diagmsg.6
+run_sash 'array a=(1 2 3); unset a[-1]; echo "${a[0]}"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'negative literal index'* ]]; chk diagmsg.7
+
+# Dynamic integer keys remain ordinary keys, and -1 is a legal map string key.
+run_sash 'array a=(1 2 3)
+int i=-1
+a[$i]=9
+map m=([k]=v)
+m[-1]=nine
+echo "${a[$i]} ${a[$(( 0 - 1 ))]} ${a[0]} ${a[1]} ${a[2]} ${m[-1]}"
+unset a[$i] m[-1]
+echo "${a[$i]:-empty} ${m[-1]:-empty}"'
+[[ $rc = 0 && $out = $'9 9 1 2 3 nine\nempty empty' && -z $err && -z $rerr ]]; chk diagmsg.8
 
 set -e
 tally

@@ -1,5 +1,5 @@
 title: "Bug: SB5012 says \"no preceding command\" when a command did precede and its status was discarded, scoped away or consumed"
-status: open
+status: done
 priority: P4
 kind: bug
 depends: []
@@ -8,7 +8,21 @@ gates:
   - "the code stays SB5012 and every verdict is unchanged, in both backends"
   - "a spec pins each reason's text in both backends, and 55.15 asserts the code and text instead of bare `-n $err`"
 
-## Found
+## Resolution, 2026-11-28
+
+The existing availability state now retains absent, discarded, consumed
+and ended-scope reasons. SB5012 renders that reason without changing
+availability or latch behavior. `55.15` now asserts the code and explicit
+discard; `diagmsg.2-.4` distinguish scope exit, expression consumption and
+the later handling-body statement. Four independent transfer-site
+reversions each fail their exact assertion in both backends. Entry-state
+and legal repeated-command-status controls retain their outcomes.
+[Journal 684](../journal/684-unattended-diagnostics-and-c-literals.md)
+records the before controls and passing ordinary gate.
+
+## Original report
+
+### Found
 
 2026-10-27, while porting F1+F4 (journal 537): a probe of `- f` for a
 status-returning `f` drew it. Pre-existing at `8e28c61`, unchanged by F1+F4,

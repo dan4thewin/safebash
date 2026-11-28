@@ -1,12 +1,24 @@
 title: "`exec` target with a `*` reports SB5029 \"in command arguments\" alongside SB5095"
-status: open
+status: done
 priority: P4
 kind: diagnostic
 depends: []
 gates:
   - "`exec /bin/ech*` reports one diagnostic, and it names the exec TARGET rather than a command argument"
 
-# What happens
+## Resolution, 2026-11-28
+
+SB5029 skips exactly the first operand of `exec`; the shared target
+validator still owns it. Remaining arguments retain their glob checks,
+including when the target is invalid. `diagmsg.9` requires SB5095 without
+SB5029; `diagmsg.10` adds an invalid argument and requires exactly one
+SB5029. Both fail before and under the independent reversion. Native and
+C pass the ordinary gate; see
+[journal 684](../journal/684-unattended-diagnostics-and-c-literals.md).
+
+## Original report
+
+### What happens
 
 ```
 $ sash -c 'exec /bin/ech*'

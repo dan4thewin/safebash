@@ -20,7 +20,7 @@
 set -eu
 . common.sh
 setup exec
-plan=70
+plan=72
 echo "1..$plan" >&3
 
 set +e
@@ -367,6 +367,13 @@ run_sash 'close 2147483648'
 [[ $rc != 0 && -z $out && $err == *SB4052* && $err == *'0..2147483647'* ]]; chk cl.12
 run_sash 'close 184467440737095516160'
 [[ $rc != 0 && -z $out && $err == *SB4052* ]]; chk cl.13
+
+# The target is a command head, not an argv glob. Later arguments still are argv.
+run_sash 'exec /bin/ech*'
+[[ $rc != 0 && -z $out && $err == *SB5095* && $err != *SB5029* ]]; chk diagmsg.9
+run_sash 'exec /bin/ech* *'
+[[ $rc != 0 && -z $out && $err == *SB5095* \
+   && $(grep -c '\[SB5029\]' <<<"$err") = 1 ]]; chk diagmsg.10
 
 set -e
 tally

@@ -1386,26 +1386,24 @@ fn build_one_sed_sub(
 
 /// `${var:offset}` / `${var:offset:length}` — substring.
 fn try_substring_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
-    if !rest.starts_with(':')
-        || rest.starts_with(":-")
-        || rest.starts_with(":+")
-        || rest.starts_with(":=")
-        || rest.starts_with(":?")
-    {
-        return None;
-    }
-    let sub_content = &rest[1..];
-    let first_ch = sub_content.as_bytes().first().copied().unwrap_or(0);
-    if !first_ch.is_ascii_digit() && first_ch != b'-' && first_ch != b'(' {
+    let sub_content = rest.strip_prefix(':')?;
+    let first_ch = *sub_content.as_bytes().first()?;
+    if !first_ch.is_ascii_digit() && first_ch != b'(' {
         return None;
     }
     let cleaned = sub_content.replace(['(', ')'], "");
+    // Preserve invalid source for the diagnostic, not its stripped spelling.
+    let operand = if crate::ir::bad_substring_part(sub_content).is_none() {
+        cleaned
+    } else {
+        sub_content.to_string()
+    };
     Some(Expr {
         kind: ExprKind::ParameterExpansion(ParameterExpansion {
             name: name.to_string(),
             operator: Some("substring".to_string()),
             operand: Some(Box::new(Expr {
-                kind: ExprKind::Literal(cleaned),
+                kind: ExprKind::Literal(operand),
                 span,
             })),
             index: None,

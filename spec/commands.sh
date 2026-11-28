@@ -268,17 +268,16 @@ run_sash 'f() { echo hi }; f'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.16
 
 # --- redirect target must be a scalar (SB4049; DG 2026-08-30) ---
-# A file-redirect target (`>`/`>>`/`<`/`<>`/`&>`) must be a scalar the compiler
-# can evaluate to a filename: a literal/quoted path, `$x`, `${x:-default}`, or
-# `$a[i]`. A command substitution `$(…)` or arithmetic `$((…))` is rejected —
-# the compiler can't know the resulting filename, and the old fallthrough
-# silently redirected to an *empty* target (bug-redirect-nonsimple-target-empty).
-# Scalar reads beyond a bare `$x` (a `:-` default, a subscript) are supported by
-# spilling the lowered value to a temp before the redirect.
+# Direct command/arithmetic targets are rejected. Bind the value first;
+# the bound string or cell still needs DD119's nonempty proof/disposition.
 
 # 14.19 reject: command-substitution redirect target → SB4049 (all modes: parse)
 run_sash 'echo x > $(echo f)'
-[[ $rc != 0 && -z $out && $err == *SB4049* ]]; chk 14.19
+[[ $rc != 0 && -z $out && $err == *SB4049* \
+   && $err == *'then redirect to `${v:?missing filename}`'* ]]
+redirect_advice=$?
+run_sash 'v=$(echo r14advice); echo x >${v:?missing filename}; /bin/cat r14advice'
+[[ $redirect_advice = 0 && $rc = 0 && $out = x && -z $err && -z $rerr ]]; chk 14.19
 
 # 14.20 reject: arithmetic redirect target → SB4049
 run_sash 'echo x > $(( 1 + 1 ))'

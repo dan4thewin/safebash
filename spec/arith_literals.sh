@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup arith_literals
-plan=33
+plan=34
 echo "1..$plan" >&3
 
 set +e
@@ -106,6 +106,30 @@ run_sash 'echo "$(( +17 ))" "$(( +(0xff) ))" "$(( +(-9) ))"'
 [[ $rc = 0 && $out = "17 255 -9" && -z $err && -z $rerr ]]; chk exprcv.1
 run_sash 'echo "$(( (strlen 12345) ))" "$(( (strlen 0) ))"'
 [[ $rc = 0 && $out = "5 1" && -z $err && -z $rerr ]]; chk exprcv.2
+
+# Minimum values in slots, statuses, arithmetic and substring operands.
+minimum_source='fn minimum_status { return -9223372036854775808; }
+int n=-9223372036854775808
+echo "[$n]"
+minimum_status || echo "status=[$?]"
+int x=$(argc)
+(( x += -9223372036854775808 ))
+echo "[$x]"
+int y=$(argc)
+y=$(( y * -9223372036854775808 ))
+echo "[$y]"
+s=abc
+echo "[${s:(-9223372036854775808)}] [${s:0:-9223372036854775808}]"'
+run_sash "$minimum_source"
+[[ $rc = 0 && -z $err && -z $rerr \
+   && $out = $'[-9223372036854775808]\nstatus=[-9223372036854775808]\n[-9223372036854775807]\n[-9223372036854775808]\n[abc] []' ]]
+minimum_runtime=$?
+printf '%s\n' "$minimum_source" > minimum.sb
+timeout 10 "${SASH:-sash}" --emit-c minimum.sb > minimum.c 2>minimum-emit.err \
+    && LC_ALL=C timeout 30 gcc -std=c11 -Wall -c minimum.c -o minimum.o 2>minimum-gcc.err \
+    && minimum_gcc_warnings=$(<minimum-gcc.err) \
+    && [[ $minimum_gcc_warnings != *'integer constant'* ]] \
+    && [[ $minimum_runtime = 0 && ! -s minimum-emit.err ]]; chk cmin.1
 
 set -e
 tally
