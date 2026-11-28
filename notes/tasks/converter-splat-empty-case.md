@@ -1,5 +1,5 @@
 title: "sash-convert: update empty-splat guidance for :~"
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
@@ -8,18 +8,19 @@ gates:
   - "guidance follows current collection, argument and taint rules without claiming that new language syntax is needed"
   - "focused converter specs pin the guidance and unchanged literal/non-splat controls; no automatic scaffold or taint policy is selected by this reconciliation"
 
-## Remaining work (reconciled 2026-11-16)
+## Implemented, 2026-11-28
 
 [DD84](../decisions/DD84-optional-args-elision.md) already supplies
 `@{a:~}`: an empty array contributes zero arguments. `@{a:-}` instead
 contributes one empty argument, and `@{a:?}` aborts. The language fork in
 this filing is settled; it is not blocked on DG inventing a fourth form.
 
-The converter work is not complete. Current `convert_splat` and
-`convert_bracket_splat` guidance still names only `:-`/`:?` for `"$@"` and
-`"${array[@]}"`, omitting the available zero-argument case. Correct that
-advice and its regression coverage. Retain DD57's manual-fallback boundary;
-this cleanup does not choose or implement an automatic scaffold.
+Both `convert_splat` and `convert_bracket_splat` now explain zero arguments,
+one empty argument, one fallback argument and abort separately. They retain
+DD57's manual pass-through boundary and do not choose an automatic scaffold.
+Strengthened `conv.x7` and new `convsplat.1` fail on the before converter
+and the independent guidance reversion; `convsplat.2` preserves joins,
+loops and literal text. Journal 683 records the gate.
 
 ## Historical fork
 

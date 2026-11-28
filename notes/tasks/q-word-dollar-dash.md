@@ -1,5 +1,5 @@
 title: "Flag Bash option-flags expansions as unsupported during conversion"
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
@@ -27,9 +27,11 @@ That does not legalize `${-}` in native sash: its existing diagnostic
 remains. Single-quoted, C-quoted and Bash-escaped literal occurrences are
 not option-flags expansions and must not receive this annotation.
 
-The question is settled, not implemented. This task retains its slug,
-open status and P3 priority, becoming work for the converter. Journal 608
-records the ruling and the current converter-only probe.
+Implemented on the unattended session branch, 2026-11-28. `convflags.1/.2`
+pin actual versus literal expansions, both spellings, function/condition
+positions, normal/annotated output and safe multiline placement.
+The flags-guard reversion fails only `convflags.1`; the placement reversion
+also fails it. Journal 683 records the complete gate and proof.
 
 ## Compiler behavior to preserve
 
@@ -81,7 +83,7 @@ unsupported shell-option operations. Reuse the normal manual category
 for option-parameter expansions, using Bash syntax rather than searching
 raw text for `$-`.
 
-## Current converter evidence, 2026-11-10
+## Historical converter evidence, 2026-11-10
 
 A probe using the existing `target/release/sash-convert` at the clean
 policy-recording baseline `95bff850` returned success with empty stderr:
@@ -97,9 +99,8 @@ policy-recording baseline `95bff850` returned success with empty stderr:
 The braced case is a coupled converter defect, not just a missing hint.
 `convert_expansion`'s `${NAME-default}` rewrite accepts an empty
 `before_dash` because `chars().all(...)` is true on an empty string.
-Consequently `${-}` becomes `${:-}`. The queued work must preserve the
-unsupported parameter rather than allowing that mechanical rewrite to
-consume it.
+Consequently `${-}` became `${:-}`. The implemented guard preserves the
+unsupported parameter before that mechanical rewrite can consume it.
 
 The probe did not compile or execute its output. The literal controls
 establish only conversion output and absence of an option-flags annotation,

@@ -195,6 +195,20 @@ fn walk_node(
     annotate: bool,
     collections: &Names,
 ) {
+    if matches!(node.kind(), "simple_expansion" | "expansion")
+        && node.named_child(0).is_some_and(|name| {
+            name.kind() == "special_variable_name" && node_text(name, source) == "-"
+        })
+    {
+        prefix_lines.push((
+            hint_line(node),
+            "# MANUAL: Bash option-flags expansion has no sash equivalent; \
+             review this use rather than treating it as literal text"
+                .into(),
+        ));
+        return;
+    }
+    add_conditional_capture_hint(node, source, prefix_lines);
     // DD#30/DD#76: string tests and string-collection elements require strings.
     // Bash draws no such line, so an operand the converted script
     // holds as an int is quoted, which is sash's int→string conversion. The
@@ -602,7 +616,7 @@ fn convert_command(
     let line = node.start_position().row;
 
     if matches!(name, "true" | "false") {
-        add_true_false_hint(node, name, line, prefix_lines);
+        add_true_false_hint(node, name, hint_line(node), prefix_lines);
     }
 
     match name {
@@ -773,7 +787,15 @@ fn convert_noop(
     let environment = node
         .named_children(&mut cursor)
         .any(|n| n.kind() == "variable_assignment");
-    if status_is_consumed(node) || redirected || background || environment {
+    let compound_position = [
+        "list",
+        "pipeline",
+        "command_substitution",
+        "process_substitution",
+    ]
+    .iter()
+    .any(|kind| has_ancestor_kind(node, kind));
+    if status_is_consumed(node) || compound_position || redirected || background || environment {
         prefix_lines.push((
             node.start_position().row,
             "# MANUAL: ':' operands are value disposal, not ERR attempts; use `_=` \
@@ -2210,10 +2232,15 @@ fn convert_simple_expansion(
         match child.kind() {
             "variable_name" => {
                 let name = node_text(child, source);
-                // Numeric positional parameters consume text, not lookup status.
-                if name.chars().all(|c| c.is_ascii_digit()) {
+                // Bash's unbraced positional consumes one digit, not the whole
+                // variable_name span supplied by tree-sitter (`$10`, `$1x`).
+                if name.as_bytes().first().is_some_and(u8::is_ascii_digit) {
                     if !in_function {
-                        patches.push(positional_hoist(start, end, name));
+                        let mut patch = positional_hoist(start, end, &name[..1]);
+                        if name.len() > 1 {
+                            patch.replacement = format!("${{arg{}}}{}", &name[..1], &name[1..]);
+                        }
+                        patches.push(patch);
                     }
                 } else if let Some(env) = crate::known_externals::lookup_env_var(name) {
                     // A Bash variable read consumes text without testing presence.
@@ -2352,8 +2379,8 @@ fn convert_implicit_for(
 }
 
 /// `$@` / `$*`. In a for-in header this is the iterate-the-arguments idiom and
-/// converts mechanically; anywhere else it is a splat into a command, where
-/// bash's empty case has no sash spelling and the author must choose one.
+/// converts mechanically; command arguments need a reviewed snapshot, attest
+/// and explicit empty-list disposition.
 fn convert_splat(
     node: Node,
     start: usize,
@@ -2363,16 +2390,13 @@ fn convert_splat(
 ) {
     let target = splat_replace_node(node, start);
     let Some(loop_node) = for_in_header_loop(node) else {
-        // DD#22/SB5032: `cmd @a` is rejected because an empty array would run
-        // the command with too few arguments, and the two spellings that state
-        // the empty case (`@{a:-WORD}`, `@{a:?WORD}`) both diverge from bash,
-        // which runs the command with zero arguments. There is no faithful
-        // mechanical answer, so say so rather than pick one silently.
         prefix_lines.push((
             node.start_position().row,
             "# MANUAL: `\"$@\"` as a command argument — snapshot it (`argv 1 a`; \
-             `attest e in a [[ -n $e ]]`) and pass `@{a:-WORD}` or `@{a:?WORD}`, \
-             which states what an empty argument list should do (SB5032)"
+             `attest e in a [[ -n $e ]]`) and choose the empty case: `@{a:~}` \
+             passes zero arguments, `@{a:-}` passes one empty argument, \
+             `@{a:-WORD}` passes one fallback argument, and `@{a:?WORD}` aborts \
+             (SB5032). Review the attest predicate; no policy is chosen for you"
                 .into(),
         ));
         return;
@@ -2659,20 +2683,18 @@ fn convert_bracket_splat(
         return;
     }
 
-    // Outside a for-in header a splat is only legal into a command, and there
-    // bash's empty case has no faithful sash spelling — the same wall `"$@"`
-    // hits (SB5032). `echo` is the exception: it rejects a splat outright
-    // (SB5030) and directs to a join, which is what bash's quoted form
-    // produces anyway. `[*]` is always the joined string, so it never lands
-    // here.
+    // A command splat needs an explicit empty case (SB5032). `echo` instead
+    // requires a join (SB5030); `[*]` is already the joined-string form.
     if kind == '@' && whole_arg && enclosing_command_name(node, source).is_some_and(|c| c != "echo")
     {
         prefix_lines.push((
             line,
             format!(
                 "# MANUAL: `${{{name}[@]}}` as a command argument — an empty array would run the \
-             command with too few arguments, so state the empty case: `@{{{name}:-WORD}}` or \
-             `@{{{name}:?WORD}}` (SB5032). Use `$(join {name})` if one joined argument was meant"
+             command with zero arguments. Choose explicitly: `@{{{name}:~}}` passes zero arguments, \
+             `@{{{name}:-}}` passes one empty argument, `@{{{name}:-WORD}}` passes one fallback \
+             argument, and `@{{{name}:?WORD}}` aborts (SB5032). Use `$(join {name})` if one joined \
+             argument was meant"
             ),
         ));
         return;
@@ -3333,28 +3355,126 @@ fn status_is_consumed(node: Node) -> bool {
     let mut current = node.parent();
     while let Some(p) = current {
         match p.kind() {
-            // `&&` / `||`, `! cmd`, `$(…)`, and `if !`-style negation all read it.
-            "list" | "negated_command" | "command_substitution" | "process_substitution" => {
-                return true;
+            "negated_command" => return true,
+            "list" if p.named_child(0) == Some(child) => return true,
+            "command_substitution" => {
+                let mut cursor = p.walk();
+                let direct_producer = matches!(
+                    child.kind(),
+                    "command" | "pipeline" | "redirected_statement" | "file_redirect"
+                ) && p
+                    .named_children(&mut cursor)
+                    .filter(|c| c.kind() != "comment")
+                    .count()
+                    == 1;
+                return p.parent().is_some_and(|assignment| {
+                    direct_producer
+                        && assignment.kind() == "variable_assignment"
+                        && assignment.child_by_field_name("value") == Some(p)
+                        && status_is_consumed(assignment)
+                });
             }
             // Only the CONDITION of a loop/branch consumes it; a command in the
             // body is in discarded-status position like any other statement.
-            "if_statement" | "while_statement" | "until_statement" | "elif_clause" => {
+            "if_statement" | "while_statement" | "until_statement" => {
+                let mut cursor = p.walk();
                 return p
-                    .child_by_field_name("condition")
-                    .is_some_and(|c| c.id() == child.id() || contains_node(c, node));
+                    .children_by_field_name("condition", &mut cursor)
+                    .filter(|c| c.is_named() && c.kind() != "comment")
+                    .last()
+                    .is_some_and(|c| contains_node(c, child));
             }
-            // A pipeline's status is its last stage; earlier stages are dropped,
-            // but sash does not abort on those, so treat the whole thing as read.
-            "pipeline" => return true,
-            // A subshell/compound is transparent — keep walking out.
-            "subshell" | "compound_statement" | "program" | "function_definition" => {}
+            "elif_clause" => {
+                let mut cursor = p.walk();
+                return p
+                    .children(&mut cursor)
+                    .take_while(|c| c.kind() != "then")
+                    .filter(|c| c.is_named() && c.kind() != "comment")
+                    .last()
+                    .is_some_and(|c| contains_node(c, child));
+            }
+            "command"
+            | "test_command"
+            | "variable_assignment"
+            | "function_definition"
+            | "do_group"
+            | "compound_statement"
+            | "subshell"
+            | "process_substitution" => {
+                return false;
+            }
             _ => {}
         }
         child = p;
         current = p.parent();
     }
     false
+}
+
+fn add_conditional_capture_hint(
+    node: Node,
+    source: &[u8],
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let is_test = node.kind() == "test_command"
+        || (node.kind() == "compound_statement" && node_text(node, source).starts_with("(("))
+        || (node.kind() == "command"
+            && node
+                .child_by_field_name("name")
+                .is_some_and(|name| node_text(name, source) == "test"));
+    if is_test && status_is_consumed(node) && has_unhandled_capture(node, source) {
+        prefix_lines.push((
+            hint_line(node),
+            "# CHECK: conditional test does not handle failures in capture operands; \
+             an uncaught capture failure can abort in sash before the text is tested. \
+             Review handling or legal explicit discard inside each capture; \
+             neither reaches nested operand or called-body failures, and taint is independent"
+                .into(),
+        ));
+    }
+}
+
+fn has_unhandled_capture(node: Node, source: &[u8]) -> bool {
+    if node.kind() == "command_substitution" {
+        return has_unhandled_command(node, source);
+    }
+    let mut cursor = node.walk();
+    let found = node
+        .named_children(&mut cursor)
+        .any(|child| has_unhandled_capture(child, source));
+    found
+}
+
+fn has_unhandled_command(node: Node, source: &[u8]) -> bool {
+    if node.kind() == "function_definition" {
+        return false;
+    }
+    let operation = node.kind() == "file_redirect"
+        || (node.kind() == "command"
+            && !node
+                .child_by_field_name("name")
+                .is_some_and(|name| node_text(name, source) == ":"));
+    if operation && !status_is_consumed(node) {
+        return true;
+    }
+    let mut cursor = node.walk();
+    let found = node
+        .named_children(&mut cursor)
+        .any(|child| has_unhandled_command(child, source));
+    found
+}
+
+fn hint_line(node: Node) -> usize {
+    let mut line = node.start_position().row;
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        // A prefix inside a multiline quoted word or heredoc becomes data.
+        if matches!(parent.kind(), "string" | "heredoc_redirect") {
+            line = parent.start_position().row;
+        }
+        current = parent.parent();
+    }
+    line
 }
 
 fn contains_node(haystack: Node, needle: Node) -> bool {

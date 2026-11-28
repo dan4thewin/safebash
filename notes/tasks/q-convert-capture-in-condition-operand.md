@@ -1,5 +1,5 @@
 title: "Add CHECK hints for command captures in conditional test operands"
-status: open
+status: done
 priority: P3
 kind: work
 depends: []
@@ -34,8 +34,14 @@ Taint requirements remain independent. The direct external example below
 is normally SB5020, but extracting and attesting the value does not itself
 handle a failing acquisition.
 
-This task retains its slug, P3 priority and open status; only the question
-is answered. Implementation is pending. Journal 609 records the decision.
+Implemented on the unattended session branch, 2026-11-28. `convcapture.1-.6`
+cover parsed branch/loop/list roles, alternate test/capture spellings, nested
+operands, explicit handlers, direct producers and safe multiline placement.
+The shared status-role helper no longer treats every capture as a consumer.
+Colon disposal retains an independent structural guard so this correction
+cannot move its operands across a pipeline or capture boundary.
+Journal 609 records the decision; journal 683 records the before/reversion
+proofs and full gate. No compiler semantics or automatic handling changed.
 
 ## Historical evidence (F7, 2026-10-26; not rerun for this ruling)
 

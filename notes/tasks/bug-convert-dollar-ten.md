@@ -1,5 +1,5 @@
 title: "Bug: sash-convert reads `$10`, `$01` and `$1x` as one positional name at top level"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -9,7 +9,16 @@ gates:
   - "braced `${10}` and `${01}`, top-level `$1` (57.13, conv.x3a) and the in-function pass-through (conv.x8) keep their current conversion"
   - "a convert.sh spec pins each form; it fails on the pre-fix converter"
 
-## What
+## Implemented, 2026-11-28
+
+Top-level unbraced positionals now hoist one digit and retain the suffix
+after a braced reference, using the existing whitespace-preserving extent
+helper. `convpos.1-.3` fail on the before converter and the independent
+reversion, and execute the converted programs in native and C modes.
+Function-local positionals and full braced indices are preservation controls.
+Journal 683 records the gate; no native positional rule changed.
+
+## Historical behavior
 
 Measured with arguments `a` … `j`, in both backends:
 
@@ -33,8 +42,8 @@ Inside a function body the converter passes positionals through unchanged
 bash. A braced `${10}` inside a function is a separate bug:
 `bug-multi-digit-positionals`.
 
-No convert.sh spec covers a digit-led name longer than one character; 57.13
-and conv.x3a cover `$1`.
+At filing, no convert.sh spec covered a digit-led name longer than one
+character; 57.13 and conv.x3a covered `$1`.
 
 ## Cause
 
@@ -49,7 +58,7 @@ and `01` are hoisted whole. `1x` is not all digits and is not a known
 environment variable, so no patch applies, and `$1x` reaches sash
 unchanged.
 
-## Fix (proposed, not yet ruled)
+## Implemented fix
 
 At top level, when the name starts with a digit, hoist the first digit only,
 and emit the rest as literal text after a braced reference: `${arg1}0`,

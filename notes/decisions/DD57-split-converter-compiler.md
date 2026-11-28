@@ -57,9 +57,9 @@ conversions from ambiguous intent.
 | Bash construct | SC code | Ambiguity |
 |---|---|---|
 | Unquoted `$var` in command args | SC2086 | Could be intentional word splitting. In sash, no splitting occurs. If the script relied on splitting, behavior changes silently. Converter emits `# CHECK: $var is unquoted — word splitting won't occur in sash. Was splitting intended?` |
-| Command capture in a conditional test operand | None required | The test handles its own result, not failures inside the capture (DD#55). Emit a review hint, not automatic suppression. Implementation queued below. |
+| Command capture in a conditional test operand | None required | The test handles its own result, not failures inside the capture (DD#55). Emit a review hint, not automatic suppression. |
 
-**Conditional-test captures (DG, 2026-11-10; implementation pending).**
+**Conditional-test captures (DG, 2026-11-10; implemented 2026-11-28).**
 Emit a `# CHECK:` hint when a Bash conditional test uses a command capture
 as an operand. This includes tests in `if`/`elif`, `while`/`until` and
 `&&`/`||` conditions. Quoting, interpolation or negating the test does not
@@ -83,9 +83,11 @@ gets SB5020 normally, but satisfying taint requirements does not itself
 handle its failure. The hint is guidance, not a promise that unchanged
 output compiles or reproduces Bash behavior.
 
-`q-convert-capture-in-condition-operand` owns implementation and focused
-converter specs. Journal 609 records the ruling. Compiler semantics do not
-change with this policy.
+`q-convert-capture-in-condition-operand` is complete. Journal 609 records
+the ruling; journal 683 records the converter implementation and regression
+proofs. Parsed status roles distinguish test operands, direct producers and
+explicit inner handling. Hints precede enclosing multiline quoted data rather
+than becoming part of it. Compiler semantics are unchanged.
 
 ### Manual — emit `# MANUAL:` annotation, pass through unchanged
 
@@ -94,14 +96,14 @@ change with this policy.
 | `eval "..."` | Dynamic execution. No mechanical conversion. |
 | `source` / `.` | File inclusion. Sash has no source; use sash-expand pipeline (DD#54). |
 | `export VAR=val` | No export in sash (DD#53). Env isolation by design. |
-| `$-` / `${-}` option-flags expansions | Bash shell options have no sash equivalent. Manual review, not a compiler ban on literal `$-` (DD#64). Annotation queued below. |
+| `$-` / `${-}` option-flags expansions | Bash shell options have no sash equivalent. Manual review, not a compiler ban on literal `$-` (DD#64). |
 | `${!var}` indirect expansion | Pointer-like indirection. No sash equivalent. |
 | `declare -n` / nameref | Alias indirection. No sash equivalent. |
 | `<(...)` / `>(...)` process substitution | No sash equivalent. |
 | `${var@Q}` / `${var@E}` etc. | Parameter transformations rejected. |
 | Heredoc with `$(cmd)` inside | ~~Untraceable taint (SB5002). Extract to variable + bless.~~ Heredocs are wholly retired, not conditional on their contents (DD01-09). |
 
-**Option flags (DG, 2026-11-10; implementation pending).** Actual Bash
+**Option flags (DG, 2026-11-10; implemented 2026-11-28).** Actual Bash
 option-flags expansions get the ordinary `# MANUAL:` annotation and
 pass-through treatment. This is an unsupported bashism, not a new hard
 conversion error, an emulation of Bash's flags, or a rewrite to a fabricated
@@ -115,10 +117,10 @@ Other conversions and annotations retain their existing contracts.
 
 Native sash keeps its word-level literal-dollar fallback (DD#64);
 conversion does not impose Bash parameter meanings on native source.
-`q-word-dollar-dash` owns the converter work, including preventing `${-}`
-from being mistaken for a `${NAME-default}` expansion. Journal 608 records
-the decision and a current converter-only probe. No converter change ships
-with this policy recording.
+`q-word-dollar-dash` is complete, including preventing `${-}` from being
+mistaken for a `${NAME-default}` expansion. Journal 608 records the decision
+and its historical converter-only probe; journal 683 records implementation
+and the literal/pass-through controls.
 
 ### Best-effort bless — emit `bless` line or `# BLESS:` hint
 

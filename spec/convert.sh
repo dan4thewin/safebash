@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=235
+plan=248
 echo "1..$plan" >&3
 
 set +e
@@ -721,13 +721,12 @@ converted=$out
 run_sash "$converted"
 [[ $rc = 0 && -z $out && -z $err ]]; chk conv.x6
 
-# conv.x7 a splat into a command carries a MANUAL marker — bash runs the
-# command with zero arguments when "$@" is empty, and neither sash spelling
-# that states the empty case (`@{a:-WORD}`, `@{a:?WORD}`) does that, so there
-# is no faithful mechanical conversion to emit.
+# conv.x7: keep manual migration, but describe all three existing empty cases.
 run_convert '#!/bin/bash
 /bin/echo "$@"'
-[[ $rc = 0 && $out == *'MANUAL'* && $out == *'SB5032'* && -z $err ]]; chk conv.x7
+[[ $rc = 0 && $out == *'MANUAL'* && $out == *'SB5032'* &&
+   $out == *'@{a:~}'*'zero arguments'* && $out == *'@{a:-}'*'one empty argument'* &&
+   $out == *'@{a:?WORD}'*'abort'* && $out == *'/bin/echo "$@"'* && -z $err ]]; chk conv.x7
 
 # conv.x8 function-local positionals still pass through untouched (DD#46)
 run_convert '#!/bin/bash
@@ -1162,7 +1161,7 @@ run_convert '#!/bin/bash
 if ! true; then echo n; fi'
 [[ $rc = 0 && $out == *'forks and execs'* && $out != *'ABORTS'* ]]; chk 57.145
 
-# 57.146 a command SUBSTITUTION reads the status too
+# 57.146: a true capture still needs only the fork-cost hint.
 run_convert '#!/bin/bash
 x=$(true)
 echo "$x"'
@@ -1731,6 +1730,164 @@ for mode in native c; do
     [[ $rc = 0 && $out = $'a:a\na:b\nb:a\nb:b' && -z $err && -z $rerr ]] || bad=1
 done
 [[ $bad = 0 ]]; chk convfor.5
+
+bad=0
+for source in 'echo $- "${-}" "x$-y"' \
+    'f() { echo ${-}; }; f' \
+    $'echo "prefix\n$- ${-}\nsuffix"' \
+    'if [[ $- == *i* ]]; then echo interactive; fi'; do
+    for annotation in '' --annotate; do
+        if [[ -n $annotation ]]; then run_convert_annotate "$source"; else run_convert "$source"; fi
+        code=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*#')
+        [[ $rc = 0 && -z $err && $out == '# MANUAL: Bash option-flags expansion'* &&
+           $code = "$source" ]] || bad=1
+    done
+done
+[[ $bad = 0 ]]; chk convflags.1
+
+source=$'echo \'$-\' \'${-}\' $\'$-\' "\\$-" "\\${-}"\n# $- and ${-} are literal here'
+run_convert_annotate "$source"
+[[ $rc = 0 && -z $err && $out != *'# MANUAL: Bash option-flags expansion'* &&
+   $out = "$source" ]]; chk convflags.2
+
+bad=0
+for annotation in '' --annotate; do
+    source=$'a=(one two)\n/bin/echo "${a[@]}"'
+    if [[ -n $annotation ]]; then run_convert_annotate "$source"; else run_convert "$source"; fi
+    [[ $rc = 0 && -z $err && $out == *'@{a:~}'*'zero arguments'* &&
+       $out == *'@{a:-}'*'one empty argument'* && $out == *'@{a:?WORD}'*'abort'* &&
+       $out == *'/bin/echo "${a[@]}"'* && $out == *'SB5032'* ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convsplat.1
+
+run_convert 'a=(one two)
+echo "$@" "${a[*]}" '\''${a[@]}'\''
+for x in "${a[@]}"; do echo "$x"; done'
+[[ $rc = 0 && -z $err && $out == *'$(join a)'* &&
+   $out == *'for x in @a;'* && $out == *"'"\$\{a\[@\]\}"'"* &&
+   $out != *'`${a[@]}` as a command argument'* ]]; chk convsplat.2
+
+capture_hint='# CHECK: conditional test does not handle failures in capture operands'
+bad=0
+for source in \
+    'if [[ -n "$(/bin/grep needle file)" ]]; then echo yes; fi' \
+    'if /bin/echo before; [[ -n "$(/bin/grep needle file)" ]]; then echo yes; fi' \
+    'if /bin/true; then echo yes; elif [[ -n "$(/bin/grep needle file)" ]]; then echo other; fi' \
+    'while [[ -n "$(/bin/grep needle file)" ]]; do break; done' \
+    'until [[ -n "$(/bin/grep needle file)" ]]; do break; done' \
+    '[[ -n "$(/bin/grep needle file)" ]] && echo yes' \
+    '[[ -n "$(/bin/grep needle file)" ]] || echo no'; do
+    for annotation in '' --annotate; do
+        if [[ -n $annotation ]]; then run_convert_annotate "$source"; else run_convert "$source"; fi
+        code=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*#')
+        [[ $rc = 0 && -z $err && $out == *"$capture_hint"* &&
+           $code = "$source" && $out != *'$(- '* ]] || bad=1
+    done
+done
+[[ $bad = 0 ]]; chk convcapture.1
+
+bad=0
+for source in 'if [ -n "$(/bin/grep needle file)" ]; then echo yes; fi' \
+    'if test -n "$(/bin/grep needle file)"; then echo yes; fi' \
+    'if [[ -n "`/bin/grep needle file`" ]]; then echo yes; fi'; do
+    run_convert "$source"
+    [[ $rc = 0 && -z $err && $out == *"$capture_hint"* &&
+       $out == *'$(/bin/grep needle file)'* && $out != *'$(- '* ]] || bad=1
+    printf '%s\n' "$out" > conditional.bash
+    bash -n conditional.bash || bad=1
+done
+for source in 'if (( $(/bin/echo 1) > 0 )); then :; fi' \
+    'if [[ -n $(<file) ]]; then :; fi'; do
+    run_convert "$source"
+    [[ $rc = 0 && -z $err && $out == *"$capture_hint"* ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convcapture.2
+
+source='if ! [[ "pre$(/bin/echo "$(/bin/false)" || :)post" == value ]]; then echo no; fi'
+run_convert_annotate "$source"
+code=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*#')
+[[ $rc = 0 && -z $err && $out == *"$capture_hint"* && $code = "$source" ]]; chk convcapture.3
+
+bad=0
+for source in 'echo '\''$(/bin/false)'\''' \
+    'if /bin/grep needle file; then echo yes; fi' \
+    'if text=$(/bin/grep needle file); then echo yes; fi' \
+    'if /bin/true; then [[ -n "$(/bin/grep needle file)" ]]; fi' \
+    'if [[ -n $(/bin/false || :) ]]; then echo yes; fi' \
+    'if [[ -n $(if /bin/false; then :; fi) ]]; then echo yes; fi' \
+    'if [[ -n $(/bin/false | /bin/cat || :) ]]; then echo yes; fi'; do
+    run_convert "$source"
+    [[ $rc = 0 && -z $err && $out != *"$capture_hint"* ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convcapture.4
+
+bad=0
+for source in 'echo "prefix
+$(if [[ -n "$(/bin/grep needle file)" ]]; then echo yes; fi)
+suffix"' 'echo "prefix
+$(if [[ -n "$(false)" ]]; then echo yes; fi)
+suffix"'; do
+    run_convert "$source"
+    code=$out
+    while [[ $code == '# '* && $code == *$'\n'* ]]; do code=${code#*$'\n'}; done
+    [[ $rc = 0 && -z $err && $out == "$capture_hint"* && $code = "$source" ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convcapture.5
+
+run_convert 'if [[ -n $(false) ]]; then echo yes; fi'
+bad=0
+[[ $rc = 0 && -z $err && $out == *"$capture_hint"* &&
+   $out == *'ABORTS the program (DD#55)'* ]] || bad=1
+run_convert 'if [[ -n $(false || :) ]]; then echo yes; fi'
+[[ $rc = 0 && -z $err && $out != *"$capture_hint"* &&
+   $out == *'forks and execs'* && $out != *'ABORTS'* ]] || bad=1
+run_convert 'if text=$(false); then echo yes; fi'
+[[ $rc = 0 && -z $err && $out != *"$capture_hint"* &&
+   $out == *'forks and execs'* && $out != *'ABORTS'* ]] || bad=1
+run_convert 'if text=$(false; echo data); then echo yes; fi'
+[[ $rc = 0 && -z $err && $out != *"$capture_hint"* &&
+   $out == *'ABORTS the program (DD#55)'* ]] || bad=1
+[[ $bad = 0 ]]; chk convcapture.6
+
+bad=0
+for annotation in '' --annotate; do
+    source='echo "$10 $1x" $10 $1x'
+    if [[ -n $annotation ]]; then run_convert_annotate "$source"; else run_convert "$source"; fi
+    converted=$out
+    [[ $rc = 0 && -z $err && $converted == *'${arg1}0 ${arg1}x'* &&
+       $converted != *'arg10='* ]] || bad=1
+    for mode in native c; do
+        SASH_MODE=$mode run_sash "$converted" a b c d e f g h i j
+        [[ $rc = 0 && -z $err && -z $rerr && $out = 'a0 ax a0 ax' ]] || bad=1
+    done
+done
+[[ $bad = 0 ]]; chk convpos.1
+
+run_convert 'echo $01 "$01 $0"'
+converted=$out
+bad=0
+[[ $rc = 0 && -z $err && $converted == *'${arg0}1'* &&
+   $converted != *'arg01='* ]] || bad=1
+for mode in native c; do
+    SASH_MODE=$mode run_sash "$converted" a
+    [[ $rc = 0 && -z $err && -z $rerr &&
+       $out = './test_bin1 ./test_bin1 ./test_bin' ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convpos.2
+
+run_convert 'f() { echo "$10 $1x"; }
+f k
+echo ${10} $10 ${01} $01'
+converted=$out
+bad=0
+[[ $rc = 0 && -z $err && $converted == *'f() { echo "$10 $1x"; }'* &&
+   $converted == *'arg10=$(- arg 10)'* && $converted == *'arg01=$(- arg 01)'* ]] || bad=1
+for mode in native c; do
+    SASH_MODE=$mode run_sash "$converted" a b c d e f g h i j
+    [[ $rc = 0 && -z $err && -z $rerr &&
+       $out = $'k0 kx\nj a0 a ./test_bin1' ]] || bad=1
+done
+[[ $bad = 0 ]]; chk convpos.3
 
 set -e
 tally

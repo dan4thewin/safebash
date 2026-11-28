@@ -142,7 +142,7 @@ The language boundary belongs in `sash-convert`: when Bash source actually
 expands its option flags, `$-` or `${-}` gets DD#57's ordinary `# MANUAL:`
 annotation and pass-through for unsupported bashisms, not a new refusal.
 Literal occurrences are not option-flags expansions. Converter implementation
-is queued in `q-word-dollar-dash`; this recording preserves compiler behavior.
+is complete in `q-word-dollar-dash` (journal 683); compiler behavior is unchanged.
 
 ## Addendum (DG, 2026-06-21): `$'…'` expands inside `"…"`
 
