@@ -1,8 +1,43 @@
-title: "Native Linux cross-compilation and regex error recovery"
+title: "AArch64-first native Linux cross-compilation"
 status: open
-priority: P2
+priority: P1
+kind: work
+depends: [aarch64-compiler-host-matrix]
+gates:
+  - "The x86_64 Linux CLI produces AArch64 Linux executables, with QEMU execution starting at the first linked programs."
+  - "Target-aware native/C specs and runtime/startup/regex execution gates pass without overwriting host results."
+  - "Both Linux compiler hosts produce and execute both output targets before the complete matrix is called delivered."
 
-# Native Linux cross-compilation and regex error recovery
+# AArch64-first native Linux cross-compilation
+
+## Delivery priority, 2026-11-28
+
+DG prioritizes **x86_64 Linux -> AArch64 Linux**, specifically Linux on
+AArch64, and requires **QEMU testing as soon as ARM executables exist**.
+This is the first delivery milestone, not a narrowing of DD129's four-way
+matrix. This record coordinates the work; its dependency represents full
+matrix completion, not a prerequisite to starting its ready children.
+
+| Owner | Priority | Prerequisites | Delivers |
+|---|---|---|---|
+| [Native cross-compilation interface](native-cross-compilation-interface.md) | P1 | None | DG-approved target/default and artifact/tool selection contract |
+| [AArch64 toolchain and QEMU](aarch64-toolchain-qemu.md) | P1 | None | Reproducible build and target-execution environment |
+| [AArch64 runtime and regex jumps](aarch64-runtime-jump-support.md) | P1 | Toolchain/QEMU; completed syscall repair | Target runtime archive and executed ABI/recovery controls |
+| [Native cross codegen and linking](native-cross-codegen-linking.md) | P1 | Interface; target runtime | Real x86_64 CLI -> AArch64 ELF -> QEMU execution |
+| [AArch64 QEMU spec gate](aarch64-qemu-spec-gate.md) | P1 | Cross codegen/linking | Repeatable target native/C conformance gate |
+| [AArch64 compiler-host matrix](aarch64-compiler-host-matrix.md) | P2 | Target spec gate | AArch64-host same-target and reverse-direction proof |
+
+Start with the two independent readiness/contract owners. Runtime work does
+not require the final CLI spelling. Cross codegen/linking joins their results;
+the full target suite follows the first executable, rather than postponing
+all execution until the suite is adapted. AArch64 compiler-host work reuses
+that target gate and does not block the first-direction milestone.
+
+The existing [C-oracle link-policy question](c-backend-link-policy.md)
+is now a separate P3 owner, not an ARM prerequisite. Neither the separate
+C++ project, lockfile enforcement nor fresh coverage work is on this
+delivery path. Implementation still requires its own go; this update
+organizes the backlog and selects no new public interface or provider.
 
 ## Scope settled by DD129
 
@@ -34,10 +69,10 @@ host plus cross-compilation in both directions. This is no longer an
 unanswered host/matrix choice, nor a claim of working support today.
 Other host operating systems and architectures are outside this commitment.
 
-The cross-compilation interface and artifact/tool selection and the
-existing C backend's link policy still require planning.
-No new CLI spelling, target default, toolchain-distribution mechanism or
-delivery order was selected.
+The cross-compilation interface and artifact/tool selection still require
+planning under the interface owner above. No new CLI spelling, target
+default or toolchain-distribution mechanism has been selected. Delivery
+priority is now settled by DG's 2026-11-28 direction.
 
 The 2026-11-11 repair of `bug-fresh-clone-rustix-runtime-private`
 implemented the shared Linux syscall layer and migrated all existing
@@ -48,8 +83,10 @@ result. The unported regex jump assembly and target-selection plumbing
 below still belong to this task; no cross C toolchain or emulator was added
 by the build repair.
 
-The inventory below was recorded on 2026-10-26, following DG's original
-2026-09-16 macOS build report. Its line numbers and counts are historical;
+## Historical inventory
+
+The following two numbered sections were recorded on 2026-10-26, following
+DG's original 2026-09-16 macOS build report. Their line numbers and counts are historical;
 re-measure the selected sites before implementing. Narrow source inspection
 at `d9332af1`, before that repair, confirmed the architecture seams:
 AArch64 `_start` at `sash-rt/src/lib.rs:1650-1669`, ungated x86 registers in
@@ -57,7 +94,7 @@ AArch64 `_start` at `sash-rt/src/lib.rs:1650-1669`, ungated x86 registers in
 at `sash-rt/build.rs:24`, and host-ISA selection at
 `sash/src/codegen/entry.rs:112`. No cross-target build or execution was run.
 
-## 1. `sash-rt/csrc/setjmp.S` is unguarded x86_64 ELF assembly
+### 1. `sash-rt/csrc/setjmp.S` is unguarded x86_64 ELF assembly
 
 43 lines of AT&T x86_64, fed unconditionally to `cc::Build` by
 `sash-rt/build.rs:24`. It contains **no `#if`, no `__aarch64__`, no
@@ -92,7 +129,7 @@ path, reached from `regcomp.c`. `q-runtime-syscall-layer.md` preserves
 the historical alternatives. DD129 now selects jump support for both
 native architectures; the ordinary-return rewrite was not selected.
 
-## 2. Native cross-compilation needs an explicit target seam
+### 2. Native cross-compilation needs an explicit target seam
 
 `setjmp.S` is the first thing that breaks, but fixing it alone would not
 produce a working cross compile:
@@ -113,23 +150,31 @@ the table is historical research, not required by DD129's target split.
 
 ## Required cross-target plumbing
 
-Source inspection at `762687bb` confirmed the remaining selection seams:
+Source inspection at `4a3286cb` on 2026-11-28 confirms these remaining seams:
 
-- `sash/src/codegen/entry.rs:110-119` selects the host ISA through
-  `cranelift_native::builder`; the locked/offline Cargo feature tree
-  shows `cranelift-codegen` using its default `host-arch` feature.
-  Enable both required backends and select the requested output target
-  and compatible ABI/settings rather than copying the compiler host.
-- `sash/src/lib.rs:1030-1056` hardcodes `ld` and the sibling
+- `sash/src/codegen/entry.rs:110-117` selects the host ISA through
+  `cranelift_native::builder`. `sash/Cargo.toml:7-13` does not explicitly
+  enable both target backends; verify effective features and provide both.
+  Select compatible ISA/settings and calling conventions, not host CPU
+  assumptions. A `SystemV` name alone is not evidence of an AArch64 bug.
+- `sash/src/lib.rs:1064-1090` hardcodes `ld` and the sibling
   `sash-rt/target/release/libsash_rt.a`. Select a target-appropriate
   linker and runtime archive. That archive contains Rust plus the C
   regex engine/jump assembly and must be built for the output target.
+- `sash-rt/build.rs:19-31` still builds the x86-only `csrc/setjmp.S`
+  unconditionally. `csrc/lib9.h:55-56` includes the toolchain's
+  `<setjmp.h>`: assembly, declarations, layout and compiler assumptions
+  must agree, not just the exported symbol names.
 - `sash/build.rs:19-27` builds the compiler's regex validator separately.
   Keep that library built for the compiler's own architecture, distinct
   from the generated program's target runtime.
-- `sash/src/resolve.rs:431-458` already honors `--sysroot` for external
-  command resolution. Preserve target-filesystem resolution; this flag
-  is not currently a machine-code target selector.
+- The completed [sysroot owner](dd23-sysroot.md) supplies external-command
+  resolution against a target filesystem, not an ISA selector or execution
+  environment. Target external programs must actually run in target tests.
+- `spec/common.sh:24-25,154-205` selects one archive, invokes `gcc` for C
+  and directly executes generated programs. `spec/run.sh:27-44` uses
+  repository-root `spec.db`; result IDs distinguish backends, not targets.
+  The target gate must adapt compilation, execution and accounting together.
 
 User-provided C compilers/linkers were the premise of the discussion,
 not a selection of distribution policy. They do not replace Cranelift
@@ -141,14 +186,11 @@ accompanied this inspection.
 
 ## Remaining planning choices
 
-1. **Cross-compilation interface and delivery.** The Linux host/target
-   matrix is settled. Plan target/runtime/linker selection, artifact
-   provision and the delivery sequence without narrowing that matrix.
-   No particular flag, default target or packaging mechanism is selected.
-2. **Existing C backend's link policy.** Should its link use `-nostdlib` so
-   an accidental libc reference fails like native? Is `-lpthread` needed?
-   This concerns the existing `--emit-c` differential backend, not the
-   separately developed C++ transpiler.
+The interface owner decides target/default spelling, runtime/linker
+selection and provision. The toolchain/QEMU owner determines the execution
+environment and provisioning; the runtime owner evaluates the jump provider.
+Those choices must follow the repository's decision-authority rule when
+undertaken. The independent C-backend policy question has its own owner.
 
 The layer, host/target-matrix and regex-recovery choices, and the completed
 build repair, do not settle those remaining mechanisms or authorize this
@@ -169,14 +211,12 @@ and the shared engine's accepted language. An assembled object alone
 cannot establish that recovery works; use target execution and negative
 controls.
 
-Coordinate reporting with `q-glob-semantics`, which owns the integrated
-DD131/DD132 trial and its DD revision inventory. Invalid `r?` candidates
-must return quiet false, while resource faults remain fatal. The runtime
-currently prints in `regerror9` and aborts in its regex callers: retaining
-the jump does not implement that reporting split or permit a blanket
-terminal path for validation. `q-dynamic-regcomp-levers` records the
-policy answer. Do not select a regex cache or change result kinds as a
-side effect of the jump port.
+DD131/DD132 are accepted and implemented; `q-glob-semantics` records the
+completed trial. Quiet invalid `r?` reporting was delivered in journal 648.
+Preserve that quiet false result, successful later validation and fatal
+resource faults while porting the jump. The old reporting repair is not an
+outstanding ARM prerequisite. Do not select a regex cache or change result
+kinds as a side effect of the jump port.
 
 Journal 613 records the selection and narrow current-source confirmation.
 No implementation or cross-target execution accompanied the ruling.
@@ -184,7 +224,11 @@ No implementation or cross-target execution accompanied the ruling.
 ## Gate
 
 Any change here must keep `mk test` and the spec sweep green on x86_64
-Linux. End-to-end matrix completion requires the real compiler CLI
+Linux, using the ordinary predicted `mk gate`. First-direction completion
+requires the QEMU target gate, including the outstanding AArch64 execution
+proof from [shared startup/trace repair](bug-aarch64-trace-init-missing.md).
+Do not mark it satisfied from an assembly review or reopen the fixed source
+bug. End-to-end matrix completion requires the real compiler CLI
 executing on each compiler architecture and producing programs for both
 targets from each host. Verify the emitted architecture and execute the
 generated programs in the appropriate target environment, recording

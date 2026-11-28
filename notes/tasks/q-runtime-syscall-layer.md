@@ -262,17 +262,19 @@ after DD129's target split.
 
 ## Implementation follow-up
 
-`bug-fresh-clone-rustix-runtime-private` owns moving fork, execve and
-exit_group off the private module and proving the fresh build. The dead
-compiler rustix dependency and runtime/GUIDE descriptions belong with that
-repair. DD129's policy also applies to the remaining hand-written syscall
-sites; the migration must account for them rather than preserve a third
-unexamined route.
+`bug-fresh-clone-rustix-runtime-private` completed the public-rustix/shared
+Linux Rust syscall repair on 2026-11-11 (journal 619), including all eight
+former raw syscall sites and the unused compiler dependency. Its two-ISA
+component assembly evidence is not full AArch64 runtime execution.
 
 The native host/target matrix and regex jump recovery are settled.
-`cross-compile-and-setjmp-on-mac.md` owns their delivery. Cross-compilation
-interface and artifact/tool selection, migration staging and the existing
-C backend's link policy still require planning. No flag, target default,
-toolchain/runtime distribution mechanism or delivery order was selected
-by the layer, host/target-matrix or regex-recovery rulings.
-No implementation was performed when these rulings were recorded.
+[The cross-compilation coordinator](cross-compile-and-setjmp-on-mac.md)
+owns their delivery. DG's 2026-11-28 priority is x86_64 Linux -> AArch64
+Linux, using QEMU as soon as target executables exist. Its bounded owners
+separate interface/environment readiness, runtime/jumps, native codegen/linking,
+target spec execution and the later AArch64 compiler-host matrix.
+[C-oracle link policy](c-backend-link-policy.md) remains an independent
+question. No new flag, target default, provider or distribution mechanism
+is selected by that prioritization. The original rulings were policy
+recording; the completed syscall repair and still-queued cross delivery
+must not be conflated.

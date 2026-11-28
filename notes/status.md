@@ -5,6 +5,28 @@ modified: 2026-11-28
 
 ## Focus
 
+**Priority: x86_64 Linux -> AArch64 Linux cross-compilation.** DG requires
+QEMU execution as soon as ARM executables exist. The
+[P1 platform roadmap](tasks/cross-compile-and-setjmp-on-mac.md) now separates
+two ready starting points:
+[target/artifact interface decisions](tasks/native-cross-compilation-interface.md)
+and [toolchain/QEMU readiness](tasks/aarch64-toolchain-qemu.md).
+The dependency path continues through
+[runtime and regex jumps](tasks/aarch64-runtime-jump-support.md),
+[native target emission/linking](tasks/native-cross-codegen-linking.md) and
+[the QEMU native/C spec gate](tasks/aarch64-qemu-spec-gate.md).
+
+First target programs must execute before waiting for the full target suite.
+The suite inherits the outstanding ARM startup/trace proof and needs genuine
+target external/syscall execution plus distinct target result accounting.
+[AArch64 compiler-host/reverse-cross work](tasks/aarch64-compiler-host-matrix.md)
+follows using that gate; DD129's full four-way matrix remains required.
+[Journal 686](journal/686-aarch64-first-cross-compilation-roadmap.md) records
+the organization. Implementation, public interface/provider choices and guest
+provisioning remain queued; no ARM execution or tool installation is claimed.
+
+## Recent work
+
 DG's twenty-item unattended backlog batch is on
 `unattended-backlog-20261128`; main remains at `4e5090c9`.
 Nineteen selected owners are complete: duplicate definitions,
@@ -536,7 +558,7 @@ limitation with its guard and the combined-attest guidance.
 - **Fresh-clone runtime build repaired.** Public rustix APIs and the shared
   Linux Rust syscall shim replace private runtime APIs. This is not a claim
   of full AArch64 compiler/runtime or cross-compilation delivery; those
-  remain with the platform task below.
+  remain with the prioritized platform roadmap above.
 
 ## Deferred work and boundaries
 
@@ -554,8 +576,9 @@ limitation with its guard and the combined-attest guidance.
   [source license notices/Cargo metadata](tasks/apply-source-license-notices.md)
   are separate follow-ups, not completed by the documentation refresh.
 - [Tracking/enforcing both Cargo lockfiles](tasks/track-cargo-lockfiles.md)
-  and the [native host/cross-target matrix](tasks/cross-compile-and-setjmp-on-mac.md)
-  remain implementation work.
+  remains separate implementation work, not an ARM prerequisite. The existing
+  [C-oracle link-policy question](tasks/c-backend-link-policy.md) is also
+  independently owned rather than blocking the prioritized native roadmap.
 - The [Bash-compatible `sash-expand` loader](tasks/sash-expand-bash-assignment-loader.md)
   is queued, using stock tree-sitter-bash syntax and a restricted evaluator,
   with `/etc/os-release` as the concrete use case. Its

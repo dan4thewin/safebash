@@ -13,6 +13,8 @@ status: accepted
    do not unwind generally through Rust or replace terminal-handler dispatch.
 6. The separately developed C++ transpiler owns the macOS route and may serve
    exotic targets; it is distinct from the existing C differential backend.
+7. Prioritize x86_64 Linux -> AArch64 Linux delivery and execute ARM artifacts
+   under QEMU as soon as they exist; retain the complete four-way matrix.
 
 ---
 
@@ -119,10 +121,31 @@ the machine-code target.
 This is a support commitment, not delivered cross-compilation or AArch64
 compiler-host support. Providing C compilers/linkers does not supply
 Cranelift target selection or a matching Rust/C runtime archive. The
-discussion considered user-provided toolchains, but this ruling selects
-no toolchain-distribution or runtime-packaging mechanism, new flag
-spelling, target default or delivery order. Those remain implementation
-planning, not a reason to reopen the selected matrix.
+discussion considered user-provided toolchains, but the 2026-11-10 ruling
+selected no toolchain-distribution or runtime-packaging mechanism, new flag
+spelling, target default or delivery order. Interface/provider choices remain
+implementation planning; delivery priority was subsequently selected below.
+
+### AArch64-first delivery and QEMU, 2026-11-28
+
+DG now prioritizes **x86_64 Linux -> AArch64 Linux**, clarifying
+"specifically linux on AArch64", and requests QEMU testing once ARM
+executables exist. Start execution with the first linked target programs,
+then establish the target spec gate; do not stop at assembly or an ELF header.
+This stages the accepted matrix rather than dropping AArch64 compiler-host
+support or reverse cross-compilation.
+
+The [cross-compilation coordinator](../tasks/cross-compile-and-setjmp-on-mac.md)
+now maps interface and environment readiness through runtime/jump support,
+target-aware native emission/linking and QEMU-backed native/C conformance,
+then the AArch64-host matrix. Target external commands and guest syscall/
+fault evidence must be genuine, and target results must remain distinguishable
+from host history. The completed shared-startup repair still needs its
+AArch64 trace execution proof.
+
+This is backlog prioritization, not delivered ARM support or an implementation
+go. No CLI spelling, artifact distribution, jump provider or concrete QEMU
+provisioning mechanism is selected here.
 
 ## Native regex recovery
 
@@ -213,10 +236,11 @@ must deliberately resolve fresh dependencies in an isolated source copy,
 even once the ordinary build uses a checked-in lockfile.
 
 `notes/tasks/cross-compile-and-setjmp-on-mac.md` owns delivery of the chosen
-native host/target matrix and the selected regex jump support. The
-cross-compilation interface and artifact/tool selection,
-and whether the existing C backend's link command should forbid accidental
-libc references remain separate planning work. All existing hand-written
+native host/target matrix and the selected regex jump support through its
+AArch64-first dependency roadmap.
+[Interface/artifact selection](../tasks/native-cross-compilation-interface.md)
+and the independent [C-oracle link policy](../tasks/c-backend-link-policy.md)
+have distinct planning owners. All existing hand-written
 runtime syscall sites were accounted for in the repair rather than left
 for a later migration. This repair does not select the remaining
 mechanisms or authorize the cross-compilation/regex implementation.
@@ -229,4 +253,5 @@ separately owned; its accepted mechanism was never trial-only.
 The research and resolution are in `notes/tasks/q-runtime-syscall-layer.md`;
 journals 572, 612, 613 and 614 record the layer, output targets, regex
 recovery and compiler-host/cross-compilation matrix, respectively;
-journal 619 records the syscall-layer implementation.
+journal 619 records the syscall-layer implementation; journal 686 records
+the AArch64-first priority and dependency roadmap.

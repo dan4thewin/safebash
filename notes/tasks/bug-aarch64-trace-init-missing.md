@@ -6,6 +6,13 @@ depends: []
 
 # aarch64 `_start` never calls `sash_trace_init`, so `--trace` is dead there
 
+The source repair below is complete. Its outstanding **AArch64 execution**
+gate now belongs to [the QEMU target spec gate](aarch64-qemu-spec-gate.md)
+under DG's 2026-11-28 Linux/AArch64 priority. Keep this bug done; do not
+mistake component assembly for the missing execution proof.
+
+## Original finding, 2026-09-13
+
 `sash-rt/src/lib.rs`, the two `_start` implementations:
 
 - **x86_64** calls `sash_init_heap` **and** `sash_trace_init`.
@@ -66,7 +73,11 @@ backend needed no change: it links `libsash_rt.a` and uses the same
   `sash_startup`, so a mistake in it would have been a mass failure.
 - `sash-rt` warning count unchanged (10 before, 10 after).
 
-### NOT verified, and cannot be from this host
+### Not verified in the original session
+
+The environment limitations in this subsection describe 2026-09-13, not
+a current impossibility. QEMU execution is now required by the delivery
+roadmap; real AArch64 hardware is not the only way to meet this gate.
 
 The gate "`tr.1`–`tr.3` pass on aarch64" is **unmet**. This machine is
 x86_64 with no aarch64 hardware, no `qemu-user`, and no
@@ -79,8 +90,8 @@ added, tried, and removed again).
 So the aarch64 change — `bl sash_init_heap` → `bl sash_startup` — is
 reviewed but not executed. The risk is low (both are `#[no_mangle]
 extern "C"` symbols and `bl` to either is the same instruction form, so
-there is no new assembly shape), but it is not zero, and it should be
-run on real aarch64 hardware before that gate is called met.
+there is no new assembly shape), but it is not zero. Actual AArch64 Linux
+execution, now planned under QEMU, is required before that gate is called met.
 
 No spec was added. The suite runs on x86_64 only, so a spec for this bug
 could not fail on the architecture that runs it — and the drift is now
